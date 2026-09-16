@@ -15,6 +15,7 @@ import { actionsFor, parseTicketCode, STATUS, TRC_KIND_LABEL, type Action } from
 import { formatSpan, ticketTat, type Span } from '@/lib/tat'
 import { Alert, EmptyState, PageLoader, Spinner, StatusBadge } from '@/components/ui'
 import AttachmentsCard from '@/components/TicketAttachments'
+import { removeVideoOf } from '@/lib/attachments'
 
 const when = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleString(undefined, {
@@ -113,14 +114,19 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
           {/* The route card, in the card's own order. */}
           <Section title="Service route card">
             <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
-              <Row label="District name">{[t.district, t.state].filter(Boolean).join(' · ') || null}</Row>
+              <Row label="State">{t.state}</Row>
+              <Row label="BEMMP">{t.bemmp_code}</Row>
+              <Row label="District">{t.district}</Row>
               <Row label="Equipment name">{t.equipment_name}</Row>
               <Row label="Hospital name">{t.facility}</Row>
               <Row label="Equipment barcode">{t.equipment_barcode && <span className="font-mono">{t.equipment_barcode}</span>}</Row>
               <Row label="Spare name">{t.spare_name}</Row>
               <Row label="Ticket ID">{t.source_ticket_no && <span className="font-mono">{t.source_ticket_no}</span>}</Row>
+              {/* With their function, so the Revive Lab can see which part of
+                  the business a spare is coming from without asking. */}
               <Row label="Sent by">
                 {t.raised_by_name}
+                {t.raised_by_function && <span className="text-xs text-ink-500"> · {t.raised_by_function}</span>}
                 <span className="text-xs text-ink-400"> · {t.raised_as === 'coordinator' ? 'at the Revive Lab' : 'from the field'}</span>
               </Row>
               <Row label="Contact number">
@@ -128,6 +134,7 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
               </Row>
               <Row label="Field engineer">
                 {t.stakeholder_name} <span className="text-xs text-ink-400">{t.stakeholder_ecode}</span>
+                {t.stakeholder_function && <span className="text-xs text-ink-500"> · {t.stakeholder_function}</span>}
               </Row>
               <Row label="Their manager">{t.stakeholder_manager_name}</Row>
               <Row label="Revive Lab engineer">
@@ -430,7 +437,7 @@ function ActionForm({
           await dispatch.mutateAsync({ id: t.id, courier, awb, on, note }); onDone('Dispatched back to the field.'); break
         case 'received':
           if (note.trim().length < 2) { onError('Give the final status — is it working?'); return }
-          await received.mutateAsync({ id: t.id, note }); onDone(`${t.code} is closed.`); break
+          await received.mutateAsync({ id: t.id, note }); void removeVideoOf(t.id); onDone(`${t.code} is closed.`); break
         case 'transfer': {
           if (!toTrc) { onError('Choose the Revive Lab it is going to.'); return }
           await transfer.mutateAsync({ id: t.id, toTrcId: toTrc, reason: note, courier, awb, on })

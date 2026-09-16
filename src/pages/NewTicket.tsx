@@ -3,22 +3,27 @@ import { useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { ArrowLeft, PackagePlus, Truck, Building2 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { useRaiseTicket, useTickets, useTrcs, type Person } from '@/lib/queries'
+import { useBemmpProjects, useRaiseTicket, useTickets, useTrcs, type Person } from '@/lib/queries'
 import { runsTrc, TRC_KIND_LABEL, type TrcKind } from '@/lib/tickets'
-import { uploadAttachment } from '@/lib/attachments'
+import { STATES, districtsOf } from '@/lib/india'
+import { uploadAttachment, type Slot } from '@/lib/attachments'
 import { Alert, PageLoader, Spinner } from '@/components/ui'
 import PersonPicker from '@/components/PersonPicker'
-import { PhotoPicker, VoiceRecorder, type PendingPhoto } from '@/components/Attachments'
+import { PhotoPicker, VideoRecorder, VoiceRecorder, type PendingPhoto } from '@/components/Attachments'
+
+/** The district select's way out, for a district newer than the list. */
+const OTHER = '__other__'
 
 /**
  * Raising a ticket — the route card, on a screen.
  *
  * Field engineers already send spares in with a paper card, form
- * CHPL/CRL/SRC, and this asks what the card asks in the order the card asks
- * it, so filling one in is filling in the other. Sent by is whoever is
- * signed in and never typed; Date of dispatch is the inbound courier's date.
- * The back of the card — Action taken, Final status — belongs to the Close
- * repair and Received back steps, and is asked for there.
+ * CHPL/CRL/SRC, and this asks what the card asks. State comes first, then
+ * which BEMMP the equipment belongs to, then the district — only that
+ * state's districts. Sent by is whoever is signed in, with their function,
+ * and never typed; Date of dispatch is the inbound courier's date. The back
+ * of the card — Action taken, Final status — belongs to the Close repair and
+ * Received back steps.
  *
  * Two doors to the same form. A field engineer sending a spare in raises it
  * for themselves; a coordinator whose Revive Lab a spare simply arrived at
@@ -28,12 +33,14 @@ export default function NewTicket() {
   const { me, employee } = useAuth()
   const navigate = useNavigate()
   const { data: trcs, isLoading } = useTrcs()
+  const { data: bemmp } = useBemmpProjects()
   const { data: tickets } = useTickets()
   const raise = useRaiseTicket()
 
   const active = useMemo(() => (trcs ?? []).filter(t => t.is_active), [trcs])
   const deskTrcs = useMemo(() => active.filter(t => runsTrc(me, t.id)), [active, me])
   const canDesk = deskTrcs.length > 0
+  const bemmpChoices = useMemo(() => (bemmp ?? []).filter(b => b.is_active), [bemmp])
 
   const [atLab, setAtLab] = useState(false)
   useEffect(() => { setAtLab(canDesk) }, [canDesk])
@@ -42,20 +49,22 @@ export default function NewTicket() {
   const [trcId, setTrcId] = useState('')
   const [holder, setHolder] = useState<Person | null>(null)
   const [form, setForm] = useState({
-    district: '', equipmentName: '', hospital: '', equipmentBarcode: '',
+    state: '', bemmpId: '', district: '', equipmentName: '', hospital: '', equipmentBarcode: '',
     spareName: '', issue: '', sourceTicketNo: '', contactNumber: '',
-    returnAddress: '', state: '', inCourier: '', inAwb: '', inDispatchedOn: '',
+    returnAddress: '', inCourier: '', inAwb: '', inDispatchedOn: '',
   })
+  /** The select's own value — a district, OTHER, or empty — kept apart from what is sent. */
+  const [districtPick, setDistrictPick] = useState('')
   const [photos, setPhotos] = useState<PendingPhoto[]>([])
+  const [video, setVideo] = useState<Blob | null>(null)
   const [voice, setVoice] = useState<Blob | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [stage, setStage] = useState<'idle' | 'raising' | 'uploading'>('idle')
 
   /*
     The contact number starts as the official number on this person's KPI
-    profile, and the return address as whatever they put on their last card
-    — both are the same on nearly every spare one engineer sends. Only when
-    the fields are still empty: nothing typed is ever overwritten.
+    profile, and the return address as whatever they put on their last card.
+    Only when the fields are still empty: nothing typed is ever overwritten.
   */
   useEffect(() => {
     if (!employee) return
@@ -77,14 +86,30 @@ export default function NewTicket() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, atLab, trcs])
 
+  const districts = districtsOf(form.state)
+
   const set = (k: keyof typeof form) =>
-    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
       setForm(f => ({ ...f, [k]: e.target.value }))
+
+  const chooseState = (state: string) => {
+    // A district belongs to one state: changing the state clears it.
+    setForm(f => ({ ...f, state, district: '' }))
+    setDistrictPick('')
+  }
+
+  const chooseDistrict = (pick: string) => {
+    setDistrictPick(pick)
+    setForm(f => ({ ...f, district: pick === OTHER ? '' : pick }))
+  }
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
     if (!trcId) { setError('Choose the Revive Lab the spare is going to.'); return }
+    if (!form.state) { setError('Choose the state.'); return }
+    if (!form.bemmpId) { setError('Choose the BEMMP.'); return }
+    if (form.district.trim().length < 2) { setError('Choose the district.'); return }
     if (form.hospital.trim().length < 2) { setError('Enter the hospital name.'); return }
     if (form.spareName.trim().length < 2) { setError('Enter the spare name.'); return }
     if (form.issue.trim().length < 3) { setError('Describe the issue identified.'); return }
@@ -109,12 +134,12 @@ export default function NewTicket() {
     */
     setStage('uploading')
     const ticketId = created.id
-    const jobs: Array<[string, () => Promise<void>]> = [
-      ...photos.map((p, i): [string, () => Promise<void>] =>
-        [`photo ${i + 1}`, () => uploadAttachment(ticketId, i === 0 ? 'image-1' : 'image-2', p.blob)]),
-      ...(voice ? [['the voice note', () => uploadAttachment(ticketId, 'voice', voice)] as [string, () => Promise<void>]] : []),
+    const jobs: Array<[string, Slot, Blob]> = [
+      ...photos.map((p, i): [string, Slot, Blob] => [`photo ${i + 1}`, i === 0 ? 'image-1' : 'image-2', p.blob]),
+      ...(video ? [['the video', 'video', video] as [string, Slot, Blob]] : []),
+      ...(voice ? [['the voice note', 'voice', voice] as [string, Slot, Blob]] : []),
     ]
-    const results = await Promise.allSettled(jobs.map(([, job]) => job()))
+    const results = await Promise.allSettled(jobs.map(([, slot, blob]) => uploadAttachment(ticketId, slot, blob)))
     const failed = results.flatMap((r, i) => (r.status === 'rejected' ? [jobs[i][0]] : []))
 
     setStage('idle')
@@ -203,13 +228,53 @@ export default function NewTicket() {
             <h2 className="text-sm font-semibold text-ink-800">Service route card</h2>
             <span className="text-[11px] text-ink-400">Form CHPL/CRL/SRC</span>
           </div>
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            <label className="block">
+              <span className="label">State <Req /></span>
+              <select className="input mt-1" value={form.state} onChange={e => chooseState(e.target.value)}>
+                <option value="">Choose…</option>
+                {STATES.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </label>
+            <label className="block">
+              <span className="label">BEMMP <Req /></span>
+              <select className="input mt-1" value={form.bemmpId} onChange={set('bemmpId')}>
+                <option value="">Choose…</option>
+                {bemmpChoices.map(b => <option key={b.id} value={b.id}>{b.code}</option>)}
+              </select>
+            </label>
+            <label className="block">
+              <span className="label">District <Req /></span>
+              <select
+                className="input mt-1"
+                value={districtPick}
+                onChange={e => chooseDistrict(e.target.value)}
+                disabled={!form.state}
+              >
+                <option value="">{form.state ? 'Choose…' : 'Choose the state first'}</option>
+                {districts.map(d => <option key={d} value={d}>{d}</option>)}
+                {form.state && <option value={OTHER}>Other — not in the list</option>}
+              </select>
+              {districtPick === OTHER && (
+                <input
+                  className="input mt-2"
+                  value={form.district}
+                  onChange={set('district')}
+                  placeholder={`District in ${form.state}`}
+                  autoFocus
+                />
+              )}
+            </label>
+          </div>
+
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="District name" value={form.district} onChange={set('district')} />
             <Field label="Equipment name" value={form.equipmentName} onChange={set('equipmentName')} placeholder="e.g. Ventilator" />
             <Field label="Hospital name" value={form.hospital} onChange={set('hospital')} required />
             <Field label="Equipment barcode" value={form.equipmentBarcode} onChange={set('equipmentBarcode')} mono />
             <Field label="Spare name" value={form.spareName} onChange={set('spareName')} placeholder="e.g. SMPS board" required />
             <Field label="Ticket ID" value={form.sourceTicketNo} onChange={set('sourceTicketNo')} placeholder="The field service ticket" mono />
+            <Field label="Contact number" type="tel" value={form.contactNumber} onChange={set('contactNumber')} placeholder="+91 …" />
           </div>
 
           <label className="block">
@@ -218,20 +283,20 @@ export default function NewTicket() {
               placeholder="What is wrong with it, as found on site" />
           </label>
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          {/* Photos, then the video, then the voice note. */}
+          <div className="space-y-4">
             <div>
               <span className="label">Photos</span>
               <div className="mt-1"><PhotoPicker photos={photos} onChange={setPhotos} /></div>
             </div>
             <div>
+              <span className="label">Video</span>
+              <div className="mt-1"><VideoRecorder video={video} onChange={setVideo} /></div>
+            </div>
+            <div>
               <span className="label">Voice note</span>
               <div className="mt-1"><VoiceRecorder voice={voice} onChange={setVoice} /></div>
             </div>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Contact number" type="tel" value={form.contactNumber} onChange={set('contactNumber')} placeholder="+91 …" />
-            <Field label="State" value={form.state} onChange={set('state')} />
           </div>
 
           <label className="block">
@@ -254,7 +319,7 @@ export default function NewTicket() {
           <button type="button" className="btn-secondary" onClick={() => navigate(-1)} disabled={busy}>Cancel</button>
           <button type="submit" className="btn-primary" disabled={busy}>
             {busy ? <Spinner className="h-4 w-4" /> : <PackagePlus className="h-4 w-4" />}
-            {stage === 'raising' ? 'Raising…' : stage === 'uploading' ? 'Sending photos…' : 'Raise ticket'}
+            {stage === 'raising' ? 'Raising…' : stage === 'uploading' ? 'Sending photos and recordings…' : 'Raise ticket'}
           </button>
         </div>
       </form>

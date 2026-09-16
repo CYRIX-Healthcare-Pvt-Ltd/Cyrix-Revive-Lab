@@ -2,33 +2,40 @@ import { supabase, friendlyError } from './supabase'
 import { extensionFor } from './media'
 
 /**
- * A ticket's photos and voice note, in the private revive-attachments bucket.
+ * A ticket's photos, video and voice note, in the private revive-attachments bucket.
  *
- * One folder per ticket, named by its id, and three names a file can have:
- * image-1, image-2 and voice. The bucket's own rules (rl_0007) decide who
- * may read, add and remove — whoever can see the ticket reads; whoever
- * raised it, or the field engineer named on it, adds — and the names are
- * what hold a ticket to two photos and one voice note.
+ * One folder per ticket, named by its id, and four names a file can have:
+ * image-1, image-2, video and voice. The bucket's own rules (rl_0007,
+ * rl_0008) decide who may read, add and remove — whoever can see the ticket
+ * reads; whoever raised it, or the field engineer named on it, adds — and
+ * the names are what hold a ticket to two photos, one video and one voice
+ * note.
  */
 export const ATTACHMENT_BUCKET = 'revive-attachments'
 
-export type Slot = 'image-1' | 'image-2' | 'voice'
+export type Slot = 'image-1' | 'image-2' | 'video' | 'voice'
+export type AttachmentKind = 'image' | 'video' | 'voice'
 
 export interface Attachment {
   slot: Slot
   path: string
-  kind: 'image' | 'voice'
+  kind: AttachmentKind
   /** A signed link, good for an hour. */
   url: string
 }
 
-export const pathFor = (ticketId: string, slot: Slot, mime: string) =>
-  `${ticketId}/${slot}.${extensionFor(mime) || (slot === 'voice' ? 'webm' : 'jpg')}`
+const DEFAULT_EXT: Record<Slot, string> = { 'image-1': 'jpg', 'image-2': 'jpg', video: 'webm', voice: 'webm' }
 
-const slotOf = (name: string): Slot | null => {
-  const m = name.match(/^(image-1|image-2|voice)\./)
+export const pathFor = (ticketId: string, slot: Slot, mime: string) =>
+  `${ticketId}/${slot}.${extensionFor(mime) || DEFAULT_EXT[slot]}`
+
+export const slotOf = (name: string): Slot | null => {
+  const m = name.match(/^(image-1|image-2|video|voice)\./)
   return m ? (m[1] as Slot) : null
 }
+
+export const kindOf = (slot: Slot): AttachmentKind =>
+  slot === 'video' ? 'video' : slot === 'voice' ? 'voice' : 'image'
 
 /** Uploads one file into its slot. Never overwrites: a slot that is taken refuses. */
 export async function uploadAttachment(ticketId: string, slot: Slot, blob: Blob): Promise<void> {
@@ -51,19 +58,36 @@ export async function listAttachments(ticketId: string): Promise<Attachment[]> {
   return files
     .map((f, i) => {
       const slot = slotOf(f.name)!
-      return {
-        slot,
-        path: paths[i],
-        kind: slot === 'voice' ? 'voice' as const : 'image' as const,
-        url: signed?.[i]?.signedUrl ?? '',
-      }
+      return { slot, path: paths[i], kind: kindOf(slot), url: signed?.[i]?.signedUrl ?? '' }
     })
     .filter(a => a.url)
     .sort((a, b) => a.slot.localeCompare(b.slot))
 }
 
-/** Removes one file — to replace a photo. */
+/** Removes one file — to replace it. */
 export async function removeAttachment(path: string): Promise<void> {
   const { error } = await supabase.storage.from(ATTACHMENT_BUCKET).remove([path])
   if (error) throw new Error(friendlyError(error))
+}
+
+/**
+ * Deletes a ticket's video, if it has one.
+ *
+ * Called when the spare is confirmed back, and again whenever a closed
+ * ticket is opened by somebody allowed to remove files — a clip explains a
+ * fault to the Revive Lab, and once the spare is back that job is done; it
+ * is the one attachment large enough to fill the bucket. Returns whether a
+ * video was removed. Never throws: storage tidying must not turn a finished
+ * ticket into an error on somebody's screen.
+ */
+export async function removeVideoOf(ticketId: string): Promise<boolean> {
+  try {
+    const { data } = await supabase.storage.from(ATTACHMENT_BUCKET).list(ticketId, { limit: 10 })
+    const videos = (data ?? []).filter(f => slotOf(f.name) === 'video').map(f => `${ticketId}/${f.name}`)
+    if (videos.length === 0) return false
+    const { error } = await supabase.storage.from(ATTACHMENT_BUCKET).remove(videos)
+    return !error
+  } catch {
+    return false
+  }
 }

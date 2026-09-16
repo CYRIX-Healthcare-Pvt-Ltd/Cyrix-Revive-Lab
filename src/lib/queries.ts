@@ -27,6 +27,9 @@ export interface Ticket {
   facility: string
   district: string | null
   state: string | null
+  /** The BEMMP programme the equipment belongs to — AP, KL, RJ, UP, Pvt … */
+  bemmp_id: string | null
+  bemmp_code: string | null
   equipment_name: string | null
   equipment_barcode: string | null
   spare_name: string | null
@@ -39,9 +42,12 @@ export interface Ticket {
   stakeholder_id: string
   stakeholder_name: string
   stakeholder_ecode: string
+  /** The field engineer's function — KLBEMP, RJBEMP … — from their employee record. */
+  stakeholder_function: string | null
   stakeholder_manager_name: string | null
   raised_by: string
   raised_by_name: string
+  raised_by_function: string | null
   raised_as: 'engineer' | 'coordinator'
   engineer_id: string | null
   engineer_name: string | null
@@ -196,6 +202,26 @@ export function useMembers(enabled = true) {
   })
 }
 
+export interface BemmpProject {
+  id: string
+  code: string
+  is_active: boolean
+  sort_order: number
+}
+
+/** The BEMMP programmes a ticket can belong to. Admins keep the list. */
+export function useBemmpProjects() {
+  return useQuery({
+    queryKey: ['revive', 'bemmp'],
+    staleTime: 5 * 60_000,
+    queryFn: async () => unwrap<BemmpProject[]>(
+      await supabase.from('revive_bemmp_projects')
+        .select('id, code, is_active, sort_order')
+        .order('sort_order').order('code'),
+    ),
+  })
+}
+
 export function useFindPeople(q: string) {
   const term = q.trim()
   return useQuery({
@@ -229,8 +255,9 @@ const rpc = async (name: string, args: Record<string, unknown>) =>
 export interface RaiseInput {
   trcId: string
   hospital: string
-  district: string
   state: string
+  bemmpId: string
+  district: string
   sourceTicketNo: string
   equipmentName: string
   equipmentBarcode: string
@@ -248,8 +275,9 @@ export function useRaiseTicket() {
   return useTicketMutation(async (a: RaiseInput) => rpc('revive_raise_ticket', {
     p_trc_id: a.trcId,
     p_hospital: a.hospital,
-    p_district: a.district,
     p_state: a.state,
+    p_bemmp_id: a.bemmpId,
+    p_district: a.district,
     p_source_ticket_no: a.sourceTicketNo,
     p_equipment_name: a.equipmentName,
     p_equipment_barcode: a.equipmentBarcode,

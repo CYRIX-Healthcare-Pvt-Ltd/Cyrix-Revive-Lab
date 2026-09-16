@@ -16,7 +16,7 @@
 import { useMemo, useState } from 'react'
 import clsx from 'clsx'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Building2, Pencil, Plus, Search, Trash2, UserPlus, Users, X } from 'lucide-react'
+import { Building2, Layers, Pencil, Plus, Search, Trash2, UserPlus, Users, X } from 'lucide-react'
 import { supabase, friendlyError } from '@/lib/supabase'
 import { Alert, EmptyState, Spinner, StatTile } from '@/components/ui'
 
@@ -279,12 +279,109 @@ export function ReviveLabAccess() {
 
       <TrcTable trcs={trcs ?? []} canEdit={canEdit} members={members ?? []} />
 
+      <BemmpTable canEdit={canEdit} />
+
       {me?.is_sw_admin && <DeleteTicket />}
     </div>
   )
 }
 
 /* ------------------------------------------------------------------ */
+
+/**
+ * The BEMMP programmes a route card can name — AP, KL, RJ, UP, Pvt …
+ *
+ * A list rather than free text, so "KL", "Kerala" and "kl bemmp" do not
+ * become three programmes in every report. Revive Lab admins and the
+ * software administrator add to it; a programme that ends is retired rather
+ * than deleted, so the tickets that named it still say so.
+ */
+function BemmpTable({ canEdit }: { canEdit: boolean }) {
+  const qc = useQueryClient()
+  const { data: rows, isLoading } = useQuery({
+    queryKey: ['revive', 'bemmp'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('revive_bemmp_projects')
+        .select('id, code, is_active, sort_order').order('sort_order').order('code')
+      if (error) throw new Error(friendlyError(error))
+      return data as Array<{ id: string; code: string; is_active: boolean; sort_order: number }>
+    },
+  })
+  const save = useMutation({
+    mutationFn: (b: { id: string | null; code: string; active: boolean }) =>
+      call('revive_save_bemmp', { p_id: b.id, p_code: b.code, p_active: b.active }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['revive', 'bemmp'] }),
+  })
+  const [adding, setAdding] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  const add = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError(null)
+    try { await save.mutateAsync({ id: null, code: adding, active: true }); setAdding('') }
+    catch (err) { setError(err instanceof Error ? err.message : 'Could not add that.') }
+  }
+  const toggle = async (b: { id: string; code: string; is_active: boolean }) => {
+    setError(null)
+    try { await save.mutateAsync({ id: b.id, code: b.code, active: !b.is_active }) }
+    catch (err) { setError(err instanceof Error ? err.message : 'Could not change that.') }
+  }
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="flex flex-wrap items-center gap-2 border-b border-ink-200 bg-ink-50 px-3 py-2">
+        <h3 className="flex items-center gap-2 px-1 text-sm font-semibold text-ink-800">
+          <Layers className="h-4 w-4 text-ink-400" /> BEMMP
+        </h3>
+        <span className="text-xs text-ink-400">· the programmes a route card can name</span>
+      </div>
+      <div className="space-y-3 p-4">
+        {error && <Alert kind="error">{error}</Alert>}
+        {isLoading ? <Spinner className="h-4 w-4 text-ink-400" /> : (
+          <div className="flex flex-wrap gap-2">
+            {(rows ?? []).map(b => (
+              <span
+                key={b.id}
+                className={clsx(
+                  'inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm',
+                  b.is_active ? 'border-ink-200 text-ink-900' : 'border-ink-200 bg-ink-50 text-ink-400 line-through',
+                )}
+              >
+                {b.code}
+                {canEdit && (
+                  <button
+                    type="button"
+                    onClick={() => void toggle(b)}
+                    disabled={save.isPending}
+                    className="text-xs font-medium text-ink-500 no-underline hover:text-ink-900"
+                    title={b.is_active ? 'Retire — tickets that name it keep it' : 'Bring back'}
+                  >
+                    {b.is_active ? 'Retire' : 'Restore'}
+                  </button>
+                )}
+              </span>
+            ))}
+          </div>
+        )}
+        {canEdit && (
+          <form onSubmit={add} className="flex flex-wrap items-center gap-2">
+            <input
+              className="input !py-1.5 w-40"
+              value={adding}
+              onChange={e => setAdding(e.target.value)}
+              placeholder="e.g. TN"
+              maxLength={20}
+              aria-label="New BEMMP code"
+            />
+            <button type="submit" className="btn-secondary !py-1.5" disabled={save.isPending || !adding.trim()}>
+              {save.isPending ? <Spinner className="h-4 w-4" /> : <Plus className="h-4 w-4" />} Add BEMMP
+            </button>
+          </form>
+        )}
+      </div>
+    </div>
+  )
+}
 
 /**
  * Deleting a ticket, for the software administrator only.
