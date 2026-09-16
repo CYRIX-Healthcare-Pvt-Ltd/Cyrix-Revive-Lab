@@ -28,7 +28,7 @@ export interface Employee {
 interface AuthState {
   session: Session | null
   employee: Employee | null
-  /** Revive Lab boxes and labs. Null until loaded. */
+  /** Revive Lab boxes and Revive Labs. Null until loaded. */
   me: Me | null
   /** May open the module: granted it, or holding a box in it. */
   hasAccess: boolean

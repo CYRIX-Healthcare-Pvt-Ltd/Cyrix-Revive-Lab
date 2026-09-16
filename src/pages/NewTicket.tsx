@@ -12,8 +12,8 @@ import PersonPicker from '@/components/PersonPicker'
  * Raising a ticket.
  *
  * Two doors to the same form. A field engineer sending a spare in raises
- * it for themselves; a coordinator whose lab a spare has simply arrived at
- * raises it at the lab, and names the field engineer it belongs to — that
+ * it for themselves; a coordinator whose Revive Lab a spare has simply arrived at
+ * raises it at the Revive Lab, and names the field engineer it belongs to — that
  * engineer, and their manager, then follow it exactly as if they had sent
  * it. Somebody who is both sees a switch; everybody else sees only the one
  * door that applies to them.
@@ -43,7 +43,7 @@ export default function NewTicket() {
   const choices = (atLab ? deskTrcs : active).filter(t => !kind || t.kind === kind)
   const kinds = [...new Set((atLab ? deskTrcs : active).map(t => t.kind))]
 
-  // One lab of that type: it is the answer, not a question.
+  // One Revive Lab of that type: it is the answer, not a question.
   useEffect(() => {
     if (choices.length === 1) setTrcId(choices[0].id)
     else if (!choices.some(c => c.id === trcId)) setTrcId('')
@@ -56,7 +56,7 @@ export default function NewTicket() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
-    if (!trcId) { setError('Choose the TRC the spare is going to.'); return }
+    if (!trcId) { setError('Choose the Revive Lab the spare is going to.'); return }
     if (form.facility.trim().length < 2) { setError('Enter the facility the spare came from.'); return }
     if (atLab && !holder) { setError('Name the field engineer this spare belongs to.'); return }
     try {
@@ -78,7 +78,7 @@ export default function NewTicket() {
       <div>
         <h1 className="text-xl font-semibold text-ink-900">Raise a ticket</h1>
         <p className="mt-0.5 text-sm text-ink-500">
-          It gets the next RL number, and the TRC&rsquo;s coordinators are emailed straight away.
+          It gets the next RL number, and the Revive Lab&rsquo;s coordinators are emailed straight away.
         </p>
       </div>
 
@@ -88,8 +88,8 @@ export default function NewTicket() {
         {canDesk && (
           <div className="grid gap-2 sm:grid-cols-2">
             {[
-              { lab: true, icon: Building2, title: 'A spare arrived at my TRC', sub: 'You name the field engineer it belongs to.' },
-              { lab: false, icon: Truck, title: 'I am sending a spare in', sub: 'From a hospital, to a TRC.' },
+              { lab: true, icon: Building2, title: 'A spare arrived at my Revive Lab', sub: 'You name the field engineer it belongs to.' },
+              { lab: false, icon: Truck, title: 'I am sending a spare in', sub: 'From a hospital, to a Revive Lab.' },
             ].map(o => (
               <button
                 key={String(o.lab)}
@@ -115,14 +115,14 @@ export default function NewTicket() {
           <h2 className="text-sm font-semibold text-ink-800">Where it is going</h2>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block">
-              <span className="label">TRC type</span>
+              <span className="label">Revive Lab type</span>
               <select className="input mt-1" value={kind} onChange={e => setKind(e.target.value as TrcKind | '')}>
                 <option value="">Any type</option>
                 {kinds.map(k => <option key={k} value={k}>{TRC_KIND_LABEL[k]}</option>)}
               </select>
             </label>
             <label className="block">
-              <span className="label">TRC</span>
+              <span className="label">Revive Lab</span>
               <select className="input mt-1" value={trcId} onChange={e => setTrcId(e.target.value)} required>
                 <option value="">Choose…</option>
                 {choices.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}

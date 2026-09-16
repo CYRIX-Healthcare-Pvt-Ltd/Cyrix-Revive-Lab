@@ -18,7 +18,7 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
  * Where everything is, and how long it is taking.
  *
  * Counted from exactly the tickets this person can see — a field engineer's
- * dashboard is their own spares, a coordinator's is their lab, an admin's is
+ * dashboard is their own spares, a coordinator's is their Revive Lab, an admin's is
  * everything — so the same screen serves everybody without a second set of
  * rules about who may see which number.
  */
@@ -77,7 +77,7 @@ export default function Dashboard() {
         month: `${MONTHS[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`,
         'End to end': avg('total'),
         Repair: avg('repair'),
-        'Reach TRC': avg('reach'),
+        'Reach Revive Lab': avg('reach'),
         closed: inMonth.length,
       }
     })
@@ -120,8 +120,8 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <StatTile label="Open" value={stats.open} sub={`of ${stats.total} tickets`} />
         <StatTile label="Waiting on you" value={stats.mine.length} sub="your move next" tone={stats.mine.length ? 'brand' : 'default'} />
-        <StatTile label="At the bench" value={stats.inRepair} sub="assigned or in repair" />
-        <StatTile label="In transit" value={stats.moving} sub="going back, or between TRCs" />
+        <StatTile label="With Revive Lab engineer" value={stats.inRepair} sub="assigned or being repaired" />
+        <StatTile label="In transit" value={stats.moving} sub="going back, or between Revive Labs" />
         <StatTile
           label="Average TAT"
           value={stats.avgTotal === null ? '—' : formatSpan(stats.avgTotal)}
@@ -131,8 +131,8 @@ export default function Dashboard() {
 
       {stats.total === 0 ? (
         <EmptyState icon={Inbox} title="No tickets yet">
-          A ticket starts when a field engineer sends a defective spare to a TRC, or when one arrives
-          at the TRC and the coordinator raises it. <Link to="/new" className="link-accent">Raise the first one</Link>.
+          A ticket starts when a field engineer sends a defective spare to a Revive Lab, or when one arrives
+          at the Revive Lab and the coordinator raises it. <Link to="/new" className="link-accent">Raise the first one</Link>.
         </EmptyState>
       ) : (
         <>
@@ -181,11 +181,11 @@ export default function Dashboard() {
             </div>
 
             <div className="card p-4">
-              <h3 className="mb-1 text-sm font-semibold text-ink-800">Tickets by TRC</h3>
-              <p className="mb-3 text-xs text-ink-500">Where each ticket is now — a transferred ticket counts at the TRC it went to.</p>
+              <h3 className="mb-1 text-sm font-semibold text-ink-800">Tickets by Revive Lab</h3>
+              <p className="mb-3 text-xs text-ink-500">Where each ticket is now — a transferred ticket counts at the Revive Lab it went to.</p>
               <div className="h-64">
                 {stats.byTrc.length === 0 ? (
-                  <p className="pt-16 text-center text-sm text-ink-400">No tickets at any TRC yet.</p>
+                  <p className="pt-16 text-center text-sm text-ink-400">No tickets at any Revive Lab yet.</p>
                 ) : (
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={stats.byTrc} margin={{ left: -10, right: 8 }}>
@@ -206,7 +206,7 @@ export default function Dashboard() {
           <div className="card p-4">
             <h3 className="mb-1 text-sm font-semibold text-ink-800">TAT trend</h3>
             <p className="mb-3 text-xs text-ink-500">
-              Average days, for tickets closed in each month: end to end, time at the bench, and time to reach the TRC.
+              Average days, for tickets closed in each month: end to end, repair time with the Revive Lab engineer, and time to reach the Revive Lab.
             </p>
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
@@ -221,7 +221,7 @@ export default function Dashboard() {
                   <Legend wrapperStyle={{ fontSize: 12 }} />
                   <Line type="monotone" dataKey="End to end" stroke="#11141c" strokeWidth={2} dot={{ r: 3 }} connectNulls />
                   <Line type="monotone" dataKey="Repair" stroke="#4f46e5" strokeWidth={2} dot={{ r: 3 }} connectNulls />
-                  <Line type="monotone" dataKey="Reach TRC" stroke="#d97706" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+                  <Line type="monotone" dataKey="Reach Revive Lab" stroke="#d97706" strokeWidth={2} dot={{ r: 3 }} connectNulls />
                 </LineChart>
               </ResponsiveContainer>
             </div>

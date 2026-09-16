@@ -1,6 +1,6 @@
 # Cyrix Revive Lab
 
-Repair tracking for defective spares — from the hospital, through a TRC, and back.
+Repair tracking for defective spares — from the hospital, through a Revive Lab, and back.
 Served at **app.cyrix.in/revive** behind the portal's rewrite, on the same Supabase
 project and sign-in as KPI.
 
@@ -31,6 +31,6 @@ adds one row to `app_modules`, and `revive_save_member` grants the module in
 
 ## Deploy
 
-Vercel project named **cyrix-revive-lab** (the portal rewrites to
-`cyrix-revive-lab.vercel.app`), with `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`
+Vercel project named **cyrix-revive-Revive Lab** (the portal rewrites to
+`cyrix-revive-Revive Lab.vercel.app`), with `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`
 set. Never put the service role key or database URL in Vercel.

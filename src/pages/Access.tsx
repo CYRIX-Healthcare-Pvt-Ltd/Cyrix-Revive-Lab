@@ -1,13 +1,13 @@
 /**
- * People & TRCs — who does what in Revive Lab, and which labs exist.
+ * People & Revive Labs — who does what in Revive Lab, and which Revive Labs exist.
  *
  * THIS FILE IS SHARED. The same component is KPI's SW Admin "Revive Lab"
  * tab (src/pages/admin/ReviveLabAccess.tsx there), so it depends on
  * nothing but the Supabase client and the four ui pieces both apps have.
  * Change it in one, copy it to the other.
  *
- * Roles are boxes. A person is any combination of TRC Engineer, TRC
- * Coordinator and TRC Manager, in any number of TRCs, and Admin is a box
+ * Roles are boxes. A person is any combination of Revive Lab Engineer, Revive Lab
+ * Coordinator and Revive Lab Manager, in any number of Revive Labs, and Admin is a box
  * of its own that means "may edit this table" — so "Manager + Admin" is
  * two ticks, not a role somebody had to invent. The database checks every
  * save (revive_save_member): only an admin or the software administrator
@@ -21,7 +21,7 @@ import { supabase, friendlyError } from '@/lib/supabase'
 import { Alert, EmptyState, Spinner, StatTile } from '@/components/ui'
 
 type TrcKind = 'regional' | 'project'
-const KIND_LABEL: Record<TrcKind, string> = { regional: 'Regional TRC', project: 'Project TRC' }
+const KIND_LABEL: Record<TrcKind, string> = { regional: 'Regional Revive Lab', project: 'Project Revive Lab' }
 
 interface Trc { id: string; name: string; kind: TrcKind; is_active: boolean; sort_order: number }
 interface Member {
@@ -38,9 +38,9 @@ interface Draft {
 }
 
 const ROLES: Array<[keyof Pick<Draft, 'is_engineer' | 'is_coordinator' | 'is_manager'>, string]> = [
-  ['is_engineer', 'TRC Engineer'],
-  ['is_coordinator', 'TRC Coordinator'],
-  ['is_manager', 'TRC Manager'],
+  ['is_engineer', 'Revive Lab Engineer'],
+  ['is_coordinator', 'Revive Lab Coordinator'],
+  ['is_manager', 'Revive Lab Manager'],
 ]
 
 const call = async <T,>(name: string, args?: Record<string, unknown>): Promise<T> => {
@@ -53,9 +53,9 @@ export default function Access() {
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-xl font-semibold text-ink-900">People &amp; TRCs</h1>
+        <h1 className="text-xl font-semibold text-ink-900">People &amp; Revive Labs</h1>
         <p className="mt-0.5 text-sm text-ink-500">
-          Who works in Revive Lab, in which TRCs, doing what.
+          Who works in Revive Lab, in which Revive Labs, doing what.
         </p>
       </div>
       <ReviveLabAccess />
@@ -150,8 +150,8 @@ export function ReviveLabAccess() {
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <StatTile label="TRCs" value={(trcs ?? []).filter(t => t.is_active).length} sub={`${(trcs ?? []).length} in all`} />
-        <StatTile label="TRC engineers" value={counts.engineers} />
+        <StatTile label="Revive Labs" value={(trcs ?? []).filter(t => t.is_active).length} sub={`${(trcs ?? []).length} in all`} />
+        <StatTile label="Revive Lab engineers" value={counts.engineers} />
         <StatTile label="Coordinators" value={counts.coordinators} />
         <StatTile label="Managers" value={counts.managers} />
         <StatTile label="Admins" value={counts.admins} sub="may edit this table" />
@@ -205,7 +205,7 @@ export function ReviveLabAccess() {
         {shown.length === 0 ? (
           <div className="p-4">
             <EmptyState icon={Users} title={q ? 'Nobody matches that' : 'Nobody is in Revive Lab yet'}>
-              {canEdit && !q && 'Add the TRC coordinators first — tickets route to them.'}
+              {canEdit && !q && 'Add the Revive Lab coordinators first — tickets route to them.'}
             </EmptyState>
           </div>
         ) : (
@@ -214,7 +214,7 @@ export function ReviveLabAccess() {
               <thead>
                 <tr className="border-b border-ink-200 text-left text-xs font-semibold uppercase tracking-wide text-ink-500">
                   <th className="px-4 py-2.5 font-medium">Employee</th>
-                  <th className="px-4 py-2.5 font-medium">TRC(s)</th>
+                  <th className="px-4 py-2.5 font-medium">Revive Lab(s)</th>
                   <th className="px-4 py-2.5 font-medium">Role(s)</th>
                   <th className="px-4 py-2.5 font-medium">Admin</th>
                   <th className="px-4 py-2.5 font-medium">Last updated</th>
@@ -326,7 +326,7 @@ function EditRow({ draft, trcs, busy, onChange, onSave, onCancel, onRemove }: {
       </div>
 
       <div>
-        <p className="label">TRC(s)</p>
+        <p className="label">Revive Lab(s)</p>
         <div className="mt-1 flex flex-wrap gap-2">
           {trcs.map(t => (
             <Check key={t.id} label={`${t.name}${t.is_active ? '' : ' (closed)'}`}
@@ -344,7 +344,7 @@ function EditRow({ draft, trcs, busy, onChange, onSave, onCancel, onRemove }: {
       </div>
 
       {(draft.is_engineer || draft.is_coordinator || draft.is_manager) && draft.trc_ids.length === 0 && (
-        <p className="text-xs text-amber-700">A role does nothing without a TRC — tick the TRC(s) they work in.</p>
+        <p className="text-xs text-amber-700">A role does nothing without a Revive Lab — tick the Revive Lab(s) they work in.</p>
       )}
 
       <div className="flex flex-wrap gap-2">
@@ -428,19 +428,19 @@ function TrcTable({ trcs, canEdit, members }: { trcs: Trc[]; canEdit: boolean; m
     if (!draft) return
     setError(null)
     try { await saveTrc.mutateAsync(draft); setDraft(null) }
-    catch (err) { setError(err instanceof Error ? err.message : 'Could not save that TRC.') }
+    catch (err) { setError(err instanceof Error ? err.message : 'Could not save that Revive Lab.') }
   }
 
   return (
     <div className="card overflow-hidden">
       <div className="flex flex-wrap items-center gap-2 border-b border-ink-200 bg-ink-50 px-3 py-2">
         <h3 className="flex items-center gap-2 px-1 text-sm font-semibold text-ink-800">
-          <Building2 className="h-4 w-4 text-ink-400" /> TRCs
+          <Building2 className="h-4 w-4 text-ink-400" /> Revive Labs
         </h3>
         {canEdit && (
           <button type="button" className="btn-secondary ml-auto !py-1.5"
             onClick={() => setDraft({ id: null, name: '', kind: 'regional', active: true })}>
-            <Plus className="h-4 w-4" /> Add TRC
+            <Plus className="h-4 w-4" /> Add Revive Lab
           </button>
         )}
       </div>
@@ -452,13 +452,13 @@ function TrcTable({ trcs, canEdit, members }: { trcs: Trc[]; canEdit: boolean; m
           <label className="block min-w-[12rem] flex-1">
             <span className="label">Name</span>
             <input autoFocus className="input mt-1" value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })}
-              placeholder="e.g. Regional TRC — Kochi" />
+              placeholder="e.g. Regional Revive Lab — Kochi" />
           </label>
           <label className="block">
             <span className="label">Type</span>
             <select className="input mt-1" value={draft.kind} onChange={e => setDraft({ ...draft, kind: e.target.value as TrcKind })}>
-              <option value="regional">Regional TRC</option>
-              <option value="project">Project TRC</option>
+              <option value="regional">Regional Revive Lab</option>
+              <option value="project">Project Revive Lab</option>
             </select>
           </label>
           {draft.id && (
@@ -478,7 +478,7 @@ function TrcTable({ trcs, canEdit, members }: { trcs: Trc[]; canEdit: boolean; m
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-ink-200 text-left text-xs font-semibold uppercase tracking-wide text-ink-500">
-              <th className="px-4 py-2.5 font-medium">TRC</th>
+              <th className="px-4 py-2.5 font-medium">Revive Lab</th>
               <th className="px-4 py-2.5 font-medium">Type</th>
               <th className="px-4 py-2.5 font-medium">Coordinators</th>
               <th className="px-4 py-2.5 font-medium">Engineers</th>

@@ -7,10 +7,10 @@ const T0 = Date.parse('2026-09-01T09:00:00Z')
 const at = (ms: number) => new Date(T0 + ms).toISOString()
 const ev = (status: string, ms: number, trc = 'A'): TatEvent => ({ status, trc_id: trc, at: at(ms) })
 
-describe('ticketTat — one lab, start to finish', () => {
+describe('ticketTat — one Revive Lab, start to finish', () => {
   const trail = [
     ev('pending_acceptance', 0),
-    ev('accepted', 2 * D),          // 2 days to reach the TRC
+    ev('accepted', 2 * D),          // 2 days to reach the Revive Lab
     ev('assigned', 2 * D + 4 * H),  // 4 hours to assignment
     ev('in_repair', 3 * D),
     ev('repaired', 5 * D),          // 2 days of repair
@@ -52,7 +52,7 @@ describe('ticketTat — a stage still going is measured to now', () => {
   })
 })
 
-describe('ticketTat — transferred between labs', () => {
+describe('ticketTat — transferred between Revive Labs', () => {
   const trail = [
     ev('pending_acceptance', 0, 'A'),
     ev('accepted', D, 'A'),
@@ -68,11 +68,11 @@ describe('ticketTat — transferred between labs', () => {
   ]
   const tat = ticketTat(trail, 'B', T0 + 30 * D)
 
-  it('splits into one leg per lab', () => {
+  it('splits into one leg per Revive Lab', () => {
     expect(tat.legs.map(l => [l.trcId, l.endedBy])).toEqual([['A', 'transfer'], ['B', 'closed']])
   })
 
-  it('counts the time a lab spent before giving up as repair', () => {
+  it('counts the time a Revive Lab spent before giving up as repair', () => {
     expect(tat.legs[0].repair).toEqual({ ms: D, running: false })
     expect(tat.legs[0].total).toEqual({ ms: 3 * D, running: false })
   })

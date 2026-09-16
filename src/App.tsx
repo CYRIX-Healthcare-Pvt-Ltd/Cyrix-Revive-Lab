@@ -130,7 +130,7 @@ function NotGiven() {
       <Wrench className="mx-auto h-8 w-8 text-ink-300" />
       <h1 className="text-lg font-semibold text-ink-900">Revive Lab is not on your account yet</h1>
       <p className="text-sm text-ink-500">
-        The software administrator gives it to field engineers and TRC staff. Ask them to add it, then come back.
+        The software administrator gives it to field engineers and Revive Lab staff. Ask them to add it, then come back.
       </p>
       <a href="/" className="btn-secondary inline-flex">
         <Grid2x2 className="h-4 w-4" /> Back to my modules

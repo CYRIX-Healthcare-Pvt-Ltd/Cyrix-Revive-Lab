@@ -35,7 +35,7 @@ export default function TicketDetail() {
       <div className="space-y-4">
         <BackLink />
         <EmptyState icon={Wrench} title={`${code} is not a ticket you can see`}>
-          It may not exist, or it may belong to a TRC and a team you are not part of.
+          It may not exist, or it may belong to a Revive Lab and a team you are not part of.
         </EmptyState>
       </div>
     )
@@ -110,9 +110,9 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
               <Row label="Their manager">{t.stakeholder_manager_name}</Row>
               <Row label="Raised by">
                 {t.raised_by_name}
-                <span className="text-xs text-ink-400"> · {t.raised_as === 'coordinator' ? 'at the TRC' : 'from the field'}</span>
+                <span className="text-xs text-ink-400"> · {t.raised_as === 'coordinator' ? 'at the Revive Lab' : 'from the field'}</span>
               </Row>
-              <Row label="TRC engineer">
+              <Row label="Revive Lab engineer">
                 {t.engineer_name && <>{t.engineer_name} <span className="text-xs text-ink-400">{t.engineer_ecode}</span></>}
               </Row>
             </dl>
@@ -223,7 +223,7 @@ function SpanCell({ span, label }: { span: Span; label: string }) {
 }
 
 /**
- * The stages, and — when the spare changed labs — each lab's share.
+ * The stages, and — when the spare changed Revive Labs — each Revive Lab's share.
  *
  * Measured from the history below it, so the two cannot disagree: every
  * figure here is the gap between two of those timestamps.
@@ -238,7 +238,7 @@ function TatCard({
   return (
     <Section title="Turnaround">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-        <SpanCell label="Reach TRC" span={tat.reach} />
+        <SpanCell label="Reach Revive Lab" span={tat.reach} />
         <SpanCell label="To assignment" span={tat.assign} />
         <SpanCell label="Repair" span={tat.repair} />
         <SpanCell label="Dispatch & transit" span={tat.dispatch} />
@@ -250,12 +250,12 @@ function TatCard({
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-ink-200 text-left text-xs font-semibold uppercase tracking-wide text-ink-500">
-                <th className="py-2 pr-3 font-medium">TRC leg</th>
+                <th className="py-2 pr-3 font-medium">Revive Lab leg</th>
                 <th className="px-3 py-2 text-right font-medium">Reach</th>
                 <th className="px-3 py-2 text-right font-medium">Assign</th>
                 <th className="px-3 py-2 text-right font-medium">Repair</th>
                 <th className="px-3 py-2 text-right font-medium">Dispatch</th>
-                <th className="py-2 pl-3 text-right font-medium">At this TRC</th>
+                <th className="py-2 pl-3 text-right font-medium">At this Revive Lab</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-ink-100">
@@ -300,7 +300,7 @@ const ACTION_META: Record<Action, { label: string; icon: typeof Hand; primary?: 
   dispatch: { label: 'Dispatch back', icon: Send, primary: true },
   received: { label: 'Received back', icon: PackageCheck, primary: true },
   return: { label: 'Hand back to coordinator', icon: Undo2 },
-  transfer: { label: 'Transfer to another TRC', icon: ArrowRightLeft },
+  transfer: { label: 'Transfer to another Revive Lab', icon: ArrowRightLeft },
 }
 
 /**
@@ -395,7 +395,7 @@ function ActionForm({
           onDone(`Assigned to ${who ?? 'the engineer'}. They accept it before starting.`); break
         }
         case 'start':
-          await start.mutateAsync({ id: t.id, note }); onDone('Repair accepted — the clock on the bench has started.'); break
+          await start.mutateAsync({ id: t.id, note }); onDone('Repair accepted — repair time is counting from now.'); break
         case 'return':
           await giveBack.mutateAsync({ id: t.id, note }); onDone('Handed back to the coordinator.'); break
         case 'complete':
@@ -405,7 +405,7 @@ function ActionForm({
         case 'received':
           await received.mutateAsync({ id: t.id, note }); onDone(`${t.code} is closed.`); break
         case 'transfer': {
-          if (!toTrc) { onError('Choose the TRC it is going to.'); return }
+          if (!toTrc) { onError('Choose the Revive Lab it is going to.'); return }
           await transfer.mutateAsync({ id: t.id, toTrcId: toTrc, reason: note, courier, awb, on })
           onDone(`Transferred to ${trcs?.find(x => x.id === toTrc)?.name}. Their coordinators accept it on arrival.`); break
         }
@@ -429,7 +429,7 @@ function ActionForm({
           </select>
           {engineers.length === 0 && (
             <p className="mt-1 text-xs text-cyrixRed-700">
-              Nobody at this TRC has the engineer box ticked. An admin adds them under People &amp; TRCs.
+              Nobody at this Revive Lab has the engineer box ticked. An admin adds them under People &amp; Revive Labs.
             </p>
           )}
         </label>
@@ -474,8 +474,8 @@ function ActionForm({
           onChange={e => setNote(e.target.value)}
           placeholder={
             action === 'complete' ? 'What was done — parts replaced, tests run'
-              : action === 'transfer' ? 'e.g. Needs FPGA rework this TRC cannot do'
-                : action === 'return' ? 'e.g. Beyond what this bench can repair'
+              : action === 'transfer' ? 'e.g. Needs FPGA rework this Revive Lab cannot do'
+                : action === 'return' ? 'e.g. Cannot be repaired at this Revive Lab'
                   : ''
           }
         />

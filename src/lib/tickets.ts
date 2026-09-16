@@ -22,8 +22,8 @@ export type TicketStatus =
 export type TrcKind = 'regional' | 'project'
 
 export const TRC_KIND_LABEL: Record<TrcKind, string> = {
-  regional: 'Regional TRC',
-  project: 'Project TRC',
+  regional: 'Regional Revive Lab',
+  project: 'Project Revive Lab',
 }
 
 export type Tone = 'amber' | 'violet' | 'sky' | 'indigo' | 'emerald' | 'teal' | 'ink'
@@ -42,12 +42,12 @@ interface StatusMeta {
 
 export const STATUS: Record<TicketStatus, StatusMeta> = {
   pending_acceptance: {
-    label: 'Pending TRC acceptance', short: 'Pending acceptance', tone: 'amber', order: 1,
-    waitingOn: 'the TRC coordinator to accept it',
+    label: 'Pending Revive Lab acceptance', short: 'Pending acceptance', tone: 'amber', order: 1,
+    waitingOn: 'the Revive Lab coordinator to accept it',
   },
   transferred: {
-    label: 'Transferred — on its way to another TRC', short: 'Transferred', tone: 'violet', order: 1,
-    waitingOn: 'the receiving TRC to accept it',
+    label: 'Transferred — on its way to another Revive Lab', short: 'Transferred', tone: 'violet', order: 1,
+    waitingOn: 'the receiving Revive Lab to accept it',
   },
   accepted: {
     label: 'Accepted by the coordinator', short: 'Accepted', tone: 'sky', order: 2,

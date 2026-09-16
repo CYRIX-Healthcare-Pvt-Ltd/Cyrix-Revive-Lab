@@ -22,11 +22,21 @@ export default function Shell() {
   const { data: tickets } = useTickets()
   const mine = (tickets ?? []).filter(t => waitingOnMe(t, me)).length
 
-  const items = [
-    { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
-    { to: '/tickets', label: 'Tickets', icon: ListChecks, badge: mine },
-    { to: '/new', label: 'Raise ticket', icon: PackagePlus },
-    ...(me?.is_admin ? [{ to: '/access', label: 'People & TRCs', icon: ShieldCheck }] : []),
+  /*
+    Two names per tab. The header has room for the whole one; the bar at
+    the bottom of a phone splits its width five ways, and "People & Revive
+    Labs" beside "Raise ticket" ran straight into it.
+  */
+  const items: Array<{
+    to: string; label: string; short: string
+    icon: typeof LayoutDashboard; end?: boolean; badge?: number
+  }> = [
+    { to: '/', label: 'Dashboard', short: 'Home', icon: LayoutDashboard, end: true },
+    { to: '/tickets', label: 'Tickets', short: 'Tickets', icon: ListChecks, badge: mine },
+    { to: '/new', label: 'Raise ticket', short: 'Raise', icon: PackagePlus },
+    ...(me?.is_admin
+      ? [{ to: '/access', label: 'People & Revive Labs', short: 'People', icon: ShieldCheck }]
+      : []),
   ]
 
   const handleSignOut = async () => {
@@ -113,7 +123,7 @@ export default function Shell() {
               to={item.to}
               end={item.end}
               className={({ isActive }) => clsx(
-                'relative flex flex-col items-center gap-1 px-1 py-2.5 text-[11px] font-medium transition-colors',
+                'relative flex min-w-0 flex-col items-center gap-1 px-1 py-2.5 text-[11px] font-medium transition-colors',
                 isActive ? 'text-[color:var(--page-strong)]' : 'text-ink-400',
               )}
             >
@@ -125,15 +135,15 @@ export default function Shell() {
                   </span>
                 )}
               </span>
-              <span className="truncate">{item.label}</span>
+              <span className="w-full truncate text-center">{item.short}</span>
             </NavLink>
           ))}
           <a
             href="/"
-            className="relative flex flex-col items-center gap-1 px-1 py-2.5 text-[11px] font-medium text-ink-400 transition-colors"
+            className="relative flex min-w-0 flex-col items-center gap-1 px-1 py-2.5 text-[11px] font-medium text-ink-400 transition-colors"
           >
             <span className="relative"><Grid2x2 className="h-5 w-5" /></span>
-            <span className="truncate">Modules</span>
+            <span className="w-full truncate text-center">Modules</span>
           </a>
         </div>
       </nav>
@@ -141,13 +151,13 @@ export default function Shell() {
   )
 }
 
-/** " · TRC Coordinator", " · TRC Manager + Engineer" — what the boxes add up to. */
+/** " · Revive Lab Coordinator", " · Revive Lab Manager + Engineer" — what the boxes add up to. */
 function roleCaption(me: ReturnType<typeof useAuth>['me']): string {
   if (!me) return ''
   const parts = [
-    me.is_manager && 'TRC Manager',
-    me.is_coordinator && 'TRC Coordinator',
-    me.is_engineer && 'TRC Engineer',
+    me.is_manager && 'Revive Lab Manager',
+    me.is_coordinator && 'Revive Lab Coordinator',
+    me.is_engineer && 'Revive Lab Engineer',
   ].filter(Boolean) as string[]
   if (parts.length === 0) return ''
   return ' · ' + parts[0] + (parts.length > 1 ? ` +${parts.length - 1}` : '')

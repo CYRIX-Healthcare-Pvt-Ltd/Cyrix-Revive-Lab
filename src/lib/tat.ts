@@ -1,5 +1,5 @@
 /**
- * How long a spare spent at each stage, per lab and in total.
+ * How long a spare spent at each stage, per Revive Lab and in total.
  *
  * Built from the event trail and nothing else. Every status a ticket has
  * ever entered is a row with its own timestamp, written by the same
@@ -7,9 +7,9 @@
  * what happened, and a stage that has not finished yet is measured up to
  * now and says so.
  *
- * A LEG is one lab's hold on the ticket. The first starts when it is
- * raised; a transfer ends one leg and starts the next at the lab it went
- * to, from the moment it was sent — so the courier time between labs
+ * A LEG is one Revive Lab's hold on the ticket. The first starts when it is
+ * raised; a transfer ends one leg and starts the next at the Revive Lab it went
+ * to, from the moment it was sent — so the courier time between Revive Labs
  * counts towards reaching the second one, which is where anybody waiting
  * for the spare would put it.
  *
@@ -17,7 +17,7 @@
  *   reach     leg start → the coordinator accepts it
  *   assign    accepted → given to an engineer
  *   repair    the engineer accepts it → repair closed (or → transferred,
- *             when the lab gave up part way — that was still repair time)
+ *             when the Revive Lab gave up part way — that was still repair time)
  *   dispatch  repair closed → received back (the last leg only)
  *
  * The ticket's own figures add the legs up, and its total runs from the
@@ -100,9 +100,9 @@ export function ticketTat(
     }
     current.end = ev
     chunks.push(current)
-    // The next lab's id is on the first event recorded there. Until one
+    // The next Revive Lab's id is on the first event recorded there. Until one
     // exists the spare is still in the courier's hands, headed for the
-    // ticket's own current lab.
+    // ticket's own current Revive Lab.
     const next = sorted.slice(i + 1).find(x => x.status !== 'transferred')
     current = { trcId: next?.trc_id ?? currentTrcId, start: ev.at, events: [], end: null }
   })

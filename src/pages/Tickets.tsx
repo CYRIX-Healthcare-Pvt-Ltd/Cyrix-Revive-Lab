@@ -122,8 +122,8 @@ export default function Tickets() {
             ))}
           </div>
           <div className="ml-auto flex w-full flex-wrap gap-2 sm:w-auto">
-            <select className="input !py-1.5 sm:w-40" value={trcId} onChange={e => setTrcId(e.target.value)} aria-label="Filter by TRC">
-              <option value="">All TRCs</option>
+            <select className="input !py-1.5 sm:w-40" value={trcId} onChange={e => setTrcId(e.target.value)} aria-label="Filter by Revive Lab">
+              <option value="">All Revive Labs</option>
               {(trcs ?? []).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
             <select className="input !py-1.5 sm:w-44" value={status} onChange={e => setStatus(e.target.value)} aria-label="Filter by status">
@@ -160,10 +160,10 @@ export default function Tickets() {
                   <tr className="border-b border-ink-200 text-left text-xs font-semibold uppercase tracking-wide text-ink-500">
                     <SortHeader label="Ticket" col="code" sortKey={sortKey} asc={asc} onSort={onSort} />
                     <SortHeader label="Status" col="status" sortKey={sortKey} asc={asc} onSort={onSort} />
-                    <SortHeader label="TRC" col="trc" sortKey={sortKey} asc={asc} onSort={onSort} />
+                    <SortHeader label="Revive Lab" col="trc" sortKey={sortKey} asc={asc} onSort={onSort} />
                     <SortHeader label="Facility" col="facility" sortKey={sortKey} asc={asc} onSort={onSort} />
                     <th className="px-4 py-2.5 font-medium">Field engineer</th>
-                    <th className="px-4 py-2.5 font-medium">TRC engineer</th>
+                    <th className="px-4 py-2.5 font-medium">Revive Lab engineer</th>
                     <SortHeader label="Age" col="age" align="right" sortKey={sortKey} asc={asc} onSort={onSort} />
                   </tr>
                 </thead>

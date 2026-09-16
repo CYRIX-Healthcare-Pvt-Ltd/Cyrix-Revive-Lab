@@ -36,8 +36,8 @@ describe('ticket numbers', () => {
   })
 })
 
-describe('the desk is a coordinator or manager of that lab', () => {
-  it('needs the box and the lab together', () => {
+describe('the desk is a coordinator or manager of that Revive Lab', () => {
+  it('needs the box and the Revive Lab together', () => {
     expect(runsTrc(me({ is_coordinator: true, trc_ids: [REG] }), REG)).toBe(true)
     expect(runsTrc(me({ is_manager: true, trc_ids: [REG] }), REG)).toBe(true)
     expect(runsTrc(me({ is_coordinator: true, trc_ids: [PRJ] }), REG)).toBe(false)
