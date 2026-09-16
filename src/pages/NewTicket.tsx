@@ -52,18 +52,18 @@ export default function NewTicket() {
   const [stage, setStage] = useState<'idle' | 'raising' | 'uploading'>('idle')
 
   /*
-    The contact number and return address are the same on nearly every card
-    one engineer sends, so they start as whatever this person put last time.
-    Only when the fields are still empty: nothing typed is ever overwritten.
+    The contact number starts as the official number on this person's KPI
+    profile, and the return address as whatever they put on their last card
+    — both are the same on nearly every spare one engineer sends. Only when
+    the fields are still empty: nothing typed is ever overwritten.
   */
   useEffect(() => {
-    if (!employee || !tickets?.length) return
-    const last = tickets.find(t => t.raised_by === employee.id && (t.contact_number || t.return_address))
-    if (!last) return
+    if (!employee) return
+    const last = (tickets ?? []).find(t => t.raised_by === employee.id && (t.contact_number || t.return_address))
     setForm(f => ({
       ...f,
-      contactNumber: f.contactNumber || last.contact_number || '',
-      returnAddress: f.returnAddress || last.return_address || '',
+      contactNumber: f.contactNumber || employee.official_phone || last?.contact_number || '',
+      returnAddress: f.returnAddress || last?.return_address || '',
     }))
   }, [employee, tickets])
 

@@ -23,6 +23,8 @@ export interface Employee {
   full_name: string
   designation: string | null
   avatar: string | null
+  /** From KPI's My profile (0141). Where the route card's contact number starts. */
+  official_phone: string | null
 }
 
 interface AuthState {
@@ -57,7 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // sees several rows and returns nobody.
     const [emp, mine, access] = await Promise.all([
       supabase.from('employees')
-        .select('id, ecode, full_name, designation, avatar')
+        .select('id, ecode, full_name, designation, avatar, official_phone')
         .eq('auth_user_id', uid).maybeSingle(),
       supabase.rpc('revive_me'),
       supabase.rpc('revive_has_access'),

@@ -78,15 +78,10 @@ export default function Shell() {
           </div>
 
           <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-3">
-            {/* The profile lives in KPI, where the employee record is kept,
-                so the person here is a link there rather than a second
-                profile page that could disagree with it. */}
-            <a
-              href="/kpi/me"
-              className="nav-profile btn-press flex items-center gap-3 rounded-lg py-1 pl-2 pr-1"
-              aria-label="My profile"
-              title="My profile"
-            >
+            {/* Who is signed in — shown, not a link. It used to open KPI's
+                profile, which jumped people out of Revive Lab mid-task for
+                a page they had not asked for. */}
+            <div className="flex items-center gap-3 rounded-lg py-1 pl-2 pr-1">
               <span className="hidden text-right lg:block">
                 <span className="block text-sm font-medium leading-tight text-ink-900">
                   {employee?.full_name}
@@ -97,7 +92,7 @@ export default function Shell() {
                 </span>
               </span>
               <Avatar name={employee?.full_name} src={employee?.avatar} size="header" />
-            </a>
+            </div>
             <ThemeToggle />
             <button onClick={handleSignOut} className="btn-icon" aria-label="Sign out" title="Sign out">
               <LogOut className="h-4.5 w-4.5 text-cyrixRed-600" />
