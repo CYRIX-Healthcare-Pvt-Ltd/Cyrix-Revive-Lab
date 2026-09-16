@@ -4,8 +4,8 @@
  * For the route card: State is chosen first, and District then offers only
  * that state's districts. 36 states and union territories, 788 districts,
  * taken from Wikipedia's "List of districts in India" on 2026-09-16 and sorted
- * alphabetically. Districts are created and renamed every few years, so the
- * form also offers Other for one that is not listed yet.
+ * alphabetically. Districts are created and renamed every few years: when
+ * one is, this list is regenerated from the same source.
  */
 export const INDIA: Readonly<Record<string, readonly string[]>> = {
   "Andaman and Nicobar Islands": [

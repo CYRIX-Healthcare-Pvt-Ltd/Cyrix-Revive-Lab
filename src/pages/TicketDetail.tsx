@@ -115,11 +115,11 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
           <Section title="Service route card">
             <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
               <Row label="State">{t.state}</Row>
-              <Row label="BEMMP">{t.bemmp_code}</Row>
               <Row label="District">{t.district}</Row>
-              <Row label="Equipment name">{t.equipment_name}</Row>
+              <Row label="BEMMP">{t.bemmp_code}</Row>
               <Row label="Hospital name">{t.facility}</Row>
               <Row label="Equipment barcode">{t.equipment_barcode && <span className="font-mono">{t.equipment_barcode}</span>}</Row>
+              <Row label="Equipment name">{t.equipment_name}</Row>
               <Row label="Spare name">{t.spare_name}</Row>
               <Row label="Ticket ID">{t.source_ticket_no && <span className="font-mono">{t.source_ticket_no}</span>}</Row>
               {/* With their function, so the Revive Lab can see which part of
@@ -146,7 +146,7 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
           <AttachmentsCard ticket={t} />
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <Section title="Inbound courier">
+            <Section title="Courier details">
               <Courier name={t.in_courier} awb={t.in_awb} on={t.in_dispatched_on} empty="Not recorded" />
             </Section>
             <Section title="Return courier">

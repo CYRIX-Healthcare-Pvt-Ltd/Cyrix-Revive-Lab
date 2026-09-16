@@ -7,7 +7,7 @@ import {
   listAttachments, removeAttachment, removeVideoOf, uploadAttachment, type Attachment, type Slot,
 } from '@/lib/attachments'
 import { Alert, Spinner } from '@/components/ui'
-import { PhotoPicker, VideoRecorder, VoiceRecorder, type PendingPhoto } from '@/components/Attachments'
+import { MediaCapture, type PendingPhoto } from '@/components/Attachments'
 
 /**
  * Issue identified — what was written, photographed, filmed and said.
@@ -92,6 +92,13 @@ export default function TicketAttachments({ ticket: t }: { ticket: Ticket }) {
 
   const hasPending = newPhotos.length > 0 || !!newVideo || !!newVoice
 
+  // "Add photos, a video or a voice note" — only what the ticket has room for.
+  const addable = [
+    freeImageSlots.length > 1 ? 'photos' : freeImageSlots.length === 1 ? 'a photo' : null,
+    videoFile ? null : 'a video',
+    voiceFile ? null : 'a voice note',
+  ].filter(Boolean).join(', ').replace(/, ([^,]*)$/, ' or $1')
+
   return (
     <div className="card overflow-hidden">
       <div className="border-b border-ink-200 bg-ink-50 px-4 py-2.5">
@@ -156,27 +163,17 @@ export default function TicketAttachments({ ticket: t }: { ticket: Ticket }) {
             )}
 
             {canAdd && (freeImageSlots.length > 0 || !videoFile || !voiceFile) && (
-              <div className="space-y-3 rounded-lg border border-dashed border-ink-200 p-3">
-                {freeImageSlots.length > 0 && (
-                  <div>
-                    <span className="label">Add photos</span>
-                    <div className="mt-1">
-                      <PhotoPicker photos={newPhotos} onChange={setNewPhotos} max={freeImageSlots.length} />
-                    </div>
+              <div className="space-y-3 rounded-lg border border-ink-200 p-3">
+                <div>
+                  <span className="label">Add {addable}</span>
+                  <div className="mt-1">
+                    <MediaCapture
+                      photos={freeImageSlots.length > 0 ? { value: newPhotos, onChange: setNewPhotos, max: freeImageSlots.length } : undefined}
+                      video={videoFile ? undefined : { value: newVideo, onChange: setNewVideo }}
+                      voice={voiceFile ? undefined : { value: newVoice, onChange: setNewVoice }}
+                    />
                   </div>
-                )}
-                {!videoFile && (
-                  <div>
-                    <span className="label">Add a video</span>
-                    <div className="mt-1"><VideoRecorder video={newVideo} onChange={setNewVideo} /></div>
-                  </div>
-                )}
-                {!voiceFile && (
-                  <div>
-                    <span className="label">Add a voice note</span>
-                    <div className="mt-1"><VoiceRecorder voice={newVoice} onChange={setNewVoice} /></div>
-                  </div>
-                )}
+                </div>
                 {hasPending && (
                   <button type="button" className="btn-primary" onClick={() => void send()} disabled={busy}>
                     {busy && <Spinner className="h-4 w-4" />} Send

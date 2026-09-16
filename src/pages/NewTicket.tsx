@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
-import { ArrowLeft, PackagePlus, Truck, Building2 } from 'lucide-react'
+import { ArrowLeft, PackagePlus } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useBemmpProjects, useRaiseTicket, useTickets, useTrcs, type Person } from '@/lib/queries'
 import { runsTrc, TRC_KIND_LABEL, type TrcKind } from '@/lib/tickets'
@@ -9,25 +9,24 @@ import { STATES, districtsOf } from '@/lib/india'
 import { uploadAttachment, type Slot } from '@/lib/attachments'
 import { Alert, PageLoader, Spinner } from '@/components/ui'
 import PersonPicker from '@/components/PersonPicker'
-import { PhotoPicker, VideoRecorder, VoiceRecorder, type PendingPhoto } from '@/components/Attachments'
-
-/** The district select's way out, for a district newer than the list. */
-const OTHER = '__other__'
+import { MediaCapture, type PendingPhoto } from '@/components/Attachments'
 
 /**
  * Raising a ticket — the route card, on a screen.
  *
  * Field engineers already send spares in with a paper card, form
  * CHPL/CRL/SRC, and this asks what the card asks. State comes first, then
- * which BEMMP the equipment belongs to, then the district — only that
- * state's districts. Sent by is whoever is signed in, with their function,
+ * the district — only that state's districts — then which BEMMP the
+ * equipment belongs to. Sent by is whoever is signed in, with their function,
  * and never typed; Date of dispatch is the inbound courier's date. The back
  * of the card — Action taken, Final status — belongs to the Close repair and
  * Received back steps.
  *
- * Two doors to the same form. A field engineer sending a spare in raises it
- * for themselves; a coordinator whose Revive Lab a spare simply arrived at
- * raises it there and names the field engineer it belongs to.
+ * Who is asking decides which card it is, and nobody is asked. A field
+ * engineer sending a spare in raises it for themselves. A Revive Lab's
+ * coordinator or manager raises it at their Revive Lab, for a spare that
+ * arrived there, and names the field engineer it belongs to — the desk does
+ * not send spares in, so it is not offered the choice.
  */
 export default function NewTicket() {
   const { me, employee } = useAuth()
@@ -42,19 +41,16 @@ export default function NewTicket() {
   const canDesk = deskTrcs.length > 0
   const bemmpChoices = useMemo(() => (bemmp ?? []).filter(b => b.is_active), [bemmp])
 
-  const [atLab, setAtLab] = useState(false)
-  useEffect(() => { setAtLab(canDesk) }, [canDesk])
+  const atLab = canDesk
 
   const [kind, setKind] = useState<TrcKind | ''>('')
   const [trcId, setTrcId] = useState('')
   const [holder, setHolder] = useState<Person | null>(null)
   const [form, setForm] = useState({
-    state: '', bemmpId: '', district: '', equipmentName: '', hospital: '', equipmentBarcode: '',
-    spareName: '', issue: '', sourceTicketNo: '', contactNumber: '',
+    state: '', district: '', bemmpId: '', hospital: '', equipmentBarcode: '', equipmentName: '',
+    spareName: '', sourceTicketNo: '', contactNumber: '', issue: '',
     returnAddress: '', inCourier: '', inAwb: '', inDispatchedOn: '',
   })
-  /** The select's own value — a district, OTHER, or empty — kept apart from what is sent. */
-  const [districtPick, setDistrictPick] = useState('')
   const [photos, setPhotos] = useState<PendingPhoto[]>([])
   const [video, setVideo] = useState<Blob | null>(null)
   const [voice, setVoice] = useState<Blob | null>(null)
@@ -95,12 +91,6 @@ export default function NewTicket() {
   const chooseState = (state: string) => {
     // A district belongs to one state: changing the state clears it.
     setForm(f => ({ ...f, state, district: '' }))
-    setDistrictPick('')
-  }
-
-  const chooseDistrict = (pick: string) => {
-    setDistrictPick(pick)
-    setForm(f => ({ ...f, district: pick === OTHER ? '' : pick }))
   }
 
   const submit = async (e: React.FormEvent) => {
@@ -108,8 +98,8 @@ export default function NewTicket() {
     setError(null)
     if (!trcId) { setError('Choose the Revive Lab the spare is going to.'); return }
     if (!form.state) { setError('Choose the state.'); return }
+    if (!form.district) { setError('Choose the district.'); return }
     if (!form.bemmpId) { setError('Choose the BEMMP.'); return }
-    if (form.district.trim().length < 2) { setError('Choose the district.'); return }
     if (form.hospital.trim().length < 2) { setError('Enter the hospital name.'); return }
     if (form.spareName.trim().length < 2) { setError('Enter the spare name.'); return }
     if (form.issue.trim().length < 3) { setError('Describe the issue identified.'); return }
@@ -169,34 +159,8 @@ export default function NewTicket() {
       {error && <Alert kind="error">{error}</Alert>}
 
       <form onSubmit={submit} className="space-y-4">
-        {canDesk && (
-          <div className="grid gap-2 sm:grid-cols-2">
-            {[
-              { lab: true, icon: Building2, title: 'A spare arrived at my Revive Lab', sub: 'You name the field engineer it belongs to.' },
-              { lab: false, icon: Truck, title: 'I am sending a spare in', sub: 'From a hospital, to a Revive Lab.' },
-            ].map(o => (
-              <button
-                key={String(o.lab)}
-                type="button"
-                onClick={() => { setAtLab(o.lab); setKind(''); setTrcId('') }}
-                className={clsx(
-                  'card flex items-start gap-3 p-3.5 text-left transition-colors',
-                  atLab === o.lab ? 'border-ink-900 ring-1 ring-ink-900' : 'hover:border-ink-300',
-                )}
-                aria-pressed={atLab === o.lab}
-              >
-                <o.icon className="mt-0.5 h-5 w-5 shrink-0 text-ink-500" />
-                <span>
-                  <span className="block text-sm font-medium text-ink-900">{o.title}</span>
-                  <span className="block text-xs text-ink-500">{o.sub}</span>
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
-
         <div className="card space-y-3 p-4">
-          <h2 className="text-sm font-semibold text-ink-800">Where it is going</h2>
+          <h2 className="text-sm font-semibold text-ink-800">{atLab ? 'Where it arrived' : 'Where it is going'}</h2>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block">
               <span className="label">Revive Lab type</span>
@@ -238,40 +202,30 @@ export default function NewTicket() {
               </select>
             </label>
             <label className="block">
+              <span className="label">District <Req /></span>
+              <select
+                className="input mt-1"
+                value={form.district}
+                onChange={set('district')}
+                disabled={!form.state}
+              >
+                <option value="">{form.state ? 'Choose…' : 'Choose the state first'}</option>
+                {districts.map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </label>
+            <label className="block">
               <span className="label">BEMMP <Req /></span>
               <select className="input mt-1" value={form.bemmpId} onChange={set('bemmpId')}>
                 <option value="">Choose…</option>
                 {bemmpChoices.map(b => <option key={b.id} value={b.id}>{b.code}</option>)}
               </select>
             </label>
-            <label className="block">
-              <span className="label">District <Req /></span>
-              <select
-                className="input mt-1"
-                value={districtPick}
-                onChange={e => chooseDistrict(e.target.value)}
-                disabled={!form.state}
-              >
-                <option value="">{form.state ? 'Choose…' : 'Choose the state first'}</option>
-                {districts.map(d => <option key={d} value={d}>{d}</option>)}
-                {form.state && <option value={OTHER}>Other — not in the list</option>}
-              </select>
-              {districtPick === OTHER && (
-                <input
-                  className="input mt-2"
-                  value={form.district}
-                  onChange={set('district')}
-                  placeholder={`District in ${form.state}`}
-                  autoFocus
-                />
-              )}
-            </label>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Equipment name" value={form.equipmentName} onChange={set('equipmentName')} placeholder="e.g. Ventilator" />
             <Field label="Hospital name" value={form.hospital} onChange={set('hospital')} required />
             <Field label="Equipment barcode" value={form.equipmentBarcode} onChange={set('equipmentBarcode')} mono />
+            <Field label="Equipment name" value={form.equipmentName} onChange={set('equipmentName')} placeholder="e.g. Ventilator" />
             <Field label="Spare name" value={form.spareName} onChange={set('spareName')} placeholder="e.g. SMPS board" required />
             <Field label="Ticket ID" value={form.sourceTicketNo} onChange={set('sourceTicketNo')} placeholder="The field service ticket" mono />
             <Field label="Contact number" type="tel" value={form.contactNumber} onChange={set('contactNumber')} placeholder="+91 …" />
@@ -283,19 +237,15 @@ export default function NewTicket() {
               placeholder="What is wrong with it, as found on site" />
           </label>
 
-          {/* Photos, then the video, then the voice note. */}
-          <div className="space-y-4">
-            <div>
-              <span className="label">Photos</span>
-              <div className="mt-1"><PhotoPicker photos={photos} onChange={setPhotos} /></div>
-            </div>
-            <div>
-              <span className="label">Video</span>
-              <div className="mt-1"><VideoRecorder video={video} onChange={setVideo} /></div>
-            </div>
-            <div>
-              <span className="label">Voice note</span>
-              <div className="mt-1"><VoiceRecorder voice={voice} onChange={setVoice} /></div>
+          {/* Photos, the video and the voice note, side by side. */}
+          <div>
+            <span className="label">Photos and recordings</span>
+            <div className="mt-1">
+              <MediaCapture
+                photos={{ value: photos, onChange: setPhotos }}
+                video={{ value: video, onChange: setVideo }}
+                voice={{ value: voice, onChange: setVoice }}
+              />
             </div>
           </div>
 
@@ -307,7 +257,7 @@ export default function NewTicket() {
         </div>
 
         <div className="card space-y-3 p-4">
-          <h2 className="text-sm font-semibold text-ink-800">Inbound courier</h2>
+          <h2 className="text-sm font-semibold text-ink-800">Courier details</h2>
           <div className="grid gap-3 sm:grid-cols-3">
             <Field label="Courier" value={form.inCourier} onChange={set('inCourier')} placeholder="DTDC, Blue Dart…" />
             <Field label="Tracking / AWB number" value={form.inAwb} onChange={set('inAwb')} mono />

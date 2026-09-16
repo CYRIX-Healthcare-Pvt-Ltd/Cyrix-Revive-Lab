@@ -1,6 +1,8 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: ['./index.html', './src/**/*.{ts,tsx}'],
+  /* Relative to this file, not to the folder the dev server was started
+     from — see postcss.config.js. */
+  content: { relative: true, files: ['./index.html', './src/**/*.{ts,tsx}'] },
   theme: {
     extend: {
       colors: {
