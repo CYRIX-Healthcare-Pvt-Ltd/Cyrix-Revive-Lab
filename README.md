@@ -22,8 +22,12 @@ Migrations in `supabase/migrations`, applied in order and recorded in `_migratio
 | File | What | When |
 | --- | --- | --- |
 | `rl_0001_revive_lab.sql` | tables, row-level security, workflow functions | applied |
-| `rl_0002_on_the_platform.sql` | the module row in `app_modules` (the portal tile) | once the Vercel app is live |
+| `rl_0002_on_the_platform.sql` | the module row in `app_modules` (the portal tile) | applied once live |
 | `rl_0003_names_for_the_screens.sql` | read functions that name people on visible tickets | applied |
+| `rl_0004_revive_labs_not_trcs.sql` | "TRC" is the old name — messages and lab names | applied |
+| `rl_0005_the_field_engineer_confirms_it_arrived.sql` | only the field engineer marks Received back | applied |
+| `rl_0006_the_software_administrator_can_delete_a_ticket.sql` | SW admin deletes a ticket; numbering restarts when none remain | applied |
+| `rl_0007_the_route_card.sql` | route card fields (form CHPL/CRL/SRC); photos and voice note bucket | applied |
 
 Everything is `revive_`-prefixed. Shared tables are read, never altered — `rl_0002`
 adds one row to `app_modules`, and `revive_save_member` grants the module in

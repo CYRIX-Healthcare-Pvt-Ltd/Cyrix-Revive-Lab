@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useLocation, useParams } from 'react-router-dom'
 import clsx from 'clsx'
 import {
   ArrowLeft, ArrowRightLeft, CheckCircle2, ClipboardCheck, Hand, PackageCheck,
@@ -14,6 +14,7 @@ import {
 import { actionsFor, parseTicketCode, STATUS, TRC_KIND_LABEL, type Action } from '@/lib/tickets'
 import { formatSpan, ticketTat, type Span } from '@/lib/tat'
 import { Alert, EmptyState, PageLoader, Spinner, StatusBadge } from '@/components/ui'
+import AttachmentsCard from '@/components/TicketAttachments'
 
 const when = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleString(undefined, {
@@ -53,6 +54,8 @@ function BackLink() {
 
 function TicketView({ ticket: t }: { ticket: Ticket }) {
   const { me } = useAuth()
+  // Set by the raise screen when a photo or the voice note did not upload.
+  const uploadFailed = (useLocation().state as { uploadFailed?: string[] } | null)?.uploadFailed
   const { data: trail } = useTrail(t.id)
   const { data: hops } = useHops(t.id)
 
@@ -74,7 +77,7 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
               <StatusBadge status={t.status} full />
             </div>
             <p className="mt-1 text-sm text-ink-600">
-              {t.facility}{t.item ? ` · ${t.item}` : ''}
+              {t.facility}{t.spare_name ? ` · ${t.spare_name}` : ''}
             </p>
             <p className="mt-0.5 text-xs text-ink-500">
               At {t.trc_name}
@@ -101,32 +104,51 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
         <div className="space-y-4 lg:col-span-2">
           <TatCard tat={tat} trcName={trcName} closed={t.status === 'closed'} />
 
-          <Section title="Details">
+          {uploadFailed && uploadFailed.length > 0 && (
+            <Alert kind="warning" title="The ticket was raised, but not everything was sent">
+              {uploadFailed.join(' and ')} did not upload. Add {uploadFailed.length === 1 ? 'it' : 'them'} again below.
+            </Alert>
+          )}
+
+          {/* The route card, in the card's own order. */}
+          <Section title="Service route card">
             <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
-              <Row label="Source ticket">{t.source_ticket_no}</Row>
-              <Row label="Spare / board">{t.item}</Row>
-              <Row label="Facility">{t.facility}</Row>
-              <Row label="District · State">{[t.district, t.state].filter(Boolean).join(' · ') || null}</Row>
+              <Row label="District name">{[t.district, t.state].filter(Boolean).join(' · ') || null}</Row>
+              <Row label="Equipment name">{t.equipment_name}</Row>
+              <Row label="Hospital name">{t.facility}</Row>
+              <Row label="Equipment barcode">{t.equipment_barcode && <span className="font-mono">{t.equipment_barcode}</span>}</Row>
+              <Row label="Spare name">{t.spare_name}</Row>
+              <Row label="Ticket ID">{t.source_ticket_no && <span className="font-mono">{t.source_ticket_no}</span>}</Row>
+              <Row label="Sent by">
+                {t.raised_by_name}
+                <span className="text-xs text-ink-400"> · {t.raised_as === 'coordinator' ? 'at the Revive Lab' : 'from the field'}</span>
+              </Row>
+              <Row label="Contact number">
+                {t.contact_number && <a href={'tel:' + t.contact_number} className="link-accent">{t.contact_number}</a>}
+              </Row>
               <Row label="Field engineer">
                 {t.stakeholder_name} <span className="text-xs text-ink-400">{t.stakeholder_ecode}</span>
               </Row>
               <Row label="Their manager">{t.stakeholder_manager_name}</Row>
-              <Row label="Raised by">
-                {t.raised_by_name}
-                <span className="text-xs text-ink-400"> · {t.raised_as === 'coordinator' ? 'at the Revive Lab' : 'from the field'}</span>
-              </Row>
               <Row label="Revive Lab engineer">
                 {t.engineer_name && <>{t.engineer_name} <span className="text-xs text-ink-400">{t.engineer_ecode}</span></>}
               </Row>
             </dl>
           </Section>
 
+          <AttachmentsCard ticket={t} />
+
           <div className="grid gap-4 sm:grid-cols-2">
             <Section title="Inbound courier">
               <Courier name={t.in_courier} awb={t.in_awb} on={t.in_dispatched_on} empty="Not recorded" />
             </Section>
             <Section title="Return courier">
-              <Courier name={t.out_courier} awb={t.out_awb} on={t.out_dispatched_on} empty="Not dispatched yet" />
+              <div className="space-y-3">
+                <Row label="Spare return address">
+                  {t.return_address && <span className="whitespace-pre-wrap">{t.return_address}</span>}
+                </Row>
+                <Courier name={t.out_courier} awb={t.out_awb} on={t.out_dispatched_on} empty="Not dispatched yet" />
+              </div>
             </Section>
           </div>
 
@@ -402,10 +424,12 @@ function ActionForm({
         case 'return':
           await giveBack.mutateAsync({ id: t.id, note }); onDone('Handed back to the coordinator.'); break
         case 'complete':
+          if (note.trim().length < 3) { onError('Say what action was taken on it.'); return }
           await complete.mutateAsync({ id: t.id, note }); onDone('Repair closed. It is with the coordinator for dispatch.'); break
         case 'dispatch':
           await dispatch.mutateAsync({ id: t.id, courier, awb, on, note }); onDone('Dispatched back to the field.'); break
         case 'received':
+          if (note.trim().length < 2) { onError('Give the final status — is it working?'); return }
           await received.mutateAsync({ id: t.id, note }); onDone(`${t.code} is closed.`); break
         case 'transfer': {
           if (!toTrc) { onError('Choose the Revive Lab it is going to.'); return }
@@ -418,7 +442,9 @@ function ActionForm({
     }
   }
 
-  const needsNote = action === 'return' || action === 'transfer'
+  // The back of the route card: the Revive Lab's Action taken, and the
+  // field engineer's Final status.
+  const needsNote = action === 'return' || action === 'transfer' || action === 'complete' || action === 'received'
   const needsCourier = action === 'dispatch' || action === 'transfer'
 
   return (
@@ -448,6 +474,16 @@ function ActionForm({
         </label>
       )}
 
+      {action === 'dispatch' && (
+        <div className="rounded-lg border border-ink-200 bg-ink-50 p-3">
+          <p className="text-[11px] font-semibold uppercase tracking-label text-ink-400">Send it back to</p>
+          <p className="mt-0.5 whitespace-pre-wrap text-sm text-ink-900">
+            {t.return_address || <span className="text-ink-400">No return address on the route card</span>}
+          </p>
+          {t.contact_number && <p className="mt-1 text-xs text-ink-500">Contact {t.contact_number}</p>}
+        </div>
+      )}
+
       {needsCourier && (
         <div className="grid gap-3 sm:grid-cols-3">
           <label className="block">
@@ -467,7 +503,11 @@ function ActionForm({
 
       <label className="block">
         <span className="label">
-          {action === 'transfer' ? 'Why it is being transferred' : action === 'return' ? 'Why it is going back' : 'Note (optional)'}
+          {action === 'transfer' ? 'Why it is being transferred'
+            : action === 'return' ? 'Why it is going back'
+              : action === 'complete' ? 'Action taken'
+                : action === 'received' ? 'Final status'
+                  : 'Note (optional)'}
           {needsNote && <span className="text-cyrixRed-600"> *</span>}
         </span>
         <textarea
@@ -477,6 +517,7 @@ function ActionForm({
           onChange={e => setNote(e.target.value)}
           placeholder={
             action === 'complete' ? 'What was done — parts replaced, tests run'
+              : action === 'received' ? 'e.g. Received, installed and working'
               : action === 'transfer' ? 'e.g. Needs FPGA rework this Revive Lab cannot do'
                 : action === 'return' ? 'e.g. Cannot be repaired at this Revive Lab'
                   : ''

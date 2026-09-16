@@ -324,6 +324,18 @@ function DeleteTicket() {
     if (!found) return
     setBusy(true); setError(null)
     try {
+      /*
+        Its photos and voice note first. Storage files do not go with the
+        row, and once the ticket is gone the read rule that finds them
+        (revive_can_see) has nothing to check against — they would be left
+        where nobody could ever reach them again.
+      */
+      const bucket = supabase.storage.from('revive-attachments')
+      const { data: files } = await bucket.list(found.id)
+      if (files?.length) {
+        const { error: rmErr } = await bucket.remove(files.map(f => `${found.id}/${f.name}`))
+        if (rmErr) throw new Error(friendlyError(rmErr))
+      }
       const out = await call<{ code: string; numbering_restarted: boolean }>('revive_delete_ticket', { p_ticket_id: found.id })
       setNotice(`Deleted ${out.code}.` + (out.numbering_restarted ? ' No tickets are left, so the next one will be RL-01.' : ''))
       setFound(null); setTyped('')

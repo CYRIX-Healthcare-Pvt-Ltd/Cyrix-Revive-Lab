@@ -3,25 +3,32 @@ import { useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { ArrowLeft, PackagePlus, Truck, Building2 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { useRaiseTicket, useTrcs, type Person } from '@/lib/queries'
+import { useRaiseTicket, useTickets, useTrcs, type Person } from '@/lib/queries'
 import { runsTrc, TRC_KIND_LABEL, type TrcKind } from '@/lib/tickets'
+import { uploadAttachment } from '@/lib/attachments'
 import { Alert, PageLoader, Spinner } from '@/components/ui'
 import PersonPicker from '@/components/PersonPicker'
+import { PhotoPicker, VoiceRecorder, type PendingPhoto } from '@/components/Attachments'
 
 /**
- * Raising a ticket.
+ * Raising a ticket — the route card, on a screen.
  *
- * Two doors to the same form. A field engineer sending a spare in raises
- * it for themselves; a coordinator whose Revive Lab a spare has simply arrived at
- * raises it at the Revive Lab, and names the field engineer it belongs to — that
- * engineer, and their manager, then follow it exactly as if they had sent
- * it. Somebody who is both sees a switch; everybody else sees only the one
- * door that applies to them.
+ * Field engineers already send spares in with a paper card, form
+ * CHPL/CRL/SRC, and this asks what the card asks in the order the card asks
+ * it, so filling one in is filling in the other. Sent by is whoever is
+ * signed in and never typed; Date of dispatch is the inbound courier's date.
+ * The back of the card — Action taken, Final status — belongs to the Close
+ * repair and Received back steps, and is asked for there.
+ *
+ * Two doors to the same form. A field engineer sending a spare in raises it
+ * for themselves; a coordinator whose Revive Lab a spare simply arrived at
+ * raises it there and names the field engineer it belongs to.
  */
 export default function NewTicket() {
-  const { me } = useAuth()
+  const { me, employee } = useAuth()
   const navigate = useNavigate()
   const { data: trcs, isLoading } = useTrcs()
+  const { data: tickets } = useTickets()
   const raise = useRaiseTicket()
 
   const active = useMemo(() => (trcs ?? []).filter(t => t.is_active), [trcs])
@@ -35,10 +42,30 @@ export default function NewTicket() {
   const [trcId, setTrcId] = useState('')
   const [holder, setHolder] = useState<Person | null>(null)
   const [form, setForm] = useState({
-    facility: '', district: '', state: '', sourceTicketNo: '', item: '',
-    inCourier: '', inAwb: '', inDispatchedOn: '',
+    district: '', equipmentName: '', hospital: '', equipmentBarcode: '',
+    spareName: '', issue: '', sourceTicketNo: '', contactNumber: '',
+    returnAddress: '', state: '', inCourier: '', inAwb: '', inDispatchedOn: '',
   })
+  const [photos, setPhotos] = useState<PendingPhoto[]>([])
+  const [voice, setVoice] = useState<Blob | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [stage, setStage] = useState<'idle' | 'raising' | 'uploading'>('idle')
+
+  /*
+    The contact number and return address are the same on nearly every card
+    one engineer sends, so they start as whatever this person put last time.
+    Only when the fields are still empty: nothing typed is ever overwritten.
+  */
+  useEffect(() => {
+    if (!employee || !tickets?.length) return
+    const last = tickets.find(t => t.raised_by === employee.id && (t.contact_number || t.return_address))
+    if (!last) return
+    setForm(f => ({
+      ...f,
+      contactNumber: f.contactNumber || last.contact_number || '',
+      returnAddress: f.returnAddress || last.return_address || '',
+    }))
+  }, [employee, tickets])
 
   const choices = (atLab ? deskTrcs : active).filter(t => !kind || t.kind === kind)
   const kinds = [...new Set((atLab ? deskTrcs : active).map(t => t.kind))]
@@ -50,24 +77,56 @@ export default function NewTicket() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, atLab, trcs])
 
-  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setForm(f => ({ ...f, [k]: e.target.value }))
+  const set = (k: keyof typeof form) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+      setForm(f => ({ ...f, [k]: e.target.value }))
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
     if (!trcId) { setError('Choose the Revive Lab the spare is going to.'); return }
-    if (form.facility.trim().length < 2) { setError('Enter the facility the spare came from.'); return }
+    if (form.hospital.trim().length < 2) { setError('Enter the hospital name.'); return }
+    if (form.spareName.trim().length < 2) { setError('Enter the spare name.'); return }
+    if (form.issue.trim().length < 3) { setError('Describe the issue identified.'); return }
+    if (form.returnAddress.trim().length < 5) { setError('Enter the spare return address.'); return }
     if (atLab && !holder) { setError('Name the field engineer this spare belongs to.'); return }
+
+    let created: { id: string; code: string } | null = null
     try {
-      const out = await raise.mutateAsync({ ...form, trcId, stakeholderId: atLab ? holder!.id : null })
-      navigate(`/tickets/${out.code}`, { replace: true })
+      setStage('raising')
+      created = await raise.mutateAsync({ ...form, trcId, stakeholderId: atLab ? holder!.id : null })
     } catch (err) {
+      setStage('idle')
       setError(err instanceof Error ? err.message : 'Could not raise that ticket.')
+      return
     }
+
+    /*
+      The ticket exists before its files do: the storage rules only let a
+      file into a folder named for a ticket its sender raised. A file that
+      fails does not undo the ticket — the ticket page offers the empty slot
+      again, and says so.
+    */
+    setStage('uploading')
+    const ticketId = created.id
+    const jobs: Array<[string, () => Promise<void>]> = [
+      ...photos.map((p, i): [string, () => Promise<void>] =>
+        [`photo ${i + 1}`, () => uploadAttachment(ticketId, i === 0 ? 'image-1' : 'image-2', p.blob)]),
+      ...(voice ? [['the voice note', () => uploadAttachment(ticketId, 'voice', voice)] as [string, () => Promise<void>]] : []),
+    ]
+    const results = await Promise.allSettled(jobs.map(([, job]) => job()))
+    const failed = results.flatMap((r, i) => (r.status === 'rejected' ? [jobs[i][0]] : []))
+
+    setStage('idle')
+    navigate(`/tickets/${created.code}`, {
+      replace: true,
+      state: failed.length ? { uploadFailed: failed } : undefined,
+    })
   }
 
   if (isLoading) return <PageLoader />
+
+  const busy = stage !== 'idle'
 
   return (
     <div className="mx-auto max-w-3xl space-y-5">
@@ -78,7 +137,7 @@ export default function NewTicket() {
       <div>
         <h1 className="text-xl font-semibold text-ink-900">Raise a ticket</h1>
         <p className="mt-0.5 text-sm text-ink-500">
-          It gets the next RL number, and the Revive Lab&rsquo;s coordinators are emailed straight away.
+          The spare&rsquo;s route card. It gets the next RL number when you raise it.
         </p>
       </div>
 
@@ -122,8 +181,8 @@ export default function NewTicket() {
               </select>
             </label>
             <label className="block">
-              <span className="label">Revive Lab</span>
-              <select className="input mt-1" value={trcId} onChange={e => setTrcId(e.target.value)} required>
+              <span className="label">Revive Lab <Req /></span>
+              <select className="input mt-1" value={trcId} onChange={e => setTrcId(e.target.value)}>
                 <option value="">Choose…</option>
                 {choices.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
@@ -131,42 +190,71 @@ export default function NewTicket() {
           </div>
           {atLab && (
             <div>
-              <span className="label">Field engineer it belongs to</span>
-              <div className="mt-1">
-                <PersonPicker value={holder} onChange={setHolder} />
-              </div>
+              <span className="label">Field engineer it belongs to <Req /></span>
+              <div className="mt-1"><PersonPicker value={holder} onChange={setHolder} /></div>
               <p className="mt-1 text-xs text-ink-500">They and their reporting manager follow this ticket as if they had raised it.</p>
             </div>
           )}
         </div>
 
+        {/* The card, top to bottom. */}
         <div className="card space-y-3 p-4">
-          <h2 className="text-sm font-semibold text-ink-800">The spare</h2>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Source ticket number" value={form.sourceTicketNo} onChange={set('sourceTicketNo')} placeholder="The field service ticket that found it" />
-            <Field label="Spare / board" value={form.item} onChange={set('item')} placeholder="e.g. SMPS board, ventilator" />
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="text-sm font-semibold text-ink-800">Service route card</h2>
+            <span className="text-[11px] text-ink-400">Form CHPL/CRL/SRC</span>
           </div>
-          <Field label="Facility" value={form.facility} onChange={set('facility')} placeholder="Hospital or site" required />
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="District" value={form.district} onChange={set('district')} />
+            <Field label="District name" value={form.district} onChange={set('district')} />
+            <Field label="Equipment name" value={form.equipmentName} onChange={set('equipmentName')} placeholder="e.g. Ventilator" />
+            <Field label="Hospital name" value={form.hospital} onChange={set('hospital')} required />
+            <Field label="Equipment barcode" value={form.equipmentBarcode} onChange={set('equipmentBarcode')} mono />
+            <Field label="Spare name" value={form.spareName} onChange={set('spareName')} placeholder="e.g. SMPS board" required />
+            <Field label="Ticket ID" value={form.sourceTicketNo} onChange={set('sourceTicketNo')} placeholder="The field service ticket" mono />
+          </div>
+
+          <label className="block">
+            <span className="label">Issue identified <Req /></span>
+            <textarea className="input mt-1" rows={3} value={form.issue} onChange={set('issue')} maxLength={2000}
+              placeholder="What is wrong with it, as found on site" />
+          </label>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <span className="label">Photos</span>
+              <div className="mt-1"><PhotoPicker photos={photos} onChange={setPhotos} /></div>
+            </div>
+            <div>
+              <span className="label">Voice note</span>
+              <div className="mt-1"><VoiceRecorder voice={voice} onChange={setVoice} /></div>
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Contact number" type="tel" value={form.contactNumber} onChange={set('contactNumber')} placeholder="+91 …" />
             <Field label="State" value={form.state} onChange={set('state')} />
           </div>
+
+          <label className="block">
+            <span className="label">Spare return address <Req /></span>
+            <textarea className="input mt-1" rows={2} value={form.returnAddress} onChange={set('returnAddress')} maxLength={500}
+              placeholder="Where the Revive Lab sends it back to" />
+          </label>
         </div>
 
         <div className="card space-y-3 p-4">
           <h2 className="text-sm font-semibold text-ink-800">Inbound courier</h2>
           <div className="grid gap-3 sm:grid-cols-3">
             <Field label="Courier" value={form.inCourier} onChange={set('inCourier')} placeholder="DTDC, Blue Dart…" />
-            <Field label="Tracking / AWB number" value={form.inAwb} onChange={set('inAwb')} />
-            <Field label="Dispatched on" type="date" value={form.inDispatchedOn} onChange={set('inDispatchedOn')} />
+            <Field label="Tracking / AWB number" value={form.inAwb} onChange={set('inAwb')} mono />
+            <Field label="Date of dispatch" type="date" value={form.inDispatchedOn} onChange={set('inDispatchedOn')} />
           </div>
         </div>
 
         <div className="flex justify-end gap-2">
-          <button type="button" className="btn-secondary" onClick={() => navigate(-1)}>Cancel</button>
-          <button type="submit" className="btn-primary" disabled={raise.isPending}>
-            {raise.isPending ? <Spinner className="h-4 w-4" /> : <PackagePlus className="h-4 w-4" />}
-            Raise ticket
+          <button type="button" className="btn-secondary" onClick={() => navigate(-1)} disabled={busy}>Cancel</button>
+          <button type="submit" className="btn-primary" disabled={busy}>
+            {busy ? <Spinner className="h-4 w-4" /> : <PackagePlus className="h-4 w-4" />}
+            {stage === 'raising' ? 'Raising…' : stage === 'uploading' ? 'Sending photos…' : 'Raise ticket'}
           </button>
         </div>
       </form>
@@ -174,8 +262,12 @@ export default function NewTicket() {
   )
 }
 
+function Req() {
+  return <span className="text-cyrixRed-600">*</span>
+}
+
 function Field({
-  label, value, onChange, placeholder, type = 'text', required,
+  label, value, onChange, placeholder, type = 'text', required, mono,
 }: {
   label: string
   value: string
@@ -183,11 +275,12 @@ function Field({
   placeholder?: string
   type?: string
   required?: boolean
+  mono?: boolean
 }) {
   return (
     <label className="block">
-      <span className="label">{label}{required && <span className="text-cyrixRed-600"> *</span>}</span>
-      <input className="input mt-1" type={type} value={value} onChange={onChange} placeholder={placeholder} required={required} />
+      <span className="label">{label}{required && <> <Req /></>}</span>
+      <input className={clsx('input mt-1', mono && 'font-mono')} type={type} value={value} onChange={onChange} placeholder={placeholder} />
     </label>
   )
 }

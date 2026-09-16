@@ -23,10 +23,16 @@ export interface Ticket {
   trc_id: string
   trc_name: string
   source_ticket_no: string | null
-  item: string | null
+  /** The hospital. The route card calls it Hospital name. */
   facility: string
   district: string | null
   state: string | null
+  equipment_name: string | null
+  equipment_barcode: string | null
+  spare_name: string | null
+  issue: string | null
+  return_address: string | null
+  contact_number: string | null
   in_courier: string | null
   in_awb: string | null
   in_dispatched_on: string | null
@@ -219,13 +225,19 @@ function useTicketMutation<A, R = unknown>(fn: (args: A) => Promise<R>) {
 const rpc = async (name: string, args: Record<string, unknown>) =>
   unwrap<unknown>(await supabase.rpc(name, args))
 
+/** The route card (form CHPL/CRL/SRC), field for field. */
 export interface RaiseInput {
   trcId: string
-  facility: string
+  hospital: string
   district: string
   state: string
   sourceTicketNo: string
-  item: string
+  equipmentName: string
+  equipmentBarcode: string
+  spareName: string
+  issue: string
+  returnAddress: string
+  contactNumber: string
   inCourier: string
   inAwb: string
   inDispatchedOn: string
@@ -235,11 +247,16 @@ export interface RaiseInput {
 export function useRaiseTicket() {
   return useTicketMutation(async (a: RaiseInput) => rpc('revive_raise_ticket', {
     p_trc_id: a.trcId,
-    p_facility: a.facility,
+    p_hospital: a.hospital,
     p_district: a.district,
     p_state: a.state,
     p_source_ticket_no: a.sourceTicketNo,
-    p_item: a.item,
+    p_equipment_name: a.equipmentName,
+    p_equipment_barcode: a.equipmentBarcode,
+    p_spare_name: a.spareName,
+    p_issue: a.issue,
+    p_return_address: a.returnAddress,
+    p_contact_number: a.contactNumber,
     p_in_courier: a.inCourier,
     p_in_awb: a.inAwb,
     p_in_dispatched_on: a.inDispatchedOn || null,

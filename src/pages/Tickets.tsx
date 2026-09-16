@@ -64,7 +64,7 @@ export default function Tickets() {
     if (needle) {
       rows = rows.filter(t =>
         (asNumber !== null && t.number === asNumber)
-        || [t.code, t.source_ticket_no, t.facility, t.item, t.district, t.state,
+        || [t.code, t.source_ticket_no, t.facility, t.spare_name, t.equipment_name, t.equipment_barcode, t.district, t.state,
             t.stakeholder_name, t.stakeholder_ecode, t.engineer_name, t.in_awb, t.out_awb]
           .some(v => (v ?? '').toLowerCase().includes(needle)))
     }
@@ -184,7 +184,7 @@ export default function Tickets() {
                       <td className="px-4 py-3 text-ink-700">{t.trc_name}</td>
                       <td className="px-4 py-3">
                         <p className="text-ink-900">{t.facility}</p>
-                        <p className="text-xs text-ink-400">{[t.item, t.district, t.state].filter(Boolean).join(' · ')}</p>
+                        <p className="text-xs text-ink-400">{[t.spare_name, t.equipment_name, t.district].filter(Boolean).join(' · ')}</p>
                       </td>
                       <td className="px-4 py-3 text-ink-700">
                         {t.stakeholder_name}

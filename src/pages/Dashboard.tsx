@@ -151,7 +151,7 @@ export default function Dashboard() {
                       <span className="font-mono text-sm font-semibold text-ink-900">{t.code}</span>
                       <StatusBadge status={t.status} />
                       <span className="min-w-0 flex-1 truncate text-sm text-ink-600">
-                        {t.facility}{t.item ? ` · ${t.item}` : ''}
+                        {t.facility}{t.spare_name ? ` · ${t.spare_name}` : ''}
                       </span>
                       <span className="text-xs text-ink-400">{t.trc_name}</span>
                     </Link>
