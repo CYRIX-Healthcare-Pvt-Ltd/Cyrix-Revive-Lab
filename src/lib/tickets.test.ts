@@ -72,9 +72,15 @@ describe('actionsFor — who may do what, now', () => {
     expect(actionsFor(ticket({ status: 'repaired', engineer_id: 'eng' }), engineer)).toEqual([])
   })
 
-  it('lets the field engineer, or the desk, confirm it came back', () => {
+  it('lets only the field engineer confirm it came back — the desk sent it', () => {
     const t = ticket({ status: 'in_transit_return' })
     expect(actionsFor(t, me({ employee_id: 'field' }))).toEqual(['received'])
+    expect(actionsFor(t, desk)).toEqual([])
+    expect(waitingOnMe(t, desk)).toBe(false)
+  })
+
+  it('still lets a coordinator confirm a spare they sent in themselves', () => {
+    const t = ticket({ status: 'in_transit_return', stakeholder_id: 'me' })
     expect(actionsFor(t, desk)).toEqual(['received'])
   })
 

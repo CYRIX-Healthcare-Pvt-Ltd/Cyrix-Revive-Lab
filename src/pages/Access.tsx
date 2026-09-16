@@ -67,7 +67,7 @@ export function ReviveLabAccess() {
   const qc = useQueryClient()
   const { data: me } = useQuery({
     queryKey: ['revive', 'me'],
-    queryFn: async () => (await call<Array<{ employee_id: string; is_admin: boolean }>>('revive_me'))[0] ?? null,
+    queryFn: async () => (await call<Array<{ employee_id: string; is_admin: boolean; is_sw_admin: boolean }>>('revive_me'))[0] ?? null,
   })
   const { data: trcs, isLoading: loadingTrcs } = useQuery({
     queryKey: ['revive', 'trcs'],
@@ -278,6 +278,108 @@ export function ReviveLabAccess() {
       </div>
 
       <TrcTable trcs={trcs ?? []} canEdit={canEdit} members={members ?? []} />
+
+      {me?.is_sw_admin && <DeleteTicket />}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * Deleting a ticket, for the software administrator only.
+ *
+ * For clearing out test tickets: type the number, press Delete, and the
+ * ticket is named back before anything happens — a typed "RL-15" for
+ * "RL-51" should cost a second look, not a real ticket. The database
+ * refuses anybody else (revive_delete_ticket), keeps one audit line of
+ * what went, and restarts numbering at RL-01 once no tickets are left.
+ */
+function DeleteTicket() {
+  const qc = useQueryClient()
+  const [typed, setTyped] = useState('')
+  const [found, setFound] = useState<{ id: string; code: string; facility: string; status: string } | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+
+  const number = (() => {
+    const m = typed.trim().match(/^(?:rl-?)?0*([0-9]{1,7})$/i)
+    return m ? Number(m[1]) : null
+  })()
+
+  const lookUp = async () => {
+    setError(null); setNotice(null); setFound(null)
+    if (!number) { setError('Type a ticket number, like RL-05.'); return }
+    setBusy(true)
+    const { data, error: err } = await supabase.from('revive_tickets')
+      .select('id, code, facility, status').eq('number', number).maybeSingle()
+    setBusy(false)
+    if (err) { setError(friendlyError(err)); return }
+    if (!data) { setError(`There is no ticket RL-${number < 10 ? '0' : ''}${number}.`); return }
+    setFound(data as { id: string; code: string; facility: string; status: string })
+  }
+
+  const remove = async () => {
+    if (!found) return
+    setBusy(true); setError(null)
+    try {
+      const out = await call<{ code: string; numbering_restarted: boolean }>('revive_delete_ticket', { p_ticket_id: found.id })
+      setNotice(`Deleted ${out.code}.` + (out.numbering_restarted ? ' No tickets are left, so the next one will be RL-01.' : ''))
+      setFound(null); setTyped('')
+      qc.invalidateQueries({ queryKey: ['revive'] })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not delete that ticket.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="flex items-center gap-2 border-b border-ink-200 bg-ink-50 px-4 py-2.5">
+        <Trash2 className="h-4 w-4 text-cyrixRed-600" />
+        <h3 className="text-sm font-semibold text-ink-800">Delete a ticket</h3>
+        <span className="text-xs text-ink-400">· software administrator only</span>
+      </div>
+      <div className="space-y-3 p-4">
+        {error && <Alert kind="error">{error}</Alert>}
+        {notice && <Alert kind="success">{notice}</Alert>}
+        <form
+          className="flex flex-wrap items-end gap-2"
+          onSubmit={e => { e.preventDefault(); void lookUp() }}
+        >
+          <label className="block w-40">
+            <span className="label">Ticket number</span>
+            <input
+              className="input mt-1 font-mono"
+              value={typed}
+              onChange={e => { setTyped(e.target.value); setFound(null) }}
+              placeholder="RL-05"
+            />
+          </label>
+          <button type="submit" className="btn-secondary !text-cyrixRed-700" disabled={busy || !typed.trim()}>
+            {busy && !found ? <Spinner className="h-4 w-4" /> : <Trash2 className="h-4 w-4" />} Delete
+          </button>
+        </form>
+
+        {found && (
+          <div className="rounded-xl border border-cyrixRed-200 bg-cyrixRed-50 p-3">
+            <p className="text-sm font-medium text-cyrixRed-900">
+              Delete {found.code} · {found.facility} for good?
+            </p>
+            <p className="mt-0.5 text-xs text-cyrixRed-800">
+              Its history and transfers go with it. This cannot be undone.
+            </p>
+            <div className="mt-2 flex gap-2">
+              <button type="button" className="btn-danger" onClick={remove} disabled={busy}>
+                {busy && <Spinner className="h-4 w-4" />} Yes, delete {found.code}
+              </button>
+              <button type="button" className="btn-secondary" onClick={() => setFound(null)}>Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

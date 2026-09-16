@@ -77,7 +77,10 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
               {t.facility}{t.item ? ` · ${t.item}` : ''}
             </p>
             <p className="mt-0.5 text-xs text-ink-500">
-              At {t.trc_name} ({TRC_KIND_LABEL[t.trc_kind]})
+              At {t.trc_name}
+              {!t.trc_name.toLowerCase().includes(TRC_KIND_LABEL[t.trc_kind].toLowerCase()) && (
+                <> ({TRC_KIND_LABEL[t.trc_kind]})</>
+              )}
               {t.status !== 'closed' && <> · waiting on {meta.waitingOn}</>}
             </p>
           </div>

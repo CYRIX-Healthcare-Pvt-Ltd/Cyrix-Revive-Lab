@@ -115,8 +115,20 @@ const unwrap = <T,>(res: { data: unknown; error: unknown }): T => {
  * failure on their screen.
  */
 export function drainMail(): void {
+  if (!MAIL_SENDER_DEPLOYED) return
   void supabase.functions.invoke('revive-notify', { body: { drain: true } }).catch(() => {})
 }
+
+/**
+ * Off until the revive-notify function is deployed.
+ *
+ * Calling a function that does not exist fails its CORS preflight in the
+ * browser, and did so on every page load and every action — a console full
+ * of red that hid any error worth reading. The notes are still queued in
+ * revive_mail_outbox on every status change; nothing is lost by not asking
+ * yet. Turn this on in the same change that ships the sender.
+ */
+const MAIL_SENDER_DEPLOYED = false
 
 // ---------------------------------------------------------------------
 // Reads

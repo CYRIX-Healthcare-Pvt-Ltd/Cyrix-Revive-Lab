@@ -162,7 +162,9 @@ export function actionsFor(t: TicketLike, me: Me | null | undefined): Action[] {
   if (mine && t.status === 'in_repair') out.push('complete')
   if (desk && (t.status === 'accepted' || t.status === 'assigned')) out.push('assign')
   if (desk && t.status === 'repaired') out.push('dispatch')
-  if ((desk || t.stakeholder_id === me.employee_id) && t.status === 'in_transit_return') out.push('received')
+  // Only the field engineer it was sent back to: the Revive Lab dispatched
+  // it and cannot know it has landed (rl_0005).
+  if (t.stakeholder_id === me.employee_id && t.status === 'in_transit_return') out.push('received')
   if (mine && (t.status === 'assigned' || t.status === 'in_repair')) out.push('return')
   if (desk && (t.status === 'accepted' || t.status === 'assigned' || t.status === 'in_repair')) out.push('transfer')
 
