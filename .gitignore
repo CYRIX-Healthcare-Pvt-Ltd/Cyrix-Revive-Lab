@@ -1,0 +1,31 @@
+node_modules
+dist
+dist-ssr
+*.local
+
+# Secrets — never commit. The DB connection string and service role key
+# live here and grant full unrestricted access to all appraisal data.
+.env
+.env.local
+.env.*.local
+
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Local scratch
+/tmp
+*.log
+npm-debug.log*
+
+# TS build cache
+tsconfig.tsbuildinfo
+
+# Machine-local Claude Code permissions
+.claude/settings.local.json

@@ -1,0 +1,1203 @@
+/* Self-hosted rather than loaded from a CDN: this is an installable PWA
+   that field engineers open on patchy connections, and a webfont that
+   fails to arrive would fall back mid-session. */
+@import '@fontsource-variable/inter';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /*
+     * The palette, as RGB channels so Tailwind can apply alpha to them.
+     * Light here; dark restates the same names further down and nothing
+     * else in the app has to know which one is in force.
+     */
+    --canvas: 255 255 255;
+    --surface: 255 255 255;
+    --on-ink: 255 255 255;
+
+    --ink-50: 247 247 248;
+    --ink-100: 238 238 240;
+    --ink-200: 216 217 221;
+    --ink-300: 180 182 189;
+    --ink-400: 138 141 151;
+    --ink-500: 107 110 121;
+    --ink-600: 86 89 98;
+    --ink-700: 70 72 81;
+    --ink-800: 43 45 52;
+    --ink-900: 20 21 25;
+    --ink-950: 0 0 0;
+
+    /*
+     * Status hues, the same trick as the ink ramp.
+     *
+     * Only the two ends move. 50/100/200 are washes a status sits on and
+     * 700/800/900 is the text that sits on them, so on a dark page both
+     * have to turn end for end together — a pale amber panel with deep
+     * amber text becomes a dim amber panel with bright amber text, and
+     * the seventy-odd places that say bg-amber-50 or text-emerald-800
+     * keep meaning what they meant.
+     *
+     * The middle of each ramp stays fixed. 500 and 600 are icons and
+     * accents chosen to read on either ground, and cyrixRed-600 is the X
+     * in the logo — a brand colour that must be the same red in both
+     * themes or it is not the brand colour.
+     *
+     * Light is exactly the values these had as literal hexes.
+     */
+    --amber-50: 255 251 235;
+    --amber-100: 254 243 199;
+    --amber-200: 253 230 138;
+    --amber-700: 180 83 9;
+    --amber-800: 146 64 14;
+    --amber-900: 120 53 15;
+
+    --emerald-50: 236 253 245;
+    --emerald-100: 209 250 229;
+    --emerald-200: 167 243 208;
+    --emerald-700: 4 120 87;
+    --emerald-800: 6 95 70;
+    --emerald-900: 6 78 59;
+
+    /* Green and lime are here for the band scale, which runs red → amber
+       → lime → green → emerald. Miss one and that band alone keeps a pale
+       chip on a dark page while its neighbours flip. */
+    --green-50: 240 253 244;
+    --green-100: 220 252 231;
+    --green-200: 187 247 208;
+    --green-700: 21 128 61;
+    --green-800: 22 101 52;
+    --green-900: 20 83 45;
+
+    --lime-50: 247 254 231;
+    --lime-100: 236 252 203;
+    --lime-200: 217 249 157;
+    --lime-700: 77 124 15;
+    --lime-800: 63 98 18;
+    --lime-900: 54 83 20;
+
+    --violet-50: 245 243 255;
+    --violet-100: 237 233 254;
+    --violet-200: 221 214 254;
+    --violet-700: 109 40 217;
+    --violet-800: 91 33 182;
+    --violet-900: 76 29 149;
+
+    --red-50: 254 242 243;
+    --red-100: 253 227 229;
+    --red-200: 251 204 208;
+    --red-700: 192 5 18;
+    --red-800: 158 8 18;
+    --red-900: 126 20 38;
+
+    /* What a tint is mixed into. White on a white page; the dark canvas
+       in dark, or every softened score colour turns milky. */
+    --mix-base: #ffffff;
+
+    /* Overwritten at runtime by ScoreThemeProvider.
+
+       --score-* is the signed-in person: the chrome, every hover, every
+       focus ring. --page-* is whatever the screen in front of them is
+       reporting on, which is the same thing on most screens and the team
+       average on the team pages.
+
+       The split exists because the tab you are standing on is a label
+       for the page, not for you — it follows --page-* — while the tab
+       next to it is still yours and follows --score-*. */
+    --score-accent: #141519;
+    --score-soft: #eeeef0;
+    --score-strong: #000000;
+
+    --page-accent: #141519;
+    --page-soft: #eeeef0;
+    --page-strong: #000000;
+
+    /* Motion tokens. The built-in CSS easings are too weak to read as
+       deliberate; these are the standard strong curves. Everything that
+       moves should reach for one of these rather than hand-rolling a
+       cubic-bezier — four near-identical ones had already accumulated. */
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+    --dur-press: 160ms;
+    --dur-fast: 200ms;
+    --dur-ui: 250ms;
+
+    /*
+     * Tells the browser which way its own controls should go: the popup a
+     * <select> opens, scrollbars, checkboxes, the date picker. None of
+     * those are ours to style, and without this they stay light — a white
+     * menu with pale grey rows over a dark page, which is unreadable and
+     * looks broken rather than unstyled.
+     */
+    color-scheme: light;
+  }
+
+  /*
+   * Dark.
+   *
+   * The ink ramp is turned end for end: what was the palest wash becomes
+   * the deepest surface, and what was near-black text becomes near-white.
+   * Every bg-ink-50 and text-ink-900 in the app keeps meaning "faintest
+   * background" and "strongest text" without being edited.
+   *
+   * The middle of the ramp does not simply invert. ink-400 is muted text
+   * and a straight flip would put it at 180 182 189 on a near-black page —
+   * far too bright to read as secondary. The greys from 300 to 600 are
+   * chosen for contrast against the dark canvas rather than mirrored.
+   *
+   * Written twice on purpose: once for a browser set to dark, once for an
+   * explicit choice. The media query is guarded so choosing light beats a
+   * dark operating system, and the attribute selector so choosing dark
+   * beats a light one. A single :root[data-theme] block would leave anyone
+   * on "system" — the default, and most people — in permanent light.
+   */
+  /* An explicit choice of dark. */
+  :root[data-theme='dark'] {
+    --canvas: 13 14 18;
+    --surface: 23 24 28;
+    --on-ink: 20 21 25;
+
+    --ink-50: 30 31 37;
+    --ink-100: 38 40 47;
+    --ink-200: 51 54 63;
+    --ink-300: 74 78 89;
+    --ink-400: 140 145 158;
+    --ink-500: 160 165 177;
+    --ink-600: 186 190 200;
+    --ink-700: 210 213 220;
+    --ink-800: 232 234 238;
+    --ink-900: 244 245 247;
+    --ink-950: 255 255 255;
+
+    /* Washes dimmed into the page, text brightened off it. Same hues. */
+    --amber-50: 48 36 14;
+    --amber-100: 62 46 16;
+    --amber-200: 92 68 22;
+    --amber-700: 250 189 78;
+    --amber-800: 252 208 126;
+    --amber-900: 253 224 171;
+
+    --emerald-50: 12 43 33;
+    --emerald-100: 14 56 42;
+    --emerald-200: 20 84 62;
+    --emerald-700: 52 211 153;
+    --emerald-800: 110 231 183;
+    --emerald-900: 167 243 208;
+
+    --green-50: 14 42 24;
+    --green-100: 18 54 31;
+    --green-200: 25 81 46;
+    --green-700: 74 222 128;
+    --green-800: 134 239 172;
+    --green-900: 187 247 208;
+
+    --lime-50: 32 42 12;
+    --lime-100: 42 54 15;
+    --lime-200: 63 81 23;
+    --lime-700: 163 230 53;
+    --lime-800: 190 242 100;
+    --lime-900: 217 249 157;
+
+    --violet-50: 34 28 60;
+    --violet-100: 44 35 78;
+    --violet-200: 65 52 115;
+    --violet-700: 167 139 250;
+    --violet-800: 196 181 253;
+    --violet-900: 221 214 254;
+
+    --red-50: 55 18 22;
+    --red-100: 70 22 27;
+    --red-200: 104 32 39;
+    --red-700: 255 106 116;
+    --red-800: 255 154 161;
+    --red-900: 255 190 195;
+
+    --mix-base: #0d0e12;
+
+    --score-accent: #f4f5f7;
+    --score-soft: #262830;
+    --score-strong: #ffffff;
+
+    --page-accent: #f4f5f7;
+    --page-soft: #262830;
+    --page-strong: #ffffff;
+
+    color-scheme: dark;
+  }
+
+  /* No choice made — follow the machine. Guarded so that choosing light
+     still beats a dark operating system. Most people never touch the
+     toggle, so this branch is the one that matters. */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) {
+      --canvas: 13 14 18;
+      --surface: 23 24 28;
+      --on-ink: 20 21 25;
+
+      --ink-50: 30 31 37;
+      --ink-100: 38 40 47;
+      --ink-200: 51 54 63;
+      --ink-300: 74 78 89;
+      --ink-400: 140 145 158;
+      --ink-500: 160 165 177;
+      --ink-600: 186 190 200;
+      --ink-700: 210 213 220;
+      --ink-800: 232 234 238;
+      --ink-900: 244 245 247;
+      --ink-950: 255 255 255;
+
+      /* Washes dimmed into the page, text brightened off it. Same hues. */
+      --amber-50: 48 36 14;
+      --amber-100: 62 46 16;
+      --amber-200: 92 68 22;
+      --amber-700: 250 189 78;
+      --amber-800: 252 208 126;
+      --amber-900: 253 224 171;
+
+      --emerald-50: 12 43 33;
+      --emerald-100: 14 56 42;
+      --emerald-200: 20 84 62;
+      --emerald-700: 52 211 153;
+      --emerald-800: 110 231 183;
+      --emerald-900: 167 243 208;
+
+      --green-50: 14 42 24;
+      --green-100: 18 54 31;
+      --green-200: 25 81 46;
+      --green-700: 74 222 128;
+      --green-800: 134 239 172;
+      --green-900: 187 247 208;
+
+      --lime-50: 32 42 12;
+      --lime-100: 42 54 15;
+      --lime-200: 63 81 23;
+      --lime-700: 163 230 53;
+      --lime-800: 190 242 100;
+      --lime-900: 217 249 157;
+
+      --violet-50: 34 28 60;
+      --violet-100: 44 35 78;
+      --violet-200: 65 52 115;
+      --violet-700: 167 139 250;
+      --violet-800: 196 181 253;
+      --violet-900: 221 214 254;
+
+      --red-50: 55 18 22;
+      --red-100: 70 22 27;
+      --red-200: 104 32 39;
+      --red-700: 255 106 116;
+      --red-800: 255 154 161;
+      --red-900: 255 190 195;
+
+      --mix-base: #0d0e12;
+
+      --score-accent: #f4f5f7;
+      --score-soft: #262830;
+      --score-strong: #ffffff;
+
+      --page-accent: #f4f5f7;
+      --page-soft: #262830;
+      --page-strong: #ffffff;
+
+      color-scheme: dark;
+    }
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    /* canvas, not surface: identical in light, but in dark the page sits a
+       step below the cards so a card reads as raised without a shadow. */
+    @apply bg-canvas font-sans text-ink-900 antialiased;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  /*
+    No text selection from a touch.
+
+    On a phone, a finger that rests a moment before it scrolls is a long
+    press, and a long press selects the word under it and puts a Copy bar
+    over the screen — met mid-scroll, constantly, and never on purpose.
+
+    Touch screens only, by their main pointer: on a desktop, dragging to
+    select is always deliberate and somebody copying an ecode into another
+    window still can, and a touchscreen laptop is driven by its trackpad.
+
+    Fields stay selectable, or a phone could not put the cursor in the
+    middle of a remark or select a figure to type over it.
+  */
+  @media (pointer: coarse) {
+    body {
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+    }
+    input, textarea, [contenteditable='true'] {
+      -webkit-user-select: text;
+      user-select: text;
+      -webkit-touch-callout: default;
+    }
+  }
+  /*
+    No spinner arrows on number fields.
+
+    Every number in this app is typed, never nudged — a weightage, a
+    target, a count of repairs. The arrows are two tiny hit targets
+    stacked inside the field, so on a phone they are a trap beside the
+    text cursor and on a desktop they invite somebody to click a KPI
+    target up by one for no reason. The keyboard stays numeric, which is
+    what inputMode is for.
+  */
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type='number'] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+
+  /* Stop iOS zooming the page when a numeric field gains focus. */
+  input, select, textarea {
+    font-size: 16px;
+  }
+}
+
+@layer components {
+  /*
+    Figure cards, two to a row on a phone.
+
+    One per row wasted the whole width on a two-digit number and pushed
+    everything below it off the screen — four tiles were four scrolls.
+    Two fit comfortably; the labels are short by design.
+
+    An odd last card takes the full row rather than sitting half-width
+    beside a gap, which reads as a card that failed to load. Only below
+    sm, where the column count is 2 and "odd" means anything; above it
+    the grid states its own columns and the last child behaves.
+  */
+  .grid-pairs > :last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+  @media (min-width: 640px) {
+    .grid-pairs > :last-child:nth-child(odd) {
+      grid-column: auto;
+    }
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5
+           text-sm font-medium disabled:cursor-not-allowed
+           disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-offset-2;
+    transition:
+      background-color var(--dur-fast) ease,
+      border-color var(--dur-fast) ease,
+      color var(--dur-fast) ease,
+      transform var(--dur-press) var(--ease-out);
+  }
+  /* Press feedback. Without it a button answers the pointer but never the
+     click, which is most of why an interface feels unresponsive. scale()
+     takes the label and icon with it, so the whole control depresses. */
+  .btn:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+  /**
+   * Every interactive surface answers in the score colour on hover — the
+   * one exception is destructive actions, which stay red because that
+   * red is carrying meaning, not decoration.
+   */
+  .btn-primary {
+    @apply btn bg-ink-950 text-onInk;
+  }
+  .btn-primary:hover:not(:disabled),
+  .btn-primary:focus-visible:not(:disabled) {
+    background-color: var(--score-accent);
+    /* Not #fff: --score-accent is near-white in dark, and white on it
+       is invisible. --score-strong is defined against it in both. */
+    color: rgb(var(--canvas));
+  }
+
+  .btn-secondary {
+    @apply btn border border-ink-200 bg-surface text-ink-700;
+  }
+  .btn-secondary:hover:not(:disabled),
+  .btn-secondary:focus-visible:not(:disabled) {
+    background-color: var(--score-soft);
+    border-color: var(--score-accent);
+    color: var(--score-strong);
+  }
+
+  .btn-danger {
+    @apply btn bg-cyrixRed-600 text-white hover:bg-cyrixRed-700;
+  }
+
+  /**
+   * Controls that sit on the black score hero.
+   *
+   * The page-level buttons cannot be reused there: .btn-primary is
+   * bg-ink-950, which is the panel's own colour, and .btn-secondary is
+   * solid white, which shouts louder than the score it sits beside. These
+   * are the same geometry as .btn so a row of mixed controls lines up.
+   */
+  /* nowrap and tighter padding below sm: at 375px two of these share the
+     row, and "Export to Excel" broke onto a second line, leaving one
+     button a head taller than the other. */
+  .btn-on-dark {
+    @apply btn whitespace-nowrap bg-white/10 px-3 text-[13px] text-white
+           ring-1 ring-inset ring-white/20 sm:px-4 sm:text-sm;
+  }
+  .btn-on-dark:hover:not(:disabled),
+  .btn-on-dark:focus-visible:not(:disabled) {
+    @apply bg-white/20 ring-white/40;
+  }
+
+  /* Excel's own green, not a band colour — this button means "the file
+     you are about to open", and the score palette would imply otherwise. */
+  .btn-excel {
+    @apply btn whitespace-nowrap px-3 text-[13px] text-white
+           ring-1 ring-inset ring-white/10 sm:px-4 sm:text-sm;
+    background-color: #217346;
+  }
+  .btn-excel:hover:not(:disabled),
+  .btn-excel:focus-visible:not(:disabled) {
+    background-color: #1a5c38;
+  }
+
+  /*
+    Team analysis. Its own colour because it is the one control on this
+    screen that leaves it — everything else filters or exports what is
+    already here — and because the alternative was a third button in
+    Excel's green, which would have read as a second export.
+
+    Violet rather than any of the score colours on purpose. Nothing about
+    a navigation button should look like a band.
+  */
+  .btn-analysis {
+    @apply btn whitespace-nowrap px-3 text-[13px] text-white
+           ring-1 ring-inset ring-white/10 sm:px-4 sm:text-sm;
+    background-color: #6d28d9;
+  }
+  .btn-analysis:hover:not(:disabled),
+  .btn-analysis:focus-visible:not(:disabled) {
+    background-color: #5b21b6;
+  }
+
+  /**
+   * A <select> on the hero.
+   *
+   * The closed control is white text on the black panel. The open list
+   * is drawn by the operating system, and it does NOT reliably follow
+   * the page — on Windows the popup stayed light while the options went
+   * on inheriting the control's white text, so every row but the
+   * highlighted one was white on white. The highlighted one looked fine
+   * because the OS paints its own selection colours over the top, which
+   * is what made this read as "only one month in the list" rather than
+   * as a contrast bug.
+   *
+   * color-scheme was the previous attempt at this and is not enough on
+   * its own: it is a hint, and Windows ignored it here. The options now
+   * state both their colour and their background, which is deterministic
+   * whichever way the popup is drawn.
+   */
+  .select-on-dark {
+    @apply rounded-lg bg-white/10 px-3 py-2.5 text-sm font-medium text-white
+           ring-1 ring-inset ring-white/20 focus:outline-none
+           focus:ring-2 focus:ring-white/50;
+    color-scheme: dark;
+    /* Colour and press only. The focus ring is deliberately not in this
+       list: a focus indicator should be there the instant focus lands,
+       and box-shadow is painted rather than composited, so fading it
+       costs a repaint to make an accessibility affordance slower. */
+    transition:
+      background-color var(--dur-fast) ease,
+      transform var(--dur-press) var(--ease-out);
+  }
+  /* Both properties, always. Setting only the colour leaves it at the
+     mercy of whatever the popup's background turns out to be, which is
+     the bug this replaces. */
+  .select-on-dark option,
+  .select-on-dark optgroup {
+    background-color: rgb(var(--surface));
+    color: rgb(var(--ink-900));
+  }
+  .select-on-dark:hover {
+    @apply bg-white/20;
+  }
+  /* Its two neighbours in the hero are .btn and depress on press. Without
+     this the middle control of three identical-looking ones is the only
+     one that does not answer the finger. */
+  .select-on-dark:active {
+    transform: scale(0.97);
+  }
+
+  /** Bare icon buttons in the header and table rows. */
+  .btn-icon {
+    @apply rounded-lg p-2 text-ink-400;
+    transition:
+      background-color var(--dur-fast) ease,
+      color var(--dur-fast) ease,
+      transform var(--dur-press) var(--ease-out);
+  }
+  .btn-icon:hover,
+  .btn-icon:focus-visible {
+    background-color: var(--score-soft);
+    color: var(--score-strong);
+  }
+  .btn-icon:active {
+    transform: scale(0.94);
+  }
+
+  /** A whole card that behaves as a link. */
+  .card-interactive {
+    @apply transition-colors;
+  }
+  .card-interactive:hover {
+    border-color: var(--score-accent);
+    background-color: color-mix(in srgb, var(--score-soft) 40%, var(--mix-base));
+  }
+
+  /* Minimal surface: a hairline, no shadow. Depth comes from whitespace
+     and type weight rather than from borders and drop shadows. */
+  .card {
+    @apply rounded-xl border border-ink-200/70 bg-surface;
+  }
+
+  /**
+   * Two columns, with no hole at the end.
+   *
+   * An odd number of cards in a two-column grid leaves the last one
+   * sitting beside a gap, which reads as a card that failed to load
+   * rather than as a row that ran out. It takes the full width instead.
+   *
+   * :last-child:nth-child(odd) is the whole test — an element that is
+   * both the last and in an odd position is only possible when the count
+   * itself is odd. No counting in JavaScript, and it stays right when a
+   * card is added or hidden.
+   *
+   * Scoped below lg, where the grid widens and the arithmetic changes.
+   */
+  @media (max-width: 1023.98px) {
+    .grid-fill > :last-child:nth-child(odd) {
+      grid-column: 1 / -1;
+    }
+  }
+
+  .input {
+    @apply w-full rounded-lg border border-ink-200 px-3 py-2 text-sm
+           placeholder:text-ink-300 focus:outline-none focus:ring-1
+           disabled:bg-ink-50 disabled:text-ink-400;
+  }
+  .input:focus {
+    border-color: var(--score-accent);
+    --tw-ring-color: var(--score-accent);
+  }
+
+  /*
+    No stepper arrows on number fields.
+
+    They are the wrong control for this form. Weightage and target take
+    decimals and are typed, not nudged, so the arrows are never the way
+    anyone enters a figure — they only sit in the field taking a third of
+    a box already down to 90px in the two-column mobile grid, right where
+    the value should be. Scrolling over a focused field no longer changes
+    it either (src/lib/numberFields.ts); this removes the other way to
+    move a number without meaning to.
+
+    Keyboard up/down still works — that one takes a deliberate press.
+  */
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type='number'] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+
+  .label {
+    @apply mb-1.5 block text-xs font-semibold uppercase tracking-label text-ink-500;
+  }
+
+  .badge {
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+
+  /* Nav: active and hover both pick up the band colour, so the chrome
+     reflects performance without shouting about it. */
+  .nav-link {
+    @apply flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium
+           text-ink-500 transition-colors;
+  }
+
+  /*
+   * The tab row scrolls sideways rather than pushing sign-out off screen.
+   *
+   * HR carries eight tabs, and at 100% on an ordinary laptop those plus a
+   * two-line name and three icon buttons were wider than the bar — so the
+   * theme toggle, the bell and the way out went past the right edge and
+   * the only way to reach them was to zoom the browser to 75%. Choosing a
+   * later breakpoint only moved the width it broke at, which the note
+   * beside the nav already says.
+   *
+   * The bar with no scrollbar drawn: a cut-off tab is its own signal that
+   * there is more, and a grey bar under the navigation on every screen
+   * that does not need it is worse than none. Scrolling still works by
+   * wheel, trackpad and keyboard.
+   */
+  .nav-scroll {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .nav-scroll::-webkit-scrollbar { display: none; }
+  .nav-link:hover {
+    background-color: var(--score-soft);
+    color: var(--score-strong);
+  }
+  /* The one that follows the page rather than the reader. */
+  .nav-link[aria-current='page'] {
+    background-color: var(--page-soft);
+    color: var(--page-strong);
+  }
+
+  /**
+   * The name and avatar in the header, as one link to your own record.
+   *
+   * Hover is gated: on a touch screen :hover fires on tap and then
+   * sticks, so the control would sit lit up long after the finger left.
+   * The avatar answers too, because the two are one target and only half
+   * of it reacting reads as a bug.
+   */
+  .nav-profile {
+    transition:
+      background-color var(--dur-fast) ease,
+      transform var(--dur-press) var(--ease-out);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .nav-profile:hover {
+      background-color: var(--score-soft);
+    }
+    .nav-profile:hover > span:last-child {
+      background-color: color-mix(in srgb, var(--score-accent) 18%, var(--mix-base));
+      color: var(--score-strong);
+    }
+  }
+  .nav-profile:focus-visible {
+    background-color: var(--score-soft);
+    outline: none;
+  }
+  .nav-profile[aria-current='page'] {
+    background-color: var(--page-soft);
+  }
+  .nav-profile > span:last-child {
+    transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease;
+  }
+
+  .link-accent {
+    @apply font-medium transition-colors;
+  }
+  .link-accent:hover {
+    color: var(--score-accent);
+  }
+
+  /** Press feedback for pressable things that aren't .btn — links styled
+      as buttons, the login submit, the Action Required call to action. */
+  .btn-press {
+    transition:
+      background-color var(--dur-fast) ease,
+      color var(--dur-fast) ease,
+      transform var(--dur-press) var(--ease-out);
+  }
+  .btn-press:active {
+    transform: scale(0.97);
+  }
+}
+
+@layer utilities {
+  /**
+   * Score hero motion. Slow and low-contrast on purpose: it should read
+   * as the panel being alive, not as something demanding attention.
+   *
+   * All of it is disabled under prefers-reduced-motion.
+   */
+
+  /* A light sweeps along the filled meter, once every few seconds. */
+  @keyframes score-sweep {
+    0%   { transform: translateX(-100%); }
+    60%  { transform: translateX(200%); }
+    100% { transform: translateX(200%); }
+  }
+  .animate-score-sweep {
+    animation: score-sweep 4.5s var(--ease-in-out) infinite;
+  }
+
+  /**
+   * The score hero's aurora — a radial gradient that ends at transparent,
+   * so there is no edge to see. A solid circle behind a blur still shows
+   * its falloff as a ring, which is what made the colour sit on the right
+   * half like a patch instead of blending into the black.
+   *
+   * --hero-accent is set by the header from the band of the number it is
+   * printing, and only falls back to the page-wide --score-accent when
+   * there is no local score. The two are not always the same: a manager
+   * whose own year is Excellent looking at a Satisfactory team average
+   * had a green wash behind an orange figure.
+   */
+  /**
+   * Geometry lives here rather than in utility classes, because all of it
+   * is one decision: the gradient must reach transparent before it meets
+   * the edge of its own layer.
+   *
+   * Two things went wrong before. A fixed 38rem circle filled a 343px
+   * phone and covered barely a sixth of a 1200px desktop — so the size is
+   * now a share of the panel. Then, sizing it that way with an off-centre
+   * focal point put the gradient's left edge outside the layer, and the
+   * box clipped it while it was still ~10% opaque, which draws a hard
+   * vertical seam straight down the hero.
+   *
+   * So the ellipse is centred in its layer at 45% — comfortably inside
+   * on every side, at any scale the drift applies — and the layer itself
+   * is positioned to put the light in the top right. Position places it;
+   * size spreads it; nothing clips.
+   */
+  .score-aurora {
+    --aurora: var(--hero-accent, var(--score-accent));
+    position: absolute;
+    width: 220%;
+    height: 300%;
+    left: -32%;
+    top: -135%;
+
+    /* Stops pushed well out. At the old spacing everything past a third
+       of a desktop panel sat below 4% alpha — technically lit, visibly
+       black. Now the mid-tone carries across and only the last sixth is
+       falloff. */
+    background: radial-gradient(
+      ellipse 45% 45% at 50% 50%,
+      color-mix(in srgb, var(--aurora) 32%, transparent) 0%,
+      color-mix(in srgb, var(--aurora) 14%, transparent) 62%,
+      color-mix(in srgb, var(--aurora) 4%, transparent) 84%,
+      transparent 100%
+    );
+  }
+
+  /* The second layer, larger and thrown further off the corner, so the
+     two separate and rejoin rather than travelling as one shape. */
+  .score-aurora-alt {
+    width: 260%;
+    height: 340%;
+    left: -35%;
+    top: -175%;
+  }
+
+  /* The drift. transform only — background-position would repaint the
+     whole layer every frame; transform runs on the GPU.
+
+     Timing matters more than it looks. At 18s the gradient crossed its
+     range over a nine-second half-cycle, through a deliberately diffuse
+     fade — slow enough to sit below the threshold where the eye registers
+     motion at all, which is why it read as a static wash. Halved, with a
+     longer path, so the movement is actually perceptible. */
+  /*
+    Cyra composing. Three dots that rise and fade in turn.
+
+    Opacity and transform only, so it composites on its own layer and
+    never touches layout — this sits inside a scrolling message list and
+    a dot that reflowed would shift every bubble above it.
+
+    The pause between cycles is most of the duration on purpose: dots
+    that pulse continuously read as a loading spinner, and this is
+    somebody about to speak.
+  */
+  @keyframes cyra-dot {
+    0%, 60%, 100% { opacity: 0.35; transform: translateY(0); }
+    30%           { opacity: 1;    transform: translateY(-3px); }
+  }
+  .animate-cyra-dot {
+    animation: cyra-dot 1.25s var(--ease-in-out) infinite;
+  }
+
+  @keyframes score-drift {
+    0%   { transform: translate3d(14%, -14%, 0) scale(1); }
+    50%  { transform: translate3d(-56%, 40%, 0) scale(1.28); }
+    100% { transform: translate3d(14%, -14%, 0) scale(1); }
+  }
+  .animate-score-drift {
+    animation: score-drift 9s var(--ease-in-out) infinite;
+  }
+  .animate-score-drift-slow {
+    animation: score-drift 13s var(--ease-in-out) infinite;
+    animation-delay: -4.5s;
+  }
+
+  /* The reduced-motion version of the drift: opacity only, nothing
+     travels.
+
+     This briefly carried a small translate as well, because the hero
+     looks static on a desktop with Windows' "show animations" switched
+     off and that reads as a bug. It is not one — it is the setting being
+     honoured, and the fix belongs in that setting rather than here. The
+     aurora is a large colour field that auto-starts and never stops, so
+     under WCAG 2.2.2 this media query IS its stop mechanism. Overriding
+     it to make one machine livelier takes the control away from everyone
+     who set it for a medical reason. */
+  @keyframes score-breathe {
+    0%, 100% { opacity: 0.7; }
+    50%      { opacity: 1; }
+  }
+
+  /* A panel arriving under the control that opened it. Short and from
+     the corner it is anchored to, so it reads as having come out of the
+     button rather than as having been there all along. */
+  @keyframes pop-in {
+    from { opacity: 0; transform: translateY(-4px) scale(0.97); }
+    to   { opacity: 1; transform: none; }
+  }
+  .animate-pop-in {
+    animation: pop-in var(--dur-fast) var(--ease-out);
+  }
+
+  /**
+   * Alert pulse. Keeps going for as long as the panel is there.
+   *
+   * It used to stop after three rings, on the reasoning that permanent
+   * motion in the corner of a screen someone reads all day is noise.
+   * Overruled, and rightly: the panel only exists while something is
+   * outstanding, so a dot that has gone still is a dot that is lying
+   * about a live queue. It stops when the work is done, which is the
+   * only honest moment for it to stop.
+   *
+   * The quarter-second hold at the end is what keeps it from being
+   * relentless — a ring, a pause, a ring, rather than a strobe.
+   */
+  @keyframes alert-ping {
+    0%   { transform: scale(1);   opacity: 0.75; }
+    75%  { transform: scale(2.4); opacity: 0; }
+    100% { transform: scale(2.4); opacity: 0; }
+  }
+  .animate-alert-ping {
+    animation: alert-ping 1.4s var(--ease-out) infinite;
+  }
+
+  /**
+   * The loading animation: a small bar chart building itself.
+   *
+   * A spinner says "wait" and nothing else. This is a KPI product, and a
+   * chart drawing itself says the same thing while looking like the
+   * thing being fetched — the one place decoration earns its keep is the
+   * gap where there is nothing else to look at.
+   *
+   * scaleY rather than height. A loader runs precisely when the main
+   * thread is busiest, so it must not touch layout: height would force
+   * layout, paint and composite every frame, on the frames least able to
+   * afford it. A transform is composited on its own, off the main
+   * thread, and stays smooth while the page it is waiting for parses.
+   *
+   * Each bar carries its own height so the silhouette reads as data
+   * rather than as a row of identical sticks, and the scale rides on top
+   * of that. Which is also what makes the reduced-motion version work:
+   * drop the scaling and the shape is still a chart.
+   */
+  @keyframes chart-bar {
+    0%, 100% { transform: scaleY(0.34); }
+    50%      { transform: scaleY(1); }
+  }
+  .animate-chart-bar {
+    transform-origin: bottom;
+    animation: chart-bar 1.05s var(--ease-in-out) infinite;
+  }
+
+  /* The meter fills from zero on first paint, so the number lands.
+
+     scaleX rather than width: width forces layout, paint and composite on
+     every frame, while a transform is composited alone. The fill is
+     anchored left so it grows from the start of the track, and the inner
+     sweep counter-scales so the travelling light is not stretched with
+     the bar. */
+  @keyframes score-fill {
+    from { transform: scaleX(0); }
+    to   { transform: scaleX(1); }
+  }
+  .animate-score-fill {
+    transform-origin: left center;
+    animation: score-fill var(--dur-ui) var(--ease-out);
+  }
+
+  /* The score meter reveals rather than grows.
+   *
+   * scaleX was right while the fill was one flat colour and wrong the
+   * moment it became the band scale: scaling squashes the gradient, so
+   * the boundary between Poor and Satisfactory landed at 34% of a bar
+   * whose tick mark says 40%. clip-path leaves the gradient laid out at
+   * full width and hides the part not earned yet, so every threshold
+   * sits where the tick says it does.
+   *
+   * The end state is the element's own inline clip-path, so the
+   * animation has nothing to hold after it finishes and needs no
+   * forwards — switching it off leaves the bar exactly where it belongs.
+   */
+  @keyframes score-reveal {
+    from { clip-path: inset(0 100% 0 0); }
+    to   { clip-path: inset(0 var(--fill-rest, 0%) 0 0); }
+  }
+  .animate-score-reveal {
+    animation: score-reveal var(--dur-ui) var(--ease-out);
+  }
+
+  /* Reduced motion means fewer and gentler, not none. Everything that
+     travels across the screen stops; the aurora keeps a slow opacity
+     breathe so the panel does not go dead. */
+  @media (prefers-reduced-motion: reduce) {
+    .animate-score-sweep,
+    .animate-score-fill,
+    .animate-score-reveal {
+      animation: none;
+    }
+
+    /* The alert dot keeps blinking, gently, and keeps going.
+     *
+     * It was in the list above, which was too blunt. Reduced motion
+     * means remove movement, not remove the signal — and this dot is the
+     * signal: it is the only thing on a black panel that says "this one
+     * is new". Switched off entirely, someone with the setting on gets
+     * no cue at all, and on Windows that setting is on by default
+     * whenever "show animations" is unchecked.
+     *
+     * So the ring stops travelling and starts breathing. The scale is
+     * held rather than animated — a static transform is a position, not
+     * motion — and only the opacity moves, which is exactly the carve-out
+     * the guidance makes for cues that aid comprehension.
+     *
+     * Both ends of the cycle are transparent, which matters more here
+     * than in the full-motion version. This ran three times and stopped,
+     * and an animation that ends without `forwards` reverts to its
+     * unanimated state — opacity 1 — so it settled as a solid red disc
+     * at twice the size of the dot it was meant to be haloing. Running
+     * forever is what the design wants anyway; it also means there is no
+     * resting state left to get wrong.
+     */
+    @keyframes alert-blink {
+      0%, 100% { opacity: 0; }
+      50%      { opacity: 0.45; }
+    }
+    .animate-alert-ping {
+      animation: alert-blink 1.8s ease-in-out infinite;
+      transform: scale(2);
+    }
+
+    /* The loader keeps its shape and loses its motion. The bars hold the
+       heights they were given and fade in turn instead of growing, so it
+       still reads as a chart and still says "working" — a loader that
+       goes completely still is indistinguishable from a page that has
+       given up. */
+    @keyframes chart-fade {
+      0%, 100% { opacity: 0.3; }
+      50%      { opacity: 1; }
+    }
+    .animate-chart-bar {
+      animation: chart-fade 1.6s ease-in-out infinite;
+      transform: none;
+    }
+    /* The panel still needs to announce that it arrived, so it keeps the
+       fade and loses the travel. */
+    @keyframes pop-in-fade {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
+    .animate-pop-in {
+      animation: pop-in-fade var(--dur-fast) ease;
+    }
+    /* Press feedback is a position change, so it goes too — the colour
+       change on :hover/:active still confirms the interaction. */
+    .btn:active:not(:disabled),
+    .btn-press:active,
+    .btn-icon:active,
+    .select-on-dark:active {
+      transform: none;
+    }
+    .animate-score-drift,
+    .animate-score-drift-slow {
+      animation: score-breathe 9s ease-in-out infinite;
+      /* Held at the start of the drift's path so the wash still sits in
+         the top-right corner it was composed for. */
+      transform: translate3d(6%, -10%, 0);
+    }
+    .animate-score-drift-slow {
+      animation-delay: -4.5s;
+    }
+  }
+}
+
+/*
+ * Switching theme as a circular reveal from the switch itself, the way
+ * Spare does it. The View Transitions API holds a snapshot of the outgoing
+ * theme underneath while the incoming one is clipped in over the top, so
+ * every colour in the app crosses together instead of several hundred
+ * elements each easing their own at their own pace — which is what a
+ * plain CSS transition on a palette swap looks like, and it looks broken.
+ *
+ * --theme-x / --theme-y / --theme-r are set on :root by the toggle, which
+ * aims the circle at wherever the switch happens to be. The radius is the
+ * distance to the furthest corner, so the circle always finishes covering
+ * the screen whichever corner it started from.
+ *
+ * Decoration, never the mechanism: without the API, or with reduced
+ * motion asked for, the theme simply changes.
+ */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+/* The old theme just sits there; only the new one is animated in over it. */
+::view-transition-old(root) { z-index: 1; }
+
+::view-transition-new(root) {
+  z-index: 10;
+  animation: theme-reveal 520ms var(--ease-out) forwards;
+}
+
+@keyframes theme-reveal {
+  from { clip-path: circle(0 at var(--theme-x, 50%) var(--theme-y, 50%)); }
+  to   { clip-path: circle(var(--theme-r, 150vmax) at var(--theme-x, 50%) var(--theme-y, 50%)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-new(root) { animation: none; }
+}
+
+/*
+ * Charts.
+ *
+ * Recharts writes its colours as SVG presentation attributes, and those do
+ * not accept var() — so the grid, the axes and the tick labels were stuck
+ * at their light values and turned into bright white rules over a dark
+ * page. A CSS rule beats a presentation attribute, so styling them here is
+ * enough: no re-render on theme change, and no colour passed through props
+ * from a dozen call sites.
+ *
+ * The series colours stay in the components. They carry meaning — red is
+ * the job role, the band tints are the score scale — and meaning does not
+ * belong in a stylesheet.
+ */
+.recharts-cartesian-grid line {
+  stroke: rgb(var(--ink-100));
+}
+.recharts-cartesian-axis-line,
+.recharts-cartesian-axis-tick-line {
+  stroke: rgb(var(--ink-200));
+}
+.recharts-cartesian-axis-tick-value {
+  fill: rgb(var(--ink-500));
+}
+.recharts-legend-item-text {
+  color: rgb(var(--ink-600)) !important;
+  fill: rgb(var(--ink-600));
+}
+/* The tooltip is a floating panel, so it needs the raised surface rather
+   than the page, or it disappears into the chart behind it. */
+.recharts-default-tooltip {
+  background-color: rgb(var(--surface)) !important;
+  border-color: rgb(var(--ink-200)) !important;
+  color: rgb(var(--ink-900));
+}
+.recharts-tooltip-label,
+.recharts-tooltip-item {
+  color: rgb(var(--ink-900)) !important;
+}
+
+/*
+ * The company lockup.
+ *
+ * Identical in all four modules, down to this block — the mark is one
+ * asset now, and the rules that place it should not be four dialects of
+ * the same idea either.
+ *
+ * Both copies of the artwork are in the markup and CSS shows one. That
+ * is what makes the swap land in the same frame as the theme: choosing
+ * a `src` in JavaScript means a paint with the old file still in place,
+ * which on the circular reveal reads as the logo lagging behind the
+ * page sweeping past it.
+ *
+ * The wrapper clips. The artwork is one image holding three stacked
+ * bands — wordmark, entity line, strapline — and a caller asking for
+ * fewer gets a shorter box over the same picture, so a header and a
+ * login page cannot disagree about the spacing between them.
+ */
+.cyrix-logo {
+  display: block;
+  overflow: hidden;
+  flex: none;
+}
+.cyrix-logo img {
+  display: block;
+  width: 100%;
+}
+/*
+ * One class deeper than it looks like it needs to be, and that is the
+ * point: `.cyrix-logo img` is a class plus a type, which outranks a lone
+ * class, so a bare `.cyrix-logo-dark { display: none }` never applied.
+ * Both copies stayed in the layout and the second was only clipped out of
+ * sight by the wrapper — invisible, but shipped and laid out.
+ *
+ * At two classes it ties with the theme rules below, which then win on
+ * order. Which is exactly what they should do.
+ */
+.cyrix-logo .cyrix-logo-dark {
+  display: none;
+}
+
+:root[data-theme='dark'] .cyrix-logo-light { display: none; }
+:root[data-theme='dark'] .cyrix-logo-dark { display: block; }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .cyrix-logo-light { display: none; }
+  :root:not([data-theme='light']) .cyrix-logo-dark { display: block; }
+}
+
+/*
+ * Last, and on purpose: these carry the same specificity as the theme
+ * rules above, so order is what lets a surface that is dark in both
+ * themes — the login hero — keep the white lockup in light mode.
+ */
+.cyrix-logo[data-on='dark'] .cyrix-logo-light { display: none; }
+.cyrix-logo[data-on='dark'] .cyrix-logo-dark { display: block; }
+
+@layer components {
+  /*
+   * "There is more this way."
+   *
+   * The tab row scrolls, and with eight tabs it happened to end after a
+   * whole tab — nothing looked cut, so nobody had any reason to think
+   * Records and Modules were there at all. This is the part that says
+   * so: the row fading out under an arrow you can press.
+   *
+   * The fade is the bar's own colour rather than a shadow, so it reads
+   * as the row continuing underneath rather than as an edge. Rendered
+   * only when there is genuinely something past the edge — a permanent
+   * fade over the last tab would be a worse lie than none.
+   */
+  .nav-more {
+    @apply absolute top-0 bottom-0 z-10 flex w-9 items-center justify-center
+           text-ink-400 transition-colors;
+  }
+  .nav-more:hover { @apply text-ink-700; }
+
+  .nav-more-right {
+    right: 0;
+    justify-content: flex-end;
+    background: linear-gradient(
+      to right, rgb(var(--surface) / 0), rgb(var(--surface)) 55%);
+  }
+  .nav-more-left {
+    left: 0;
+    justify-content: flex-start;
+    background: linear-gradient(
+      to left, rgb(var(--surface) / 0), rgb(var(--surface)) 55%);
+  }
+}

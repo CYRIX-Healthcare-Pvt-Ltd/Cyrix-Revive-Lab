@@ -1,0 +1,493 @@
+import { useMemo, useState, type ReactNode } from 'react'
+import { Link, useParams } from 'react-router-dom'
+import clsx from 'clsx'
+import {
+  ArrowLeft, ArrowRightLeft, CheckCircle2, ClipboardCheck, Hand, PackageCheck,
+  PlayCircle, Send, Undo2, UserPlus, Wrench,
+} from 'lucide-react'
+import { useAuth } from '@/contexts/AuthContext'
+import {
+  useAccept, useAssign, useCompleteRepair, useDispatch, useHops, useMarkReceived,
+  useMembers, useReturnToDesk, useStartRepair, useTickets, useTrail, useTransfer, useTrcs,
+  type Ticket,
+} from '@/lib/queries'
+import { actionsFor, parseTicketCode, STATUS, TRC_KIND_LABEL, type Action } from '@/lib/tickets'
+import { formatSpan, ticketTat, type Span } from '@/lib/tat'
+import { Alert, EmptyState, PageLoader, Spinner, StatusBadge } from '@/components/ui'
+
+const when = (iso: string | null | undefined) =>
+  iso ? new Date(iso).toLocaleString(undefined, {
+    day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit',
+  }) : '—'
+
+const day = (iso: string | null | undefined) =>
+  iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : null
+
+export default function TicketDetail() {
+  const { code } = useParams()
+  const number = parseTicketCode(code)
+  const { data: tickets, isLoading } = useTickets()
+  const ticket = (tickets ?? []).find(t => t.number === number)
+
+  if (isLoading) return <PageLoader />
+  if (!ticket) {
+    return (
+      <div className="space-y-4">
+        <BackLink />
+        <EmptyState icon={Wrench} title={`${code} is not a ticket you can see`}>
+          It may not exist, or it may belong to a TRC and a team you are not part of.
+        </EmptyState>
+      </div>
+    )
+  }
+  return <TicketView ticket={ticket} />
+}
+
+function BackLink() {
+  return (
+    <Link to="/tickets" className="inline-flex items-center gap-1.5 text-sm text-ink-600 hover:text-ink-900">
+      <ArrowLeft className="h-4 w-4" /> All tickets
+    </Link>
+  )
+}
+
+function TicketView({ ticket: t }: { ticket: Ticket }) {
+  const { me } = useAuth()
+  const { data: trail } = useTrail(t.id)
+  const { data: hops } = useHops(t.id)
+
+  const actions = actionsFor(t, me)
+  const tat = useMemo(() => ticketTat(trail ?? [], t.trc_id), [trail, t.trc_id])
+  const meta = STATUS[t.status]
+  const trcName = (id: string | null) => trail?.find(e => e.trc_id === id)?.trc_name
+    ?? hops?.find(h => h.to_trc_id === id)?.to_trc_name ?? (id === t.trc_id ? t.trc_name : '—')
+
+  return (
+    <div className="space-y-5">
+      <BackLink />
+
+      <div className="card overflow-hidden">
+        <div className="flex flex-wrap items-start justify-between gap-3 p-4 sm:p-5">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="font-mono text-2xl font-semibold text-ink-900">{t.code}</h1>
+              <StatusBadge status={t.status} full />
+            </div>
+            <p className="mt-1 text-sm text-ink-600">
+              {t.facility}{t.item ? ` · ${t.item}` : ''}
+            </p>
+            <p className="mt-0.5 text-xs text-ink-500">
+              At {t.trc_name} ({TRC_KIND_LABEL[t.trc_kind]})
+              {t.status !== 'closed' && <> · waiting on {meta.waitingOn}</>}
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="label !mb-0">{t.status === 'closed' ? 'Total TAT' : 'Open for'}</p>
+            <p className="text-2xl font-semibold tabular-nums text-ink-900">{formatSpan(tat.total.ms)}</p>
+          </div>
+        </div>
+
+        {actions.length > 0 && (
+          <div className="border-t border-ink-200 bg-ink-50 p-4 sm:px-5">
+            <ActionBar ticket={t} actions={actions} />
+          </div>
+        )}
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="space-y-4 lg:col-span-2">
+          <TatCard tat={tat} trcName={trcName} closed={t.status === 'closed'} />
+
+          <Section title="Details">
+            <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+              <Row label="Source ticket">{t.source_ticket_no}</Row>
+              <Row label="Spare / board">{t.item}</Row>
+              <Row label="Facility">{t.facility}</Row>
+              <Row label="District · State">{[t.district, t.state].filter(Boolean).join(' · ') || null}</Row>
+              <Row label="Field engineer">
+                {t.stakeholder_name} <span className="text-xs text-ink-400">{t.stakeholder_ecode}</span>
+              </Row>
+              <Row label="Their manager">{t.stakeholder_manager_name}</Row>
+              <Row label="Raised by">
+                {t.raised_by_name}
+                <span className="text-xs text-ink-400"> · {t.raised_as === 'coordinator' ? 'at the TRC' : 'from the field'}</span>
+              </Row>
+              <Row label="TRC engineer">
+                {t.engineer_name && <>{t.engineer_name} <span className="text-xs text-ink-400">{t.engineer_ecode}</span></>}
+              </Row>
+            </dl>
+          </Section>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Section title="Inbound courier">
+              <Courier name={t.in_courier} awb={t.in_awb} on={t.in_dispatched_on} empty="Not recorded" />
+            </Section>
+            <Section title="Return courier">
+              <Courier name={t.out_courier} awb={t.out_awb} on={t.out_dispatched_on} empty="Not dispatched yet" />
+            </Section>
+          </div>
+
+          {(hops ?? []).length > 0 && (
+            <Section title="Transfers">
+              <ol className="space-y-3">
+                {hops!.map(h => (
+                  <li key={h.hop} className="rounded-lg border border-ink-200 p-3">
+                    <p className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-ink-900">
+                      <ArrowRightLeft className="h-4 w-4 text-violet-600" />
+                      {h.from_trc_name} → {h.to_trc_name}
+                      <span className="text-xs font-normal text-ink-400">· hop {h.hop} · {when(h.transferred_at)}</span>
+                    </p>
+                    {h.reason && <p className="mt-1 text-sm text-ink-600">{h.reason}</p>}
+                    <p className="mt-1 text-xs text-ink-500">
+                      {[h.courier, h.awb && `AWB ${h.awb}`, day(h.dispatched_on) && `sent ${day(h.dispatched_on)}`, h.transferred_by_name && `by ${h.transferred_by_name}`]
+                        .filter(Boolean).join(' · ') || 'No courier recorded'}
+                    </p>
+                  </li>
+                ))}
+              </ol>
+            </Section>
+          )}
+        </div>
+
+        <Section title="History">
+          {!trail ? <Spinner className="h-4 w-4 text-ink-400" /> : (
+            <ol className="relative space-y-4 border-l border-ink-200 pl-4">
+              {trail.map(e => (
+                <li key={e.id} className="relative">
+                  <span className="absolute -left-[21px] top-1.5 h-2.5 w-2.5 rounded-full border-2 border-surface bg-ink-400" />
+                  <p className="text-sm font-medium text-ink-900">
+                    {e.status === 'accepted' && e.from_status && e.from_status !== 'pending_acceptance' && e.from_status !== 'transferred'
+                      ? 'Handed back to the coordinator'
+                      : e.from_status === null ? 'Raised' : STATUS[e.status]?.label ?? e.status}
+                  </p>
+                  <p className="text-xs text-ink-500">
+                    {when(e.at)} · {e.actor_name ?? 'System'}{e.trc_name ? ` · ${e.trc_name}` : ''}
+                  </p>
+                  {e.note && <p className="mt-1 whitespace-pre-wrap text-sm text-ink-600">{e.note}</p>}
+                </li>
+              ))}
+            </ol>
+          )}
+        </Section>
+      </div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="card overflow-hidden">
+      <div className="border-b border-ink-200 bg-ink-50 px-4 py-2.5">
+        <h3 className="text-sm font-semibold text-ink-800">{title}</h3>
+      </div>
+      <div className="p-4">{children}</div>
+    </div>
+  )
+}
+
+function Row({ label, children }: { label: string; children: ReactNode }) {
+  const empty = children === null || children === undefined || children === ''
+  return (
+    <div>
+      <dt className="text-[11px] font-semibold uppercase tracking-label text-ink-400">{label}</dt>
+      <dd className="mt-0.5 text-sm text-ink-900">{empty ? <span className="text-ink-300">—</span> : children}</dd>
+    </div>
+  )
+}
+
+function Courier({ name, awb, on, empty }: { name: string | null; awb: string | null; on: string | null; empty: string }) {
+  if (!name && !awb && !on) return <p className="text-sm text-ink-400">{empty}</p>
+  return (
+    <dl className="space-y-2">
+      <Row label="Courier">{name}</Row>
+      <Row label="Tracking / AWB">{awb && <span className="font-mono">{awb}</span>}</Row>
+      <Row label="Dispatched">{day(on)}</Row>
+    </dl>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+
+function SpanCell({ span, label }: { span: Span; label: string }) {
+  return (
+    <div className="rounded-lg border border-ink-200 p-3">
+      <p className="text-[11px] font-semibold uppercase tracking-label text-ink-400">{label}</p>
+      <p className={clsx('mt-1 text-lg font-semibold tabular-nums', span.ms === null ? 'text-ink-300' : 'text-ink-900')}>
+        {formatSpan(span.ms)}
+      </p>
+      <p className="min-h-4 text-xs text-ink-400">{span.running ? 'still going' : ''}</p>
+    </div>
+  )
+}
+
+/**
+ * The stages, and — when the spare changed labs — each lab's share.
+ *
+ * Measured from the history below it, so the two cannot disagree: every
+ * figure here is the gap between two of those timestamps.
+ */
+function TatCard({
+  tat, trcName, closed,
+}: {
+  tat: ReturnType<typeof ticketTat>
+  trcName: (id: string | null) => string
+  closed: boolean
+}) {
+  return (
+    <Section title="Turnaround">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+        <SpanCell label="Reach TRC" span={tat.reach} />
+        <SpanCell label="To assignment" span={tat.assign} />
+        <SpanCell label="Repair" span={tat.repair} />
+        <SpanCell label="Dispatch & transit" span={tat.dispatch} />
+        <SpanCell label={closed ? 'End to end' : 'So far'} span={tat.total} />
+      </div>
+
+      {tat.legs.length > 1 && (
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-ink-200 text-left text-xs font-semibold uppercase tracking-wide text-ink-500">
+                <th className="py-2 pr-3 font-medium">TRC leg</th>
+                <th className="px-3 py-2 text-right font-medium">Reach</th>
+                <th className="px-3 py-2 text-right font-medium">Assign</th>
+                <th className="px-3 py-2 text-right font-medium">Repair</th>
+                <th className="px-3 py-2 text-right font-medium">Dispatch</th>
+                <th className="py-2 pl-3 text-right font-medium">At this TRC</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-ink-100">
+              {tat.legs.map((leg, i) => (
+                <tr key={i}>
+                  <td className="py-2 pr-3 text-ink-900">
+                    {i + 1}. {trcName(leg.trcId)}
+                    <span className="block text-xs text-ink-400">
+                      {leg.endedBy === 'transfer' ? 'transferred on' : leg.endedBy === 'closed' ? 'closed' : 'current'}
+                    </span>
+                  </td>
+                  {[leg.reach, leg.assign, leg.repair, leg.dispatch, leg.total].map((s, j) => (
+                    <td key={j} className={clsx('px-3 py-2 text-right tabular-nums', s.ms === null ? 'text-ink-300' : 'text-ink-700', j === 4 && 'pl-3 pr-0 font-medium')}>
+                      {formatSpan(s.ms)}{s.running && s.ms !== null ? '…' : ''}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t border-ink-200 font-medium">
+                <td className="py-2 pr-3 text-ink-900">Cumulative</td>
+                {[tat.reach, tat.assign, tat.repair, tat.dispatch, tat.total].map((s, j) => (
+                  <td key={j} className="px-3 py-2 text-right tabular-nums text-ink-900 last:pr-0">{formatSpan(s.ms)}</td>
+                ))}
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+    </Section>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+
+const ACTION_META: Record<Action, { label: string; icon: typeof Hand; primary?: boolean }> = {
+  accept: { label: 'Accept', icon: Hand, primary: true },
+  assign: { label: 'Assign engineer', icon: UserPlus, primary: true },
+  start: { label: 'Accept repair', icon: PlayCircle, primary: true },
+  complete: { label: 'Close repair', icon: ClipboardCheck, primary: true },
+  dispatch: { label: 'Dispatch back', icon: Send, primary: true },
+  received: { label: 'Received back', icon: PackageCheck, primary: true },
+  return: { label: 'Hand back to coordinator', icon: Undo2 },
+  transfer: { label: 'Transfer to another TRC', icon: ArrowRightLeft },
+}
+
+/**
+ * The moves this person can make, and the one form each needs.
+ *
+ * One form open at a time, under the buttons — the question and the answer
+ * together — and every move asks only for what that move records.
+ */
+function ActionBar({ ticket: t, actions }: { ticket: Ticket; actions: Action[] }) {
+  const [open, setOpen] = useState<Action | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState<string | null>(null)
+
+  return (
+    <div className="space-y-3">
+      {error && <Alert kind="error">{error}</Alert>}
+      {done && <Alert kind="success">{done}</Alert>}
+      <div className="flex flex-wrap gap-2">
+        {actions.map(a => {
+          const m = ACTION_META[a]
+          return (
+            <button
+              key={a}
+              type="button"
+              onClick={() => { setOpen(open === a ? null : a); setError(null); setDone(null) }}
+              className={clsx(m.primary ? 'btn-primary' : 'btn-secondary', open === a && 'ring-2 ring-offset-1 ring-ink-400')}
+              aria-expanded={open === a}
+            >
+              <m.icon className="h-4 w-4" /> {m.label}
+            </button>
+          )
+        })}
+      </div>
+      {open && (
+        <ActionForm
+          key={open}
+          ticket={t}
+          action={open}
+          onCancel={() => setOpen(null)}
+          onError={setError}
+          onDone={msg => { setOpen(null); setError(null); setDone(msg) }}
+        />
+      )}
+    </div>
+  )
+}
+
+function ActionForm({
+  ticket: t, action, onCancel, onError, onDone,
+}: {
+  ticket: Ticket
+  action: Action
+  onCancel: () => void
+  onError: (msg: string) => void
+  onDone: (msg: string) => void
+}) {
+  const { data: members } = useMembers()
+  const { data: trcs } = useTrcs()
+  const accept = useAccept()
+  const assign = useAssign()
+  const start = useStartRepair()
+  const giveBack = useReturnToDesk()
+  const complete = useCompleteRepair()
+  const dispatch = useDispatch()
+  const received = useMarkReceived()
+  const transfer = useTransfer()
+
+  const [note, setNote] = useState('')
+  const [engineerId, setEngineerId] = useState(t.engineer_id ?? '')
+  const [toTrc, setToTrc] = useState('')
+  const [courier, setCourier] = useState('')
+  const [awb, setAwb] = useState('')
+  const [on, setOn] = useState(new Date().toISOString().slice(0, 10))
+
+  const engineers = (members ?? []).filter(m => m.is_engineer && m.trc_ids.includes(t.trc_id))
+  // Regional first: an unrepairable spare usually goes up a level.
+  const destinations = (trcs ?? [])
+    .filter(x => x.is_active && x.id !== t.trc_id)
+    .sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'regional' ? -1 : 1))
+
+  const busy = [accept, assign, start, giveBack, complete, dispatch, received, transfer].some(m => m.isPending)
+
+  const run = async () => {
+    try {
+      switch (action) {
+        case 'accept':
+          await accept.mutateAsync({ id: t.id, note }); onDone(`${t.code} accepted at ${t.trc_name}.`); break
+        case 'assign': {
+          if (!engineerId) { onError('Choose the engineer.'); return }
+          await assign.mutateAsync({ id: t.id, engineerId, note })
+          const who = engineers.find(e => e.employee_id === engineerId)?.full_name
+          onDone(`Assigned to ${who ?? 'the engineer'}. They accept it before starting.`); break
+        }
+        case 'start':
+          await start.mutateAsync({ id: t.id, note }); onDone('Repair accepted — the clock on the bench has started.'); break
+        case 'return':
+          await giveBack.mutateAsync({ id: t.id, note }); onDone('Handed back to the coordinator.'); break
+        case 'complete':
+          await complete.mutateAsync({ id: t.id, note }); onDone('Repair closed. It is with the coordinator for dispatch.'); break
+        case 'dispatch':
+          await dispatch.mutateAsync({ id: t.id, courier, awb, on, note }); onDone('Dispatched back to the field.'); break
+        case 'received':
+          await received.mutateAsync({ id: t.id, note }); onDone(`${t.code} is closed.`); break
+        case 'transfer': {
+          if (!toTrc) { onError('Choose the TRC it is going to.'); return }
+          await transfer.mutateAsync({ id: t.id, toTrcId: toTrc, reason: note, courier, awb, on })
+          onDone(`Transferred to ${trcs?.find(x => x.id === toTrc)?.name}. Their coordinators accept it on arrival.`); break
+        }
+      }
+    } catch (err) {
+      onError(err instanceof Error ? err.message : 'That did not go through.')
+    }
+  }
+
+  const needsNote = action === 'return' || action === 'transfer'
+  const needsCourier = action === 'dispatch' || action === 'transfer'
+
+  return (
+    <div className="card space-y-3 p-4">
+      {action === 'assign' && (
+        <label className="block">
+          <span className="label">Engineer at {t.trc_name}</span>
+          <select className="input mt-1" value={engineerId} onChange={e => setEngineerId(e.target.value)}>
+            <option value="">Choose…</option>
+            {engineers.map(e => <option key={e.employee_id} value={e.employee_id}>{e.full_name} · {e.ecode}</option>)}
+          </select>
+          {engineers.length === 0 && (
+            <p className="mt-1 text-xs text-cyrixRed-700">
+              Nobody at this TRC has the engineer box ticked. An admin adds them under People &amp; TRCs.
+            </p>
+          )}
+        </label>
+      )}
+
+      {action === 'transfer' && (
+        <label className="block">
+          <span className="label">Transfer to</span>
+          <select className="input mt-1" value={toTrc} onChange={e => setToTrc(e.target.value)}>
+            <option value="">Choose…</option>
+            {destinations.map(x => <option key={x.id} value={x.id}>{x.name} · {TRC_KIND_LABEL[x.kind]}</option>)}
+          </select>
+        </label>
+      )}
+
+      {needsCourier && (
+        <div className="grid gap-3 sm:grid-cols-3">
+          <label className="block">
+            <span className="label">Courier{action === 'dispatch' && <span className="text-cyrixRed-600"> *</span>}</span>
+            <input className="input mt-1" value={courier} onChange={e => setCourier(e.target.value)} placeholder="DTDC, Blue Dart…" />
+          </label>
+          <label className="block">
+            <span className="label">Tracking / AWB</span>
+            <input className="input mt-1" value={awb} onChange={e => setAwb(e.target.value)} />
+          </label>
+          <label className="block">
+            <span className="label">Dispatched on</span>
+            <input className="input mt-1" type="date" value={on} onChange={e => setOn(e.target.value)} />
+          </label>
+        </div>
+      )}
+
+      <label className="block">
+        <span className="label">
+          {action === 'transfer' ? 'Why it is being transferred' : action === 'return' ? 'Why it is going back' : 'Note (optional)'}
+          {needsNote && <span className="text-cyrixRed-600"> *</span>}
+        </span>
+        <textarea
+          className="input mt-1"
+          rows={2}
+          value={note}
+          onChange={e => setNote(e.target.value)}
+          placeholder={
+            action === 'complete' ? 'What was done — parts replaced, tests run'
+              : action === 'transfer' ? 'e.g. Needs FPGA rework this TRC cannot do'
+                : action === 'return' ? 'e.g. Beyond what this bench can repair'
+                  : ''
+          }
+        />
+      </label>
+
+      <div className="flex gap-2">
+        <button type="button" className="btn-primary" onClick={run} disabled={busy}>
+          {busy ? <Spinner className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+          {ACTION_META[action].label}
+        </button>
+        <button type="button" className="btn-secondary" onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
+  )
+}

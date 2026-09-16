@@ -1,0 +1,20 @@
+<!--
+  The Cyrix mark: two chevrons facing each other across a gap, black and
+  red, forming the X the brand is named for.
+
+  One file, and the same file, in all four apps. They share a database, a
+  sign-in and a tab strip, so an icon that changes between modules tells a
+  person something has changed when nothing has.
+
+  Not the wordmark: a favicon renders at 16px, where "CYRIX HEALTH CARE PVT
+  LTD" is four grey smears. The X is the only part of the lockup that
+  survives at that size, and it is already the brand's own device — the
+  tagline is "The X-Factor in Medical Technology Reliability".
+
+  The ground is white because the mark is red *and* black, and black needs
+  a light ground. Fixed colours rather than theme-aware ones: the ground is
+  white in both themes, so the ink is right either way, and a mark that
+  follows the OS theme is one that can go white-on-white somewhere neither
+  branch anticipated.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#ffffff"/><path d="M6 6 L16 16 L6 26" fill="none" stroke="#141414" stroke-width="5" stroke-linecap="square" stroke-linejoin="miter"/><path d="M26 6 L16 16 L26 26" fill="none" stroke="#e5231d" stroke-width="5" stroke-linecap="square" stroke-linejoin="miter"/></svg>
