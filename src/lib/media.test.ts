@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  fitWithin, extensionFor, pickRecorderMime, pickVideoRecorderMime, isWebKit, clock, humanSize,
+  fitWithin, fitVideo, keptSeconds, extensionFor, pickRecorderMime, pickVideoRecorderMime, isWebKit, clock, humanSize,
   PHOTO_QUALITIES, MAX_VIDEO_SECONDS, VIDEO_BITS_PER_SECOND, MAX_UPLOAD_BYTES,
 } from './media'
 
@@ -85,5 +85,23 @@ describe('clock and humanSize', () => {
   it('reads like a file size', () => {
     expect(humanSize(240_000)).toBe('234 KB')
     expect(humanSize(2_100_000)).toBe('2.0 MB')
+  })
+})
+
+describe('a video chosen from the gallery', () => {
+  it('is redrawn at the size of one recorded here, in even pixels, either way up', () => {
+    expect(fitVideo(1920, 1080)).toEqual({ width: 640, height: 360 })
+    expect(fitVideo(1080, 1920)).toEqual({ width: 360, height: 640 })
+    expect(fitVideo(640, 480)).toEqual({ width: 640, height: 480 })
+    expect(fitVideo(321, 241)).toEqual({ width: 320, height: 240 })
+    expect(fitVideo(0, 0)).toEqual({ width: 0, height: 0 })
+  })
+
+  it('keeps all of a short one, and the first 30 seconds of a long one', () => {
+    expect(keptSeconds(12)).toEqual({ seconds: 12, trimmed: false })
+    expect(keptSeconds(30.3)).toEqual({ seconds: 30.3, trimmed: false })
+    expect(keptSeconds(72)).toEqual({ seconds: 30, trimmed: true })
+    // A file that does not say how long it is: up to the limit, and nothing claimed.
+    expect(keptSeconds(Infinity)).toEqual({ seconds: 30, trimmed: false })
   })
 })

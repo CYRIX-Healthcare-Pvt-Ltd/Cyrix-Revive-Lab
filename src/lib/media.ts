@@ -31,6 +31,29 @@ export const VIDEO_WIDTH = 640
 export const VIDEO_HEIGHT = 480
 export const VIDEO_FPS = 24
 export const VIDEO_BITS_PER_SECOND = 500_000
+
+/**
+ * A video chosen from the gallery is redrawn here, at the size one recorded
+ * here would be — a phone's own video is 1080p and 60 MB a minute.
+ */
+export const VIDEO_MAX_SIDE = VIDEO_WIDTH
+
+/** A frame scaled to fit `max` on its long side, in even pixels as video encoders need, never enlarged. */
+export function fitVideo(width: number, height: number, max = VIDEO_MAX_SIDE): { width: number; height: number } {
+  const fit = fitWithin(width, height, max)
+  if (!fit.width || !fit.height) return { width: 0, height: 0 }
+  const even = (n: number) => Math.max(2, n - (n % 2))
+  return { width: even(fit.width), height: even(fit.height) }
+}
+
+/**
+ * How much of a chosen video is kept: all of it, or the first `max`
+ * seconds. Half a second of grace, so a 30.2-second clip is not called cut.
+ */
+export function keptSeconds(duration: number, max = MAX_VIDEO_SECONDS): { seconds: number; trimmed: boolean } {
+  if (!Number.isFinite(duration) || duration <= 0) return { seconds: max, trimmed: false }
+  return duration > max + 0.5 ? { seconds: max, trimmed: true } : { seconds: duration, trimmed: false }
+}
 /** The bucket's ceiling. A browser that ignored the bitrate can pass it. */
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 

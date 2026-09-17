@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { ticketCode, parseTicketCode, actionsFor, runsTrc, waitingOnMe, type Me, type TicketLike } from './tickets'
+import {
+  ticketCode, parseTicketCode, actionsFor, runsTrc, waitingOnMe, cleanItems, itemsSummary,
+  type Me, type TicketLike,
+} from './tickets'
 
 const REG = 'trc-regional'
 const PRJ = 'trc-project'
@@ -9,7 +12,7 @@ const me = (over: Partial<Me> = {}): Me => ({
   is_admin: false, is_sw_admin: false, trc_ids: [], ...over,
 })
 const ticket = (over: Partial<TicketLike> = {}): TicketLike => ({
-  status: 'pending_acceptance', trc_id: REG, engineer_id: null, stakeholder_id: 'field', ...over,
+  status: 'pending_acceptance', trc_id: REG, engineer_id: null, stakeholder_id: 'field', raised_by: 'field', ...over,
 })
 
 describe('ticket numbers', () => {
@@ -53,7 +56,21 @@ describe('actionsFor — who may do what, now', () => {
     expect(actionsFor(ticket(), desk)).toEqual(['accept'])
     expect(actionsFor(ticket({ status: 'transferred' }), desk)).toEqual(['accept'])
     expect(actionsFor(ticket(), engineer)).toEqual([])
-    expect(actionsFor(ticket(), me({ employee_id: 'field' }))).toEqual([])
+    expect(actionsFor(ticket(), me({ employee_id: 'field' }))).not.toContain('accept')
+  })
+
+  it('lets whoever sent it in add the courier details until it arrives', () => {
+    // The field engineer who raised it.
+    expect(actionsFor(ticket(), me({ employee_id: 'field' }))).toEqual(['courier'])
+    // A desk that raised it for a field engineer, and that field engineer.
+    const raisedAtLab = ticket({ raised_by: 'me', stakeholder_id: 'field' })
+    expect(actionsFor(raisedAtLab, desk)).toEqual(['accept', 'courier'])
+    expect(actionsFor(raisedAtLab, me({ employee_id: 'field' }))).toEqual(['courier'])
+    // Nobody else, and not once the Revive Lab has it.
+    expect(actionsFor(ticket(), engineer)).not.toContain('courier')
+    expect(actionsFor(ticket({ status: 'accepted' }), me({ employee_id: 'field' }))).toEqual([])
+    // Optional, so it never puts a ticket in somebody's queue.
+    expect(waitingOnMe(ticket(), me({ employee_id: 'field' }))).toBe(false)
   })
 
   it('offers assign and transfer once accepted', () => {
@@ -97,5 +114,29 @@ describe('actionsFor — who may do what, now', () => {
   it('counts a ticket as waiting on me only for a forward move', () => {
     expect(waitingOnMe(ticket({ status: 'accepted' }), desk)).toBe(true)
     expect(waitingOnMe(ticket({ status: 'in_repair', engineer_id: 'x' }), desk)).toBe(false)
+  })
+})
+
+describe('spares and accessories', () => {
+  it('sends only the lines with a name, trimmed', () => {
+    expect(cleanItems([
+      { kind: 'spare', name: ' SMPS board ' },
+      { kind: 'accessory', name: '   ' },
+      { kind: 'accessory', name: 'Power cable' },
+    ])).toEqual([
+      { kind: 'spare', name: 'SMPS board' },
+      { kind: 'accessory', name: 'Power cable' },
+    ])
+  })
+
+  it('calls a ticket by its first line, and says how many more came with it', () => {
+    expect(itemsSummary({ spare_name: 'SMPS board', items: [{ kind: 'spare', name: 'SMPS board' }] })).toBe('SMPS board')
+    expect(itemsSummary({
+      spare_name: 'SMPS board',
+      items: [{ kind: 'spare', name: 'SMPS board' }, { kind: 'accessory', name: 'Power cable' }, { kind: 'accessory', name: 'Probe' }],
+    })).toBe('SMPS board +2 more')
+    // From before the list, or an app that did not send one.
+    expect(itemsSummary({ spare_name: 'Pump motor', items: [] })).toBe('Pump motor')
+    expect(itemsSummary({ spare_name: null })).toBeNull()
   })
 })

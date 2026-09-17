@@ -6,7 +6,7 @@ import {
 import { ArrowRight, BellRing, Building2, ChartColumn, Inbox, PackagePlus, TrendingUp } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTickets, useTrcs, useVisibleEvents } from '@/lib/queries'
-import { STATUS, STATUS_ORDER, TONE_FILL, waitingOnMe } from '@/lib/tickets'
+import { STATUS, STATUS_ORDER, TONE_FILL, itemsSummary, waitingOnMe } from '@/lib/tickets'
 import { asDays, formatSpan, ticketTat, type TatEvent } from '@/lib/tat'
 import { EmptyState, PageLoader, StatTile, StatusBadge } from '@/components/ui'
 import IconChip from '@/components/IconChip'
@@ -154,7 +154,7 @@ export default function Dashboard() {
                       <span className="font-mono text-sm font-semibold text-ink-900">{t.code}</span>
                       <StatusBadge status={t.status} />
                       <span className="min-w-0 flex-1 truncate text-sm text-ink-600">
-                        {t.facility}{t.spare_name ? ` · ${t.spare_name}` : ''}
+                        {t.facility}{itemsSummary(t) ? ` · ${itemsSummary(t)}` : ''}
                       </span>
                       <span className="text-xs text-ink-400">{t.trc_name}</span>
                     </Link>

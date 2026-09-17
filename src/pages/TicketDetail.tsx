@@ -9,11 +9,12 @@ import {
 import { useAuth } from '@/contexts/AuthContext'
 import {
   useAccept, useAddObservation, useAssign, useCompleteRepair, useDispatch, useHops, useMarkReceived,
-  useMembers, useReturnToDesk, useStartRepair, useTickets, useTrail, useTransfer, useTrcs,
+  useMembers, useReturnToDesk, useStartRepair, useTickets, useTrail, useTransfer, useTrcs, useUpdateCourier,
   type Ticket, type TrailEvent,
 } from '@/lib/queries'
 import {
-  actionsFor, parseTicketCode, STATUS, TONE_SOFT, TONE_TEXT, TRC_KIND_LABEL, type Action, type Tone,
+  actionsFor, itemsSummary, parseTicketCode, ITEM_KIND_LABEL, STATUS, TONE_SOFT, TONE_TEXT, TRC_KIND_LABEL,
+  type Action, type TicketItem, type Tone,
 } from '@/lib/tickets'
 import { formatSpan, ticketTat, type Span } from '@/lib/tat'
 import { Alert, EmptyState, PageLoader, Spinner, StatusBadge } from '@/components/ui'
@@ -65,7 +66,10 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
   const { data: hops } = useHops(t.id)
 
   const actions = actionsFor(t, me)
-  const tat = useMemo(() => ticketTat((trail ?? []).filter(e => e.kind !== 'observation'), t.trc_id), [trail, t.trc_id])
+  // Only moves: an observation or a tracking number starts no clock.
+  const tat = useMemo(() => ticketTat((trail ?? []).filter(e => e.kind === 'status'), t.trc_id), [trail, t.trc_id])
+  const summary = itemsSummary(t)
+  const items: TicketItem[] = t.items?.length ? t.items : t.spare_name ? [{ kind: 'spare', name: t.spare_name }] : []
   const meta = STATUS[t.status]
   const trcName = (id: string | null) => trail?.find(e => e.trc_id === id)?.trc_name
     ?? hops?.find(h => h.to_trc_id === id)?.to_trc_name ?? (id === t.trc_id ? t.trc_name : '—')
@@ -82,7 +86,7 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
               <StatusBadge status={t.status} full />
             </div>
             <p className="mt-1 text-sm text-ink-600">
-              {t.facility}{t.spare_name ? ` · ${t.spare_name}` : ''}
+              {t.facility}{summary ? ` · ${summary}` : ''}
             </p>
             <p className="mt-0.5 text-xs text-ink-500">
               At {t.trc_name}
@@ -125,7 +129,20 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
               <Row label="Hospital name">{t.facility}</Row>
               <Row label="Equipment barcode">{t.equipment_barcode && <span className="font-mono">{t.equipment_barcode}</span>}</Row>
               <Row label="Equipment name">{t.equipment_name}</Row>
-              <Row label="Spare name">{t.spare_name}</Row>
+              <Row label="Spares and accessories">
+                {items.length > 0 && (
+                  <ul className="space-y-1">
+                    {items.map((it, i) => (
+                      <li key={i} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                        <span>{it.name}</span>
+                        <span className="rounded bg-ink-100 px-1.5 py-px text-[10px] font-semibold uppercase tracking-label text-ink-500">
+                          {ITEM_KIND_LABEL[it.kind]}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Row>
               <Row label="Ticket ID">{t.source_ticket_no && <span className="font-mono">{t.source_ticket_no}</span>}</Row>
               {/* With their function, so the Revive Lab can see which part of
                   the business a spare is coming from without asking. */}
@@ -152,7 +169,10 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
 
           <div className="grid gap-4 sm:grid-cols-2">
             <Section title="Courier details" icon={Truck} tone="teal">
-              <Courier name={t.in_courier} awb={t.in_awb} on={t.in_dispatched_on} empty="Not recorded" />
+              <Courier
+                name={t.in_courier} awb={t.in_awb} on={t.in_dispatched_on}
+                empty={t.status === 'pending_acceptance' ? 'Not added yet' : 'Not recorded'}
+              />
             </Section>
             {/* The same truck, facing home. */}
             <Section title="Return courier" icon={Truck} tone="green" iconClassName="-scale-x-100">
@@ -254,6 +274,7 @@ function stepLook(e: TrailEvent, earlier: TrailEvent[]): { title: ReactNode; ton
     const n = earlier.filter(x => x.kind === 'observation').length + 1
     return { title: `Observation ${n}`, tone, icon: ScanSearch }
   }
+  if (e.kind === 'courier') return { title: 'Courier details updated', tone: 'teal', icon: Truck }
   if (e.from_status === null) return { title: 'Raised', tone, icon: PackagePlus }
 
   switch (e.status) {
@@ -403,12 +424,16 @@ const ACTION_META: Record<Action, { label: string; icon: LucideIcon; tone: Tone;
   received: { label: 'Received back', icon: PackageCheck, tone: 'green', primary: true },
   return: { label: 'Hand back to coordinator', icon: Undo2, tone: 'amber' },
   transfer: { label: 'Transfer to another Revive Lab', icon: ArrowRightLeft, tone: 'violet' },
+  courier: { label: 'Update courier details', icon: Truck, tone: 'teal' },
 }
 
 /** Once an engineer has it, the same button gives it to somebody else. */
 function actionMeta(action: Action, t: Ticket) {
   const m = ACTION_META[action]
-  return action === 'assign' && t.engineer_id ? { ...m, label: 'Reassign engineer', icon: UserCog } : m
+  if (action === 'assign' && t.engineer_id) return { ...m, label: 'Reassign engineer', icon: UserCog }
+  // Nothing to update yet: the card was raised before it went to a courier.
+  if (action === 'courier' && !t.in_courier && !t.in_awb && !t.in_dispatched_on) return { ...m, label: 'Add courier details' }
+  return m
 }
 
 /**
@@ -476,6 +501,7 @@ function ActionForm({
   const dispatch = useDispatch()
   const received = useMarkReceived()
   const transfer = useTransfer()
+  const updateCourier = useUpdateCourier()
 
   const meta = actionMeta(action, t)
   // Reassigning: somebody has it, and the choice is who has it instead.
@@ -484,9 +510,11 @@ function ActionForm({
   const [note, setNote] = useState('')
   const [engineerId, setEngineerId] = useState(reassign ? '' : t.engineer_id ?? '')
   const [toTrc, setToTrc] = useState('')
-  const [courier, setCourier] = useState('')
-  const [awb, setAwb] = useState('')
-  const [on, setOn] = useState(new Date().toISOString().slice(0, 10))
+  // Changing the courier details starts from what is there.
+  const editing = action === 'courier'
+  const [courier, setCourier] = useState(editing ? t.in_courier ?? '' : '')
+  const [awb, setAwb] = useState(editing ? t.in_awb ?? '' : '')
+  const [on, setOn] = useState((editing && t.in_dispatched_on) || new Date().toISOString().slice(0, 10))
 
   const engineers = (members ?? [])
     .filter(m => m.is_engineer && m.trc_ids.includes(t.trc_id) && m.employee_id !== t.engineer_id)
@@ -495,7 +523,7 @@ function ActionForm({
     .filter(x => x.is_active && x.id !== t.trc_id)
     .sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'regional' ? -1 : 1))
 
-  const busy = [accept, assign, start, observe, giveBack, complete, dispatch, received, transfer].some(m => m.isPending)
+  const busy = [accept, assign, start, observe, giveBack, complete, dispatch, received, transfer, updateCourier].some(m => m.isPending)
 
   const run = async () => {
     try {
@@ -523,6 +551,10 @@ function ActionForm({
         case 'received':
           if (note.trim().length < 2) { onError('Give the final status — is it working?'); return }
           await received.mutateAsync({ id: t.id, note }); void removeVideoOf(t.id); onDone(`${t.code} is closed.`); break
+        case 'courier':
+          if (!courier.trim() && !awb.trim()) { onError('Enter the courier or the tracking number.'); return }
+          await updateCourier.mutateAsync({ id: t.id, courier, awb, on })
+          onDone('Courier details saved. The Revive Lab sees them on this ticket.'); break
         case 'transfer': {
           if (!toTrc) { onError('Choose the Revive Lab it is going to.'); return }
           await transfer.mutateAsync({ id: t.id, toTrcId: toTrc, reason: note, courier, awb, on })
@@ -537,7 +569,7 @@ function ActionForm({
   // The back of the route card: the Revive Lab's Action taken, and the
   // field engineer's Final status.
   const needsNote = action === 'return' || action === 'transfer' || action === 'complete' || action === 'received' || action === 'observe'
-  const needsCourier = action === 'dispatch' || action === 'transfer'
+  const needsCourier = action === 'dispatch' || action === 'transfer' || action === 'courier'
 
   return (
     <div className="card space-y-3 p-4">
@@ -593,13 +625,17 @@ function ActionForm({
             <input className="input mt-1" value={awb} onChange={e => setAwb(e.target.value)} />
           </label>
           <label className="block">
-            <span className="label">Dispatched on</span>
+            <span className="label">{editing ? 'Date of dispatch' : 'Dispatched on'}</span>
             <input className="input mt-1" type="date" value={on} onChange={e => setOn(e.target.value)} />
           </label>
         </div>
       )}
 
-      <label className="block">
+      {editing && (
+        <p className="text-xs text-ink-500">You can change these until {t.trc_name} accepts the spare.</p>
+      )}
+
+      {!editing && <label className="block">
         <span className="label">
           {action === 'transfer' ? 'Why it is being transferred'
             : action === 'return' ? 'Why it is going back'
@@ -624,7 +660,7 @@ function ActionForm({
                     : ''
           }
         />
-      </label>
+      </label>}
 
       <div className="flex gap-2">
         <button type="button" className="btn-primary" onClick={run} disabled={busy}>

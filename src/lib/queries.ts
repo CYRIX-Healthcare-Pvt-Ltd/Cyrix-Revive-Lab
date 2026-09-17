@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase, friendlyError } from './supabase'
-import type { TicketStatus, TrcKind } from './tickets'
+import type { TicketItem, TicketStatus, TrcKind } from './tickets'
 
 // ---------------------------------------------------------------------
 // Shapes
@@ -32,7 +32,10 @@ export interface Ticket {
   bemmp_code: string | null
   equipment_name: string | null
   equipment_barcode: string | null
+  /** The first line of `items` — what lists and headings call the ticket. */
   spare_name: string | null
+  /** Every spare and accessory sent in, in order (rl_0011). */
+  items: TicketItem[]
   issue: string | null
   return_address: string | null
   contact_number: string | null
@@ -73,8 +76,12 @@ export interface TrailEvent {
   /** On an assignment: who it was given to (rl_0009). */
   engineer_name: string | null
   engineer_ecode: string | null
-  /** A move, or something the engineer found while repairing it (rl_0010). */
-  kind: 'status' | 'observation'
+  /**
+   * A move; something the engineer found while repairing it (rl_0010); or
+   * the courier details added after the ticket was raised (rl_0011). Only a
+   * move changes the status.
+   */
+  kind: 'status' | 'observation' | 'courier'
 }
 
 export interface Hop {
@@ -266,7 +273,8 @@ export interface RaiseInput {
   sourceTicketNo: string
   equipmentName: string
   equipmentBarcode: string
-  spareName: string
+  /** At least one line with a name; blank lines are dropped before sending. */
+  items: TicketItem[]
   issue: string
   returnAddress: string
   contactNumber: string
@@ -286,7 +294,8 @@ export function useRaiseTicket() {
     p_source_ticket_no: a.sourceTicketNo,
     p_equipment_name: a.equipmentName,
     p_equipment_barcode: a.equipmentBarcode,
-    p_spare_name: a.spareName,
+    // The first line's name as well, which is all an older database reads.
+    p_spare_name: a.items[0]?.name ?? '',
     p_issue: a.issue,
     p_return_address: a.returnAddress,
     p_contact_number: a.contactNumber,
@@ -294,6 +303,7 @@ export function useRaiseTicket() {
     p_in_awb: a.inAwb,
     p_in_dispatched_on: a.inDispatchedOn || null,
     p_stakeholder_id: a.stakeholderId,
+    p_items: a.items,
   }) as Promise<{ id: string; code: string; number: number }>)
 }
 
@@ -307,6 +317,13 @@ export const useAssign = () => useTicketMutation(
 /** What the engineer found while it is in repair. The status stays In repair. */
 export const useAddObservation = () => useTicketMutation(
   (a: { id: string; note: string }) => rpc('revive_add_observation', { p_ticket_id: a.id, p_note: a.note }))
+
+/** How the spare is travelling in — added or corrected until the Revive Lab accepts it. */
+export const useUpdateCourier = () => useTicketMutation(
+  (a: { id: string; courier: string; awb: string; on: string }) =>
+    rpc('revive_update_courier', {
+      p_ticket_id: a.id, p_courier: a.courier, p_awb: a.awb, p_dispatched_on: a.on || null,
+    }))
 
 export const useStartRepair = () => useTicketMutation(
   (a: { id: string; note?: string }) => rpc('revive_start_repair', { p_ticket_id: a.id, p_note: a.note || null }))

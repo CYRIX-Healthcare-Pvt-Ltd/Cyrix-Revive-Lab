@@ -4,13 +4,14 @@ import clsx from 'clsx'
 import { ArrowLeft, ClipboardList, MapPin, PackagePlus, Truck } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useBemmpProjects, useRaiseTicket, useTickets, useTrcs, type Person } from '@/lib/queries'
-import { runsTrc, TRC_KIND_LABEL, type TrcKind } from '@/lib/tickets'
+import { cleanItems, runsTrc, TRC_KIND_LABEL, type TrcKind } from '@/lib/tickets'
 import { STATES, districtsOf } from '@/lib/india'
 import { uploadAttachment, type Slot } from '@/lib/attachments'
 import { Alert, PageLoader, Spinner } from '@/components/ui'
 import PersonPicker from '@/components/PersonPicker'
 import IconChip from '@/components/IconChip'
 import { MediaCapture, type PendingPhoto } from '@/components/Attachments'
+import ItemsField, { newLine, type ItemLine } from '@/components/ItemsField'
 
 /**
  * Raising a ticket — the route card, on a screen.
@@ -49,9 +50,10 @@ export default function NewTicket() {
   const [holder, setHolder] = useState<Person | null>(null)
   const [form, setForm] = useState({
     state: '', district: '', bemmpId: '', hospital: '', equipmentBarcode: '', equipmentName: '',
-    spareName: '', sourceTicketNo: '', contactNumber: '', issue: '',
+    sourceTicketNo: '', contactNumber: '', issue: '',
     returnAddress: '', inCourier: '', inAwb: '', inDispatchedOn: '',
   })
+  const [lines, setLines] = useState<ItemLine[]>(() => [newLine('spare')])
   const [photos, setPhotos] = useState<PendingPhoto[]>([])
   const [video, setVideo] = useState<Blob | null>(null)
   const [voice, setVoice] = useState<Blob | null>(null)
@@ -102,7 +104,9 @@ export default function NewTicket() {
     if (!form.district) { setError('Choose the district.'); return }
     if (!form.bemmpId) { setError('Choose the BEMMP.'); return }
     if (form.hospital.trim().length < 2) { setError('Enter the hospital name.'); return }
-    if (form.spareName.trim().length < 2) { setError('Enter the spare name.'); return }
+    const items = cleanItems(lines)
+    if (items.length === 0) { setError('Enter the spare name.'); return }
+    if (items.some(i => i.name.length < 2)) { setError('Enter the name of each spare and accessory.'); return }
     if (form.issue.trim().length < 3) { setError('Describe the issue identified.'); return }
     if (form.returnAddress.trim().length < 5) { setError('Enter the spare return address.'); return }
     if (atLab && !holder) { setError('Name the field engineer this spare belongs to.'); return }
@@ -110,7 +114,7 @@ export default function NewTicket() {
     let created: { id: string; code: string } | null = null
     try {
       setStage('raising')
-      created = await raise.mutateAsync({ ...form, trcId, stakeholderId: atLab ? holder!.id : null })
+      created = await raise.mutateAsync({ ...form, items, trcId, stakeholderId: atLab ? holder!.id : null })
     } catch (err) {
       setStage('idle')
       setError(err instanceof Error ? err.message : 'Could not raise that ticket.')
@@ -231,7 +235,8 @@ export default function NewTicket() {
             <Field label="Hospital name" value={form.hospital} onChange={set('hospital')} required />
             <Field label="Equipment barcode" value={form.equipmentBarcode} onChange={set('equipmentBarcode')} mono />
             <Field label="Equipment name" value={form.equipmentName} onChange={set('equipmentName')} placeholder="e.g. Ventilator" />
-            <Field label="Spare name" value={form.spareName} onChange={set('spareName')} placeholder="e.g. SMPS board" required />
+            {/* In Spare name's place on the card, grown into a list. */}
+            <ItemsField lines={lines} onChange={setLines} required />
             <Field label="Ticket ID" value={form.sourceTicketNo} onChange={set('sourceTicketNo')} placeholder="The field service ticket" mono />
             <Field label="Contact number" type="tel" value={form.contactNumber} onChange={set('contactNumber')} placeholder="+91 …" />
           </div>
@@ -262,9 +267,14 @@ export default function NewTicket() {
         </div>
 
         <div className="card space-y-3 p-4">
-          <h2 className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
-            <IconChip icon={Truck} tone="teal" /> Courier details
-          </h2>
+          <div>
+            <h2 className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
+              <IconChip icon={Truck} tone="teal" /> Courier details
+            </h2>
+            <p className="mt-1 text-xs text-ink-500">
+              No tracking number yet? Raise the ticket now and add these from the ticket once it is sent.
+            </p>
+          </div>
           <div className="grid gap-3 sm:grid-cols-3">
             <Field label="Courier" value={form.inCourier} onChange={set('inCourier')} placeholder="DTDC, Blue Dart…" />
             <Field label="Tracking / AWB number" value={form.inAwb} onChange={set('inAwb')} mono />

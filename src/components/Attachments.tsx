@@ -1,17 +1,25 @@
-import { Fragment, useEffect, useRef, useState, type ReactNode, type SyntheticEvent } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode, type SyntheticEvent } from 'react'
 import clsx from 'clsx'
-import { Camera, CheckCircle2, Mic, Square, Trash2, Video, X } from 'lucide-react'
+import { Camera, CheckCircle2, Images, Mic, Square, Trash2, Video, X } from 'lucide-react'
 import {
   MAX_PHOTOS, MAX_UPLOAD_BYTES, MAX_VIDEO_SECONDS, MAX_VOICE_SECONDS,
   VIDEO_BITS_PER_SECOND, VIDEO_FPS, VIDEO_HEIGHT, VIDEO_WIDTH, VOICE_BITS_PER_SECOND,
   clock, compressPhoto, humanSize, isWebKit, pickRecorderMime, pickVideoRecorderMime,
 } from '@/lib/media'
 import { withDuration } from '@/lib/webm'
+import { shrinkVideo } from '@/lib/videoFile'
 import { Spinner } from '@/components/ui'
 import Lightbox from '@/components/Lightbox'
 
 /** Safari or an iPhone: records MP4, which a Revive Lab on Chrome can play (media.ts). */
 const WEBKIT = typeof navigator !== 'undefined' && isWebKit(navigator)
+
+/**
+ * A phone or a tablet: a finger, and a camera the file picker can open.
+ * There the photo tile opens the camera and Gallery sits beside it. On a
+ * computer both would open the same file picker, so there is one button.
+ */
+const PHONE = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches
 
 export interface PendingPhoto {
   blob: Blob
@@ -33,16 +41,20 @@ interface Held<T> {
  * is left out gets no tile — the ticket page leaves out what the ticket
  * already has.
  *
- * On a phone the photo tile opens the camera straight away; on a computer,
- * the file picker. Every photo is shrunk in the browser before it is kept,
- * so what shows here is exactly what will be sent.
+ * On a phone the photo tile opens the camera straight away, and Gallery
+ * beside it picks photos already taken; on a computer, the file picker. The
+ * video tile records here, and Gallery (Choose file on a computer) takes a
+ * video already made. Every photo is shrunk in the browser before it is kept,
+ * and a chosen video redrawn at the size of one recorded here, so what shows
+ * here is exactly what will be sent.
  */
 export function MediaCapture({ photos, video, voice }: {
   photos?: Held<PendingPhoto[]> & { max?: number }
   video?: Held<Blob | null>
   voice?: Held<Blob | null>
 }) {
-  const input = useRef<HTMLInputElement>(null)
+  const camera = useRef<HTMLInputElement>(null)
+  const gallery = useRef<HTMLInputElement>(null)
   const [viewing, setViewing] = useState<number | null>(null)
   const [preparing, setPreparing] = useState(false)
   const [photoError, setPhotoError] = useState<string | null>(null)
@@ -76,6 +88,11 @@ export function MediaCapture({ photos, video, voice }: {
     bitrates: { audioBitsPerSecond: VOICE_BITS_PER_SECOND },
     onDone: blob => voice?.onChange(blob),
   })
+  const chosenVideo = useVideoFromGallery({ onDone: blob => video?.onChange(blob) })
+  // A note about a chosen video belongs to that video, and goes with it.
+  const hasVideo = !!video?.value
+  const clearChosenNote = chosenVideo.clearNote
+  useEffect(() => { if (!hasVideo) clearChosenNote() }, [hasVideo, clearChosenNote])
   const videoUrl = useBlobUrl(video?.value ?? null)
   const voiceUrl = useBlobUrl(voice?.value ?? null)
 
@@ -89,7 +106,7 @@ export function MediaCapture({ photos, video, voice }: {
     One thing at a time. Both recordings want the microphone, and the camera
     app a photo opens on a phone would cut a video off.
   */
-  const busy = preparing || videoRec.active || voiceRec.active
+  const busy = preparing || chosenVideo.preparing || videoRec.active || voiceRec.active
 
   const addPhotos = async (files: FileList | null) => {
     if (!photos || !files?.length) return
@@ -129,9 +146,15 @@ export function MediaCapture({ photos, video, voice }: {
           icon={preparing ? <Spinner className="h-5 w-5" /> : <Camera className="h-5 w-5 text-sky-600" />}
           title={preparing ? 'Preparing…' : noun}
           hint={`${taken.length} of ${max}`}
-          label={`Add a photo, ${taken.length} of ${max} added`}
-          onClick={() => input.current?.click()}
+          label={`${PHONE ? 'Take a photo' : 'Add a photo'}, ${taken.length} of ${max} added`}
+          onClick={() => (PHONE ? camera : gallery).current?.click()}
           disabled={busy}
+          alt={PHONE && !preparing ? {
+            icon: <Images className="h-4 w-4 text-sky-600" />,
+            label: 'Gallery',
+            aria: 'Choose photos from the gallery',
+            onClick: () => gallery.current?.click(),
+          } : undefined}
         />
       ),
       below: (taken.length > 0 || photoError) && (
@@ -168,14 +191,29 @@ export function MediaCapture({ photos, video, voice }: {
   if (video) {
     cells.push({
       key: 'video',
-      tile: recorderTile(videoRec, video.value, MAX_VIDEO_SECONDS, {
+      tile: chosenVideo.preparing ? (
+        <Tile
+          icon={<Spinner className="h-5 w-5 text-violet-500" />}
+          title="Preparing…"
+          hint={`${clock(chosenVideo.done)} / ${clock(chosenVideo.of)}`}
+          label={`Stop preparing the video, ${clock(chosenVideo.done)} of ${clock(chosenVideo.of)}`}
+          progress={chosenVideo.of > 0 ? chosenVideo.done / chosenVideo.of : 0}
+          onClick={chosenVideo.cancel}
+        />
+      ) : recorderTile(videoRec, video.value, MAX_VIDEO_SECONDS, {
         icon: <Video className="h-5 w-5 text-violet-500" />,
         title: 'Video',
         hint: `up to ${MAX_VIDEO_SECONDS} s`,
         label: `Record a video, up to ${MAX_VIDEO_SECONDS} seconds`,
         disabled: busy,
+        alt: {
+          icon: <Images className="h-4 w-4 text-violet-500" />,
+          label: PHONE ? 'Gallery' : 'Choose file',
+          aria: `Choose a video, the first ${MAX_VIDEO_SECONDS} seconds are kept`,
+          onClick: chosenVideo.choose,
+        },
       }),
-      below: (videoRec.recording || (video.value && videoUrl) || videoRec.error) && (
+      below: (videoRec.recording || chosenVideo.preparing || (video.value && videoUrl) || videoRec.error || chosenVideo.error) && (
         <div className="space-y-1.5">
           {videoRec.recording ? (
             <div className="relative overflow-hidden rounded-lg bg-black">
@@ -193,13 +231,19 @@ export function MediaCapture({ photos, video, voice }: {
                 </button>
               </div>
             </div>
+          ) : chosenVideo.preparing ? (
+            <p className="text-xs text-ink-500">
+              Making it small enough to send. Keep this screen open — it takes as long as the video.
+            </p>
           ) : video.value && videoUrl ? (
             <>
               <video controls playsInline src={videoUrl} onLoadedMetadata={revealLength} className="aspect-video w-full rounded-lg bg-black" />
               <RemoveRecording size={video.value.size} onClick={() => video.onChange(null)} disabled={busy} />
+              {chosenVideo.note && <p className="text-xs text-ink-500">{chosenVideo.note}</p>}
             </>
           ) : null}
           {videoRec.error && <p className="text-xs text-amber-700">{videoRec.error}</p>}
+          {chosenVideo.error && <p className="text-xs text-amber-700">{chosenVideo.error}</p>}
         </div>
       ),
     })
@@ -252,15 +296,34 @@ export function MediaCapture({ photos, video, voice }: {
         onClose={() => setViewing(null)}
       />
 
-      {photos && (
+      {/* The camera on a phone; a phone's gallery, or a computer's files. */}
+      {photos && PHONE && (
         <input
-          ref={input}
+          ref={camera}
           type="file"
           accept="image/*"
           capture="environment"
+          className="hidden"
+          onChange={e => { void addPhotos(e.target.files); e.target.value = '' }}
+        />
+      )}
+      {photos && (
+        <input
+          ref={gallery}
+          type="file"
+          accept="image/*"
           multiple
           className="hidden"
           onChange={e => { void addPhotos(e.target.files); e.target.value = '' }}
+        />
+      )}
+      {video && (
+        <input
+          ref={chosenVideo.input}
+          type="file"
+          accept="video/*"
+          className="hidden"
+          onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; void chosenVideo.take(f) }}
         />
       )}
     </div>
@@ -276,7 +339,7 @@ function recorderTile(
   r: Recorder,
   value: Blob | null,
   maxSeconds: number,
-  idle: { icon: ReactNode; title: string; hint: string; label: string; disabled: boolean },
+  idle: { icon: ReactNode; title: string; hint: string; label: string; disabled: boolean; alt?: TileAlt },
 ) {
   if (r.recording) {
     return (
@@ -308,9 +371,18 @@ function recorderTile(
       hint={idle.hint}
       label={idle.label}
       onClick={() => void r.start()}
-      disabled={idle.disabled}
+      disabled={idle.disabled || r.starting}
+      alt={r.starting ? undefined : idle.alt}
     />
   )
+}
+
+/** A second way into a tile: Gallery beside the camera or the recorder. */
+interface TileAlt {
+  icon: ReactNode
+  label: string
+  aria: string
+  onClick: () => void
 }
 
 /**
@@ -321,8 +393,11 @@ function recorderTile(
  * On a phone it is a full-width bar, icon and name on the left and the
  * limit on the right, so the three stacked cost little of the screen;
  * wider, a square-ish tile with everything centred.
+ *
+ * With a second way in, the tile is split: Gallery takes the bar's right
+ * end on a phone, and a strip along the tile's foot on a computer.
  */
-function Tile({ icon, title, hint, tone = 'idle', progress, label, onClick, disabled }: {
+function Tile({ icon, title, hint, tone = 'idle', progress, label, onClick, disabled, alt }: {
   icon: ReactNode
   title: string
   hint: string
@@ -331,6 +406,7 @@ function Tile({ icon, title, hint, tone = 'idle', progress, label, onClick, disa
   label?: string
   onClick?: () => void
   disabled?: boolean
+  alt?: TileAlt
 }) {
   const shape = clsx(
     'relative flex min-h-12 w-full items-center gap-3 overflow-hidden rounded-lg border px-3 py-2.5 text-left',
@@ -344,9 +420,9 @@ function Tile({ icon, title, hint, tone = 'idle', progress, label, onClick, disa
         <span className="text-xs leading-tight tabular-nums opacity-75 sm:text-[11px]">{hint}</span>
       </span>
       {progress !== undefined && (
-        <span className="absolute inset-x-0 bottom-0 h-1 bg-cyrixRed-100">
+        <span className={clsx('absolute inset-x-0 bottom-0 h-1', tone === 'live' ? 'bg-cyrixRed-100' : 'bg-violet-100')}>
           <span
-            className="block h-full bg-cyrixRed-600 transition-[width] duration-300 ease-linear"
+            className={clsx('block h-full transition-[width] duration-300 ease-linear', tone === 'live' ? 'bg-cyrixRed-600' : 'bg-violet-500')}
             style={{ width: `${Math.min(100, progress * 100)}%` }}
           />
         </span>
@@ -356,6 +432,39 @@ function Tile({ icon, title, hint, tone = 'idle', progress, label, onClick, disa
 
   if (tone === 'done') {
     return <div className={clsx(shape, 'border-emerald-200 bg-emerald-50 text-emerald-800')}>{inner}</div>
+  }
+  if (alt) {
+    const half = 'transition-colors duration-150 ease-out enabled:hover:bg-ink-50 enabled:hover:text-ink-900 enabled:active:bg-ink-100 disabled:cursor-not-allowed disabled:opacity-50'
+    return (
+      <div className="flex w-full overflow-hidden rounded-lg border border-dashed border-ink-300 text-ink-600 sm:h-24 sm:flex-col">
+        <button
+          type="button"
+          onClick={onClick}
+          disabled={disabled}
+          aria-label={label}
+          className={clsx(
+            'relative flex min-h-12 min-w-0 flex-1 items-center gap-3 px-3 py-2.5 text-left',
+            'sm:min-h-0 sm:flex-col sm:justify-center sm:gap-1 sm:px-1 sm:py-0 sm:text-center',
+            half,
+          )}
+        >
+          {inner}
+        </button>
+        <button
+          type="button"
+          onClick={alt.onClick}
+          disabled={disabled}
+          aria-label={alt.aria}
+          className={clsx(
+            'flex shrink-0 items-center justify-center gap-1.5 border-l border-dashed border-ink-300 px-3.5 text-xs font-medium',
+            'sm:h-8 sm:border-l-0 sm:border-t sm:px-1',
+            half,
+          )}
+        >
+          {alt.icon} {alt.label}
+        </button>
+      </div>
+    )
   }
   return (
     <button
@@ -494,6 +603,96 @@ function useRecorder({
   }
 
   return { starting, recording, active: starting || recording, seconds, error, stream, start, stop: release }
+}
+
+/**
+ * A video from the gallery, made small the way a recording here is (videoFile.ts).
+ *
+ * The AudioContext for its sound is made in the tap on Gallery — the only
+ * moment a browser lets sound start — and kept for the file that follows.
+ * The count along the tile moves four times a second, not every frame.
+ */
+function useVideoFromGallery({ onDone }: { onDone: (blob: Blob) => void }) {
+  const input = useRef<HTMLInputElement>(null)
+  const audio = useRef<AudioContext | null>(null)
+  const abort = useRef<AbortController | null>(null)
+  const mounted = useRef(true)
+  const [preparing, setPreparing] = useState(false)
+  const [done, setDone] = useState(0)
+  const [of, setOf] = useState(MAX_VIDEO_SECONDS)
+  const [error, setError] = useState<string | null>(null)
+  const [note, setNote] = useState<string | null>(null)
+
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      abort.current?.abort()
+      void audio.current?.close().catch(() => {})
+    }
+  }, [])
+
+  const choose = () => {
+    setError(null)
+    if (typeof MediaRecorder === 'undefined') {
+      setError('This browser cannot prepare a video. Record one instead.')
+      return
+    }
+    try {
+      if (!audio.current || audio.current.state === 'closed') {
+        const Ctx = window.AudioContext
+          ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+        audio.current = Ctx ? new Ctx() : null
+      }
+      void audio.current?.resume().catch(() => {})
+    } catch {
+      audio.current = null
+    }
+    input.current?.click()
+  }
+
+  const take = async (file: File | undefined) => {
+    if (!file) return
+    const mime = pickVideoRecorderMime(m => MediaRecorder.isTypeSupported(m), WEBKIT)
+    if (!mime) { setError('This browser cannot prepare a video in a format that can be sent.'); return }
+    const control = new AbortController()
+    abort.current = control
+    setError(null); setNote(null); setDone(0); setOf(MAX_VIDEO_SECONDS); setPreparing(true)
+    let shown = 0
+    try {
+      const made = await shrinkVideo(file, {
+        mime,
+        audio: audio.current,
+        signal: control.signal,
+        onProgress: (d, o) => {
+          const now = performance.now()
+          if (!mounted.current || now - shown < 250) return
+          shown = now
+          setDone(d); setOf(o)
+        },
+      })
+      if (!mounted.current) return
+      if (made.blob.size > MAX_UPLOAD_BYTES) {
+        setError(`That came out at ${humanSize(made.blob.size)}, over the ${humanSize(MAX_UPLOAD_BYTES)} limit. Choose a shorter one.`)
+        return
+      }
+      if (made.trimmed) {
+        setNote(`It was ${clock(made.original)} long, so the first ${MAX_VIDEO_SECONDS} seconds are kept. Trim it in the gallery first if the fault shows later.`)
+      }
+      onDone(made.blob)
+    } catch (err) {
+      if (!mounted.current) return
+      if (err instanceof DOMException && err.name === 'AbortError') return
+      setError(err instanceof Error ? err.message : 'That video could not be prepared.')
+    } finally {
+      if (mounted.current) setPreparing(false)
+      if (abort.current === control) abort.current = null
+    }
+  }
+
+  const clearNote = useCallback(() => setNote(null), [])
+
+  return { input, preparing, done, of, error, note, choose, take, cancel: () => abort.current?.abort(), clearNote }
 }
 
 /**

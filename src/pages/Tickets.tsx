@@ -4,7 +4,7 @@ import clsx from 'clsx'
 import { Inbox, PackagePlus, Search } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTickets, useTrcs, type Ticket } from '@/lib/queries'
-import { STATUS, STATUS_ORDER, waitingOnMe, parseTicketCode } from '@/lib/tickets'
+import { STATUS, STATUS_ORDER, itemsSummary, waitingOnMe, parseTicketCode } from '@/lib/tickets'
 import { EmptyState, PageLoader, SortHeader, StatusBadge } from '@/components/ui'
 
 type View = 'mine' | 'open' | 'closed' | 'all'
@@ -65,7 +65,9 @@ export default function Tickets() {
       rows = rows.filter(t =>
         (asNumber !== null && t.number === asNumber)
         || [t.code, t.source_ticket_no, t.facility, t.spare_name, t.equipment_name, t.equipment_barcode, t.district, t.state, t.bemmp_code,
-            t.stakeholder_name, t.stakeholder_ecode, t.engineer_name, t.in_awb, t.out_awb]
+            t.stakeholder_name, t.stakeholder_ecode, t.engineer_name, t.in_awb, t.out_awb,
+            // Every spare and accessory, not just the first.
+            ...(t.items ?? []).map(i => i.name)]
           .some(v => (v ?? '').toLowerCase().includes(needle)))
     }
     if (sortKey) {
@@ -184,7 +186,7 @@ export default function Tickets() {
                       <td className="px-4 py-3 text-ink-700">{t.trc_name}</td>
                       <td className="px-4 py-3">
                         <p className="text-ink-900">{t.facility}</p>
-                        <p className="text-xs text-ink-400">{[t.spare_name, t.equipment_name, t.district].filter(Boolean).join(' · ')}</p>
+                        <p className="text-xs text-ink-400">{[itemsSummary(t), t.equipment_name, t.district].filter(Boolean).join(' · ')}</p>
                       </td>
                       <td className="px-4 py-3 text-ink-700">
                         {t.stakeholder_name}

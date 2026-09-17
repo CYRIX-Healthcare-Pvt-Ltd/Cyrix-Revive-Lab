@@ -171,6 +171,7 @@ export interface TicketLike {
   trc_id: string
   engineer_id: string | null
   stakeholder_id: string
+  raised_by: string
 }
 
 /** A coordinator or manager of that lab: the desk. */
@@ -180,7 +181,7 @@ export function runsTrc(me: Me | null | undefined, trcId: string): boolean {
 
 export type Action =
   | 'accept' | 'assign' | 'start' | 'return' | 'complete' | 'observe'
-  | 'dispatch' | 'transfer' | 'received'
+  | 'dispatch' | 'transfer' | 'received' | 'courier'
 
 /**
  * What this person may do to this ticket now, in the order the buttons
@@ -193,6 +194,11 @@ export function actionsFor(t: TicketLike, me: Me | null | undefined): Action[] {
   const out: Action[] = []
 
   if (desk && (t.status === 'pending_acceptance' || t.status === 'transferred')) out.push('accept')
+  // Whoever sent it in, until it arrives: a card is often raised before the
+  // courier has given a tracking number (rl_0011).
+  if ((t.raised_by === me.employee_id || t.stakeholder_id === me.employee_id) && t.status === 'pending_acceptance') {
+    out.push('courier')
+  }
   if (mine && t.status === 'assigned') out.push('start')
   if (mine && t.status === 'in_repair') out.push('complete')
   // As often as there is something to write down; the status stays In repair.
@@ -210,5 +216,43 @@ export function actionsFor(t: TicketLike, me: Me | null | undefined): Action[] {
 
 /** Whether a ticket is waiting on this person specifically, for "My queue". */
 export function waitingOnMe(t: TicketLike, me: Me | null | undefined): boolean {
-  return actionsFor(t, me).some(a => a !== 'transfer' && a !== 'return' && a !== 'observe')
+  return actionsFor(t, me).some(a => a !== 'transfer' && a !== 'return' && a !== 'observe' && a !== 'courier')
+}
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * What was sent in: a spare, or an accessory from the same machine — the
+ * power cable, the probe. A ticket carries at least one and at most ten
+ * (rl_0011), in the order they were entered.
+ */
+export type ItemKind = 'spare' | 'accessory'
+
+export interface TicketItem {
+  kind: ItemKind
+  name: string
+}
+
+export const ITEM_KIND_LABEL: Record<ItemKind, string> = {
+  spare: 'Spare',
+  accessory: 'Accessory',
+}
+
+export const MAX_ITEMS = 10
+
+/** The lines worth sending: names trimmed, blank lines dropped. */
+export function cleanItems(items: readonly TicketItem[]): TicketItem[] {
+  return items
+    .map(i => ({ kind: i.kind, name: i.name.trim() }))
+    .filter(i => i.name.length > 0)
+}
+
+/**
+ * What a list or a heading calls it: the first name, and how many more.
+ * A ticket from before the list existed has only its spare name.
+ */
+export function itemsSummary(t: { spare_name: string | null; items?: readonly TicketItem[] | null }): string | null {
+  const items = t.items ?? []
+  if (items.length === 0) return t.spare_name
+  return items.length === 1 ? items[0].name : `${items[0].name} +${items.length - 1} more`
 }
