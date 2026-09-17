@@ -147,14 +147,18 @@ export function humanSize(bytes: number): string {
  * createImageBitmap honours the photo's EXIF orientation where the browser
  * supports the option, so a portrait shot does not arrive lying on its side.
  */
-export async function compressPhoto(file: Blob): Promise<Blob> {
+export async function compressPhoto(
+  file: Blob,
+  // A bill is kept larger than a photo of a fault: its small print has to stay readable.
+  { maxSide = MAX_PHOTO_SIDE, targetBytes = PHOTO_TARGET_BYTES }: { maxSide?: number; targetBytes?: number } = {},
+): Promise<Blob> {
   let bitmap: ImageBitmap
   try {
     bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' } as ImageBitmapOptions)
   } catch {
     throw new Error('That file could not be read as a photo.')
   }
-  const { width, height } = fitWithin(bitmap.width, bitmap.height)
+  const { width, height } = fitWithin(bitmap.width, bitmap.height, maxSide)
   const canvas = document.createElement('canvas')
   canvas.width = width
   canvas.height = height
@@ -166,7 +170,7 @@ export async function compressPhoto(file: Blob): Promise<Blob> {
   let blob: Blob | null = null
   for (const quality of PHOTO_QUALITIES) {
     blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', quality))
-    if (blob && blob.size <= PHOTO_TARGET_BYTES) break
+    if (blob && blob.size <= targetBytes) break
   }
   if (!blob) throw new Error('That photo could not be prepared.')
   return blob

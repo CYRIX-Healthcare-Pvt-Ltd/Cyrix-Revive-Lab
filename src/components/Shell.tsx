@@ -1,6 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import clsx from 'clsx'
-import { LayoutDashboard, ListChecks, PackagePlus, ShieldCheck, Grid2x2, LogOut } from 'lucide-react'
+import { Boxes, LayoutDashboard, ListChecks, PackagePlus, ShieldCheck, Grid2x2, LogOut } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTickets } from '@/lib/queries'
 import { TONE_TEXT, waitingOnMe, type Tone } from '@/lib/tickets'
@@ -34,6 +34,9 @@ export default function Shell() {
     { to: '/', label: 'Dashboard', short: 'Home', icon: LayoutDashboard, tone: 'indigo', end: true },
     { to: '/tickets', label: 'Tickets', short: 'Tickets', icon: ListChecks, tone: 'amber', badge: mine },
     { to: '/new', label: 'Raise ticket', short: 'Raise', icon: PackagePlus, tone: 'red' },
+    ...(me && (me.is_coordinator || me.is_manager || me.is_admin || me.is_purchase)
+      ? [{ to: '/components', label: 'Components', short: 'Parts', icon: Boxes, tone: 'orange' as Tone }]
+      : []),
     ...(me?.is_admin
       ? [{ to: '/access', label: 'People & Revive Labs', short: 'People', icon: ShieldCheck, tone: 'violet' as Tone }]
       : []),

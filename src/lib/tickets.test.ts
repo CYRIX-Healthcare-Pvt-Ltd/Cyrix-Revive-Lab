@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   ticketCode, parseTicketCode, actionsFor, runsTrc, waitingOnMe, cleanItems, itemsSummary,
+  partsWaitingOn, ticketTabs,
   type Me, type TicketLike,
 } from './tickets'
 
@@ -81,7 +82,8 @@ describe('actionsFor — who may do what, now', () => {
     const t = ticket({ status: 'assigned', engineer_id: 'eng' })
     expect(actionsFor(t, engineer)).toEqual(['start', 'return'])
     expect(actionsFor(t, me({ employee_id: 'other', is_engineer: true, trc_ids: [REG] }))).toEqual([])
-    expect(actionsFor(ticket({ status: 'in_repair', engineer_id: 'eng' }), engineer)).toEqual(['complete', 'observe', 'return'])
+    expect(actionsFor(ticket({ status: 'in_repair', engineer_id: 'eng' }), engineer))
+      .toEqual(['complete', 'use_part', 'request_part', 'observe', 'expect', 'return'])
   })
 
   it('sends a repaired spare to the desk for dispatch', () => {
@@ -138,5 +140,69 @@ describe('spares and accessories', () => {
     // From before the list, or an app that did not send one.
     expect(itemsSummary({ spare_name: 'Pump motor', items: [] })).toBe('Pump motor')
     expect(itemsSummary({ spare_name: null })).toBeNull()
+  })
+})
+
+describe('components and how a repair ends (rl_0013)', () => {
+  const desk = me({ is_coordinator: true, trc_ids: [REG] })
+  const engineer = me({ employee_id: 'eng', is_engineer: true, trc_ids: [REG] })
+  const buyer = me({ employee_id: 'buyer', is_purchase: true, trc_ids: [REG] })
+
+  it('lets the engineer use stock, ask for components and note things while waiting, but not close the repair', () => {
+    for (const status of ['parts_requested', 'parts_ordered', 'parts_ready'] as const) {
+      expect(actionsFor(ticket({ status, engineer_id: 'eng' }), engineer)).toEqual(['use_part', 'request_part', 'observe', 'expect'])
+    }
+  })
+
+  it('sends every closed repair to the desk for dispatch, and offers scrap only for not repairable', () => {
+    expect(actionsFor(ticket({ status: 'repaired' }), desk)).toEqual(['dispatch'])
+    expect(actionsFor(ticket({ status: 'service_denied' }), desk)).toEqual(['dispatch'])
+    expect(actionsFor(ticket({ status: 'not_repairable' }), desk)).toEqual(['dispatch', 'scrap'])
+    expect(actionsFor(ticket({ status: 'not_repairable' }), engineer)).toEqual([])
+  })
+
+  it('puts a component request in the queue of whoever has to move it', () => {
+    const t = ticket({
+      status: 'parts_ordered', engineer_id: 'eng',
+      parts: [
+        { id: 'a', route: 'local', status: 'requested' },
+        { id: 'b', route: 'purchase', status: 'accepted' },
+        { id: 'c', route: 'local', status: 'purchased' },
+        { id: 'd', route: 'purchase', status: 'declined' },
+      ],
+    })
+    expect(partsWaitingOn(t, desk)).toBe(1)       // the local purchase to take on
+    expect(partsWaitingOn(t, buyer)).toBe(1)      // the purchase being bought
+    expect(partsWaitingOn(t, engineer)).toBe(1)   // the one to confirm
+    expect(partsWaitingOn(t, me({ employee_id: 'field' }))).toBe(0)
+    expect(waitingOnMe(t, buyer)).toBe(true)
+    // Purchase at another Revive Lab has nothing to do with it.
+    expect(partsWaitingOn(t, me({ employee_id: 'b2', is_purchase: true, trc_ids: [PRJ] }))).toBe(0)
+  })
+
+  it('gives each role its own tabs', () => {
+    const labels = (m: Me) => ticketTabs(m).map(x => x.label)
+    expect(labels(desk)).toEqual(['All', 'Not assigned', 'Component pending', 'Closed'])
+    expect(labels(engineer)).toEqual(['All', 'In repair', 'Assigned', 'Closed'])
+    expect(labels(buyer)).toEqual(['All', 'Component pending', 'Closed'])
+    expect(labels(me({ employee_id: 'field' }))).toEqual(['All', 'Open', 'Closed'])
+  })
+
+  it('shows Purchase only the tickets that came to them as a purchase', () => {
+    const [all, pending, closed] = ticketTabs(buyer)
+    const bought = ticket({ status: 'closed', parts: [{ id: 'x', route: 'purchase', status: 'received' }] })
+    const waiting = ticket({ status: 'parts_requested', parts: [{ id: 'y', route: 'purchase', status: 'requested' }] })
+    const localOnly = ticket({ status: 'parts_requested', parts: [{ id: 'z', route: 'local', status: 'requested' }] })
+    const none = ticket({ status: 'in_repair' })
+    expect([bought, waiting, localOnly, none].map(all.match)).toEqual([true, true, false, false])
+    expect([bought, waiting, localOnly].map(pending.match)).toEqual([false, true, false])
+    expect([bought, waiting].map(closed.match)).toEqual([true, false])
+  })
+
+  it('counts a repair waiting on a component as in repair for the engineer, and as component pending for the desk', () => {
+    const t = ticket({ status: 'parts_ready' })
+    expect(ticketTabs(engineer).find(x => x.id === 'repair')!.match(t)).toBe(true)
+    expect(ticketTabs(desk).find(x => x.id === 'parts')!.match(t)).toBe(true)
+    expect(ticketTabs(desk).find(x => x.id === 'unassigned')!.match(ticket({ status: 'accepted' }))).toBe(true)
   })
 })

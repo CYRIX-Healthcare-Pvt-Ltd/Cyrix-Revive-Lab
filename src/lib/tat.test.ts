@@ -115,3 +115,43 @@ describe('formatSpan', () => {
     expect(asDays(null)).toBeNull()
   })
 })
+
+describe('ticketTat — waiting for components', () => {
+  const trail = [
+    ev('pending_acceptance', 0),
+    ev('accepted', D),
+    ev('assigned', D),
+    ev('in_repair', 2 * D),
+    ev('parts_requested', 3 * D),      // a day of repair, then a component asked for
+    ev('parts_ordered', 3 * D + 4 * H),
+    ev('parts_ready', 5 * D),
+    ev('in_repair', 5 * D + 2 * H),    // 2 days 2 hours waiting
+    ev('not_repairable', 6 * D),       // another day of repair
+    ev('closed', 6 * D + 3 * H),       // moved to scrap
+  ]
+  const tat = ticketTat(trail, 'A', T0 + 20 * D)
+
+  it('keeps the wait out of the repair', () => {
+    expect(tat.parts).toEqual({ ms: 2 * D + 2 * H, running: false })
+    // A day before the wait and 22 hours after it.
+    expect(tat.repair).toEqual({ ms: D + 22 * H, running: false })
+  })
+
+  it('ends the repair at not repairable, and measures scrap as the last stage', () => {
+    expect(tat.dispatch).toEqual({ ms: 3 * H, running: false })
+    expect(tat.total).toEqual({ ms: 6 * D + 3 * H, running: false })
+  })
+
+  it('says the wait is what is running while it waits, not the repair', () => {
+    const now = T0 + 4 * D
+    const waiting = ticketTat(trail.slice(0, 6), 'A', now)
+    expect(waiting.parts).toEqual({ ms: D, running: true })
+    expect(waiting.repair.running).toBe(false)
+    expect(waiting.repair.ms).toBe(D)
+  })
+
+  it('has no parts stage for a repair that never waited', () => {
+    const plain = ticketTat([ev('pending_acceptance', 0), ev('accepted', D), ev('assigned', D), ev('in_repair', 2 * D), ev('repaired', 3 * D)], 'A', T0 + 4 * D)
+    expect(plain.parts).toEqual({ ms: null, running: false })
+  })
+})

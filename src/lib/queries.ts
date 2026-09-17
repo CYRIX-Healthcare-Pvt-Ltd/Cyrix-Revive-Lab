@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase, friendlyError } from './supabase'
-import type { TicketItem, TicketStatus, TrcKind } from './tickets'
+import type { Outcome, PartRoute, PartStatus, PartSummary, TicketItem, TicketStatus, TrcKind } from './tickets'
+import { uploadPartFile } from './partFiles'
 
 // ---------------------------------------------------------------------
 // Shapes
@@ -30,6 +31,8 @@ export interface Ticket {
   /** The BEMMP programme the equipment belongs to — AP, KL, RJ, UP, Pvt … */
   bemmp_id: string | null
   bemmp_code: string | null
+  /** Under a BEMMP that asks (Pvt): is the spare billed to the customer. Null where nobody was asked (rl_0012). */
+  billing_spare: boolean | null
   equipment_name: string | null
   equipment_barcode: string | null
   /** The first line of `items` — what lists and headings call the ticket. */
@@ -61,6 +64,16 @@ export interface Ticket {
   created_at: string
   updated_at: string
   closed_at: string | null
+  /** How the engineer closed the repair (rl_0013). */
+  outcome: Outcome | null
+  /** returned: dispatched back. scrapped: moved to scrap, which closed it. */
+  closure: 'returned' | 'scrapped' | null
+  scrapped_at: string | null
+  scrapped_by_name: string | null
+  /** When the Revive Lab engineer expects the repair done. */
+  expected_by: string | null
+  /** Its component requests, just enough to know whose move each one is. */
+  parts: PartSummary[]
 }
 
 export interface TrailEvent {
@@ -81,7 +94,13 @@ export interface TrailEvent {
    * the courier details added after the ticket was raised (rl_0011). Only a
    * move changes the status.
    */
-  kind: 'status' | 'observation' | 'courier'
+  kind: 'status' | 'observation' | 'courier' | 'component' | 'eta'
+  /**
+   * The button that made the step, where the status alone does not say:
+   * used, requested, accepted, declined, purchased, confirmed, cancelled,
+   * repaired, not_repairable, customer_denied, scrapped, expected (rl_0013).
+   */
+  action: string | null
 }
 
 export interface Hop {
@@ -110,6 +129,7 @@ export interface Member {
   trc_ids: string[]
   updated_at: string
   updated_by_name: string | null
+  is_purchase: boolean
 }
 
 export interface Person {
@@ -219,16 +239,21 @@ export interface BemmpProject {
   code: string
   is_active: boolean
   sort_order: number
+  /** The route card asks Billing spare under this one — Pvt (rl_0012). */
+  asks_billing: boolean
 }
 
 /** The BEMMP programmes a ticket can belong to. Admins keep the list. */
 export function useBemmpProjects() {
   return useQuery({
-    queryKey: ['revive', 'bemmp'],
+    // Its own key: People & Revive Labs reads the same table without the
+    // flag, and a shared cache entry would lose it. Invalidating
+    // ['revive', 'bemmp'] there still refreshes this.
+    queryKey: ['revive', 'bemmp', 'for-tickets'],
     staleTime: 5 * 60_000,
     queryFn: async () => unwrap<BemmpProject[]>(
       await supabase.from('revive_bemmp_projects')
-        .select('id, code, is_active, sort_order')
+        .select('id, code, is_active, sort_order, asks_billing')
         .order('sort_order').order('code'),
     ),
   })
@@ -241,6 +266,114 @@ export function useFindPeople(q: string) {
     queryKey: ['revive', 'people', term.toLowerCase()],
     staleTime: 60_000,
     queryFn: async () => unwrap<Person[]>(await supabase.rpc('revive_find_people', { p_q: term })),
+  })
+}
+
+/** One component in a Revive Lab's stock. */
+export interface Component {
+  id: string
+  trc_id: string
+  /** The Cyrix part number, C-001. */
+  part_no: string
+  /** The manufacturer's part number, or the value. */
+  value: string | null
+  /** IC, MOSFET, RESISTOR … */
+  item: string | null
+  /** TH, SMD … */
+  package: string | null
+  qty: number
+  updated_at: string
+}
+
+/**
+ * A Revive Lab's whole stock.
+ *
+ * In pages: the API hands back a thousand rows at most, and the stock sheet
+ * already has 1,328 parts — a single request would quietly lose the rest.
+ */
+export function useComponents(trcId: string | null | undefined) {
+  return useQuery({
+    enabled: !!trcId,
+    queryKey: ['revive', 'components', trcId],
+    queryFn: async () => {
+      const PAGE = 1000
+      const all: Component[] = []
+      for (let from = 0; ; from += PAGE) {
+        const rows = unwrap<Component[]>(
+          await supabase.from('revive_components')
+            .select('id, trc_id, part_no, value, item, package, qty, updated_at')
+            .eq('trc_id', trcId!)
+            .order('part_no')
+            .range(from, from + PAGE - 1),
+        )
+        all.push(...rows)
+        if (rows.length < PAGE) break
+      }
+      return all
+    },
+  })
+}
+
+export interface ComponentUse {
+  id: number
+  part_no: string
+  value: string | null
+  item: string | null
+  package: string | null
+  qty: number
+  used_by_name: string | null
+  at: string
+}
+
+/** What one ticket took from stock. */
+export function useComponentUses(ticketId: string | undefined) {
+  return useQuery({
+    enabled: !!ticketId,
+    queryKey: ['revive', 'uses', ticketId],
+    queryFn: async () => unwrap<ComponentUse[]>(await supabase.rpc('revive_component_uses', { p_ticket_id: ticketId })),
+  })
+}
+
+export interface PartRequest {
+  id: string
+  ticket_id: string
+  ticket_code: string
+  ticket_status: TicketStatus
+  facility: string
+  trc_id: string
+  trc_name: string
+  route: PartRoute
+  name: string
+  qty: number
+  note: string | null
+  link: string | null
+  photo_path: string | null
+  status: PartStatus
+  bill_amount: number | null
+  bill_no: string | null
+  vendor: string | null
+  bill_paths: string[]
+  requested_by: string
+  requested_by_name: string | null
+  requested_at: string
+  accepted_by_name: string | null
+  accepted_at: string | null
+  declined_by_name: string | null
+  declined_at: string | null
+  declined_reason: string | null
+  purchased_by_name: string | null
+  purchased_at: string | null
+  received_by_name: string | null
+  received_at: string | null
+}
+
+/** Component requests: one ticket's, or every one this person can see. */
+export function usePartRequests(ticketId?: string) {
+  return useQuery({
+    queryKey: ['revive', 'parts', ticketId ?? 'all'],
+    queryFn: async () => unwrap<PartRequest[]>(
+      await supabase.rpc('revive_part_request_list', { p_ticket_id: ticketId ?? null }),
+    ).map(r => ({ ...r, bill_amount: r.bill_amount === null ? null : Number(r.bill_amount) })),
   })
 }
 
@@ -269,6 +402,8 @@ export interface RaiseInput {
   hospital: string
   state: string
   bemmpId: string
+  /** Only under a BEMMP that asks — Pvt. Null elsewhere. */
+  billingSpare: boolean | null
   district: string
   sourceTicketNo: string
   equipmentName: string
@@ -304,6 +439,7 @@ export function useRaiseTicket() {
     p_in_dispatched_on: a.inDispatchedOn || null,
     p_stakeholder_id: a.stakeholderId,
     p_items: a.items,
+    p_billing_spare: a.billingSpare,
   }) as Promise<{ id: string; code: string; number: number }>)
 }
 
@@ -325,14 +461,89 @@ export const useUpdateCourier = () => useTicketMutation(
       p_ticket_id: a.id, p_courier: a.courier, p_awb: a.awb, p_dispatched_on: a.on || null,
     }))
 
+/** Accepting the repair, with when it is expected done. */
 export const useStartRepair = () => useTicketMutation(
-  (a: { id: string; note?: string }) => rpc('revive_start_repair', { p_ticket_id: a.id, p_note: a.note || null }))
+  (a: { id: string; note?: string; expectedBy?: string }) =>
+    rpc('revive_start_repair', { p_ticket_id: a.id, p_note: a.note || null, p_expected_by: a.expectedBy || null }))
+
+export const useSetExpectedDate = () => useTicketMutation(
+  (a: { id: string; expectedBy: string; note?: string }) =>
+    rpc('revive_set_expected_date', { p_ticket_id: a.id, p_expected_by: a.expectedBy, p_note: a.note || null }))
 
 export const useReturnToDesk = () => useTicketMutation(
   (a: { id: string; note: string }) => rpc('revive_return_to_desk', { p_ticket_id: a.id, p_note: a.note }))
 
+/** Closing the repair: repaired, not repairable, or the customer denied service. */
 export const useCompleteRepair = () => useTicketMutation(
-  (a: { id: string; note?: string }) => rpc('revive_complete_repair', { p_ticket_id: a.id, p_note: a.note || null }))
+  (a: { id: string; note?: string; outcome: Outcome }) =>
+    rpc('revive_complete_repair', { p_ticket_id: a.id, p_note: a.note || null, p_outcome: a.outcome }))
+
+/** Not repairable, and not going back: scrap, which closes the ticket. */
+export const useScrap = () => useTicketMutation(
+  (a: { id: string; note?: string }) => rpc('revive_scrap', { p_ticket_id: a.id, p_note: a.note || null }))
+
+/** Taken from stock for this repair. */
+export const useUseComponent = () => useTicketMutation(
+  (a: { ticketId: string; componentId: string; qty: number }) =>
+    rpc('revive_use_component', { p_ticket_id: a.ticketId, p_component_id: a.componentId, p_qty: a.qty }))
+
+/** A stock sheet, uploaded: parts added or brought up to date, quantities set to its count. */
+export function useUploadStock() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (a: { trcId: string; rows: Array<{ part_no: string; value: string | null; item: string | null; package: string | null; qty: number }> }) =>
+      rpc('revive_upload_stock', { p_trc_id: a.trcId, p_rows: a.rows }) as Promise<{ added: number; changed: number; same: number; not_in_sheet: number }>,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['revive', 'components'] }),
+  })
+}
+
+/**
+ * The engineer asks for a component. The request exists before its photo
+ * does — the storage rules only let a photo into a request's own folder —
+ * so a photo that fails to upload leaves the request standing, and says so.
+ */
+export const useRequestPart = () => useTicketMutation(
+  async (a: { ticketId: string; route: PartRoute; name: string; qty: number; note?: string; link?: string; photo?: Blob | null }) => {
+    const id = await rpc('revive_request_part', {
+      p_ticket_id: a.ticketId, p_route: a.route, p_name: a.name, p_qty: a.qty,
+      p_note: a.note || null, p_link: a.link || null,
+    }) as string
+    let photoFailed = false
+    if (a.photo) {
+      try {
+        const path = await uploadPartFile(a.ticketId, id, 'photo', a.photo)
+        await rpc('revive_set_part_photo', { p_request_id: id, p_path: path })
+      } catch {
+        photoFailed = true
+      }
+    }
+    return { id, photoFailed }
+  })
+
+export const useAcceptPart = () => useTicketMutation(
+  (a: { id: string }) => rpc('revive_accept_part', { p_request_id: a.id }))
+
+export const useDeclinePart = () => useTicketMutation(
+  (a: { id: string; reason: string }) => rpc('revive_decline_part', { p_request_id: a.id, p_reason: a.reason }))
+
+/** Bought: the bill's pages go up first, then the request moves with their paths and the amount. */
+export const usePurchasePart = () => useTicketMutation(
+  async (a: { ticketId: string; id: string; amount: number; bills: Blob[]; billNo?: string; vendor?: string }) => {
+    const paths: string[] = []
+    for (const [i, bill] of a.bills.entries()) {
+      paths.push(await uploadPartFile(a.ticketId, a.id, `bill-${i + 1}` as 'bill-1', bill))
+    }
+    return rpc('revive_purchase_part', {
+      p_request_id: a.id, p_amount: a.amount, p_bill_paths: paths,
+      p_bill_no: a.billNo || null, p_vendor: a.vendor || null,
+    })
+  })
+
+export const useConfirmPart = () => useTicketMutation(
+  (a: { id: string }) => rpc('revive_confirm_part', { p_request_id: a.id }))
+
+export const useCancelPart = () => useTicketMutation(
+  (a: { id: string; reason?: string }) => rpc('revive_cancel_part', { p_request_id: a.id, p_reason: a.reason || null }))
 
 export const useDispatch = () => useTicketMutation(
   (a: { id: string; courier: string; awb: string; on: string; note?: string }) =>
@@ -356,12 +567,13 @@ export function useSaveMember() {
   return useMutation({
     mutationFn: (a: {
       employeeId: string; engineer: boolean; coordinator: boolean
-      manager: boolean; admin: boolean; trcIds: string[]
+      manager: boolean; admin: boolean; trcIds: string[]; purchase?: boolean
     }) => rpc('revive_save_member', {
       p_employee_id: a.employeeId,
       p_engineer: a.engineer, p_coordinator: a.coordinator,
       p_manager: a.manager, p_admin: a.admin,
       p_trc_ids: a.trcIds,
+      p_purchase: a.purchase ?? null,
     }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['revive', 'members'] }),
   })

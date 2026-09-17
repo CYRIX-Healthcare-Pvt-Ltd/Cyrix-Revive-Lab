@@ -28,19 +28,24 @@ interface Member {
   employee_id: string; ecode: string; full_name: string; designation: string | null
   is_engineer: boolean; is_coordinator: boolean; is_manager: boolean; is_admin: boolean
   trc_ids: string[]; updated_at: string; updated_by_name: string | null
+  /** Buys what engineers request as a purchase (rl_0013). */
+  is_purchase: boolean
 }
 interface Person { id: string; ecode: string; full_name: string; designation: string | null; department: string | null }
 
 interface Draft {
   employee_id: string; full_name: string; ecode: string
   is_engineer: boolean; is_coordinator: boolean; is_manager: boolean; is_admin: boolean
+  is_purchase: boolean
   trc_ids: string[]
 }
 
-const ROLES: Array<[keyof Pick<Draft, 'is_engineer' | 'is_coordinator' | 'is_manager'>, string]> = [
+const ROLES: Array<[keyof Pick<Draft, 'is_engineer' | 'is_coordinator' | 'is_manager' | 'is_purchase'>, string]> = [
   ['is_engineer', 'Revive Lab Engineer'],
   ['is_coordinator', 'Revive Lab Coordinator'],
   ['is_manager', 'Revive Lab Manager'],
+  // Buys the components engineers request as a purchase, for the Revive Labs ticked.
+  ['is_purchase', 'Revive Lab Purchase'],
 ]
 
 const call = async <T,>(name: string, args?: Record<string, unknown>): Promise<T> => {
@@ -89,6 +94,7 @@ export function ReviveLabAccess() {
       p_engineer: d.is_engineer, p_coordinator: d.is_coordinator,
       p_manager: d.is_manager, p_admin: d.is_admin,
       p_trc_ids: d.trc_ids,
+      p_purchase: d.is_purchase,
     }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['revive'] }),
   })
@@ -116,6 +122,7 @@ export function ReviveLabAccess() {
       engineers: rows.filter(m => m.is_engineer).length,
       coordinators: rows.filter(m => m.is_coordinator).length,
       managers: rows.filter(m => m.is_manager).length,
+      purchase: rows.filter(m => m.is_purchase).length,
       admins: rows.filter(m => m.is_admin).length,
     }
   }, [members])
@@ -125,14 +132,14 @@ export function ReviveLabAccess() {
     setEditing({
       employee_id: m.employee_id, full_name: m.full_name, ecode: m.ecode,
       is_engineer: m.is_engineer, is_coordinator: m.is_coordinator, is_manager: m.is_manager,
-      is_admin: m.is_admin, trc_ids: [...m.trc_ids],
+      is_admin: m.is_admin, is_purchase: m.is_purchase, trc_ids: [...m.trc_ids],
     })
   }
 
   const save = async (d: Draft, removing = false) => {
     setError(null); setNotice(null)
     const payload = removing
-      ? { ...d, is_engineer: false, is_coordinator: false, is_manager: false, is_admin: false, trc_ids: [] }
+      ? { ...d, is_engineer: false, is_coordinator: false, is_manager: false, is_admin: false, is_purchase: false, trc_ids: [] }
       : d
     try {
       await saveMember.mutateAsync(payload)
@@ -149,11 +156,12 @@ export function ReviveLabAccess() {
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <StatTile label="Revive Labs" value={(trcs ?? []).filter(t => t.is_active).length} sub={`${(trcs ?? []).length} in all`} />
         <StatTile label="Revive Lab engineers" value={counts.engineers} />
         <StatTile label="Coordinators" value={counts.coordinators} />
         <StatTile label="Managers" value={counts.managers} />
+        <StatTile label="Purchase" value={counts.purchase} />
         <StatTile label="Admins" value={counts.admins} sub="may edit this table" />
       </div>
 
@@ -187,7 +195,7 @@ export function ReviveLabAccess() {
               setAdding(false)
               setEditing({
                 employee_id: p.id, full_name: p.full_name, ecode: p.ecode,
-                is_engineer: false, is_coordinator: false, is_manager: false, is_admin: false,
+                is_engineer: false, is_coordinator: false, is_manager: false, is_admin: false, is_purchase: false,
                 trc_ids: (trcs ?? []).length === 1 ? [trcs![0].id] : [],
               })
             }}
@@ -554,7 +562,7 @@ function EditRow({ draft, trcs, busy, onChange, onSave, onCancel, onRemove }: {
         </div>
       </div>
 
-      {(draft.is_engineer || draft.is_coordinator || draft.is_manager) && draft.trc_ids.length === 0 && (
+      {(draft.is_engineer || draft.is_coordinator || draft.is_manager || draft.is_purchase) && draft.trc_ids.length === 0 && (
         <p className="text-xs text-amber-700">A role does nothing without a Revive Lab — tick the Revive Lab(s) they work in.</p>
       )}
 

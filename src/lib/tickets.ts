@@ -15,7 +15,12 @@ export type TicketStatus =
   | 'accepted'
   | 'assigned'
   | 'in_repair'
+  | 'parts_requested'
+  | 'parts_ordered'
+  | 'parts_ready'
   | 'repaired'
+  | 'not_repairable'
+  | 'service_denied'
   | 'in_transit_return'
   | 'closed'
 
@@ -30,9 +35,14 @@ export const TRC_KIND_LABEL: Record<TrcKind, string> = {
  * One colour per status, running the way a spare does: red when it has just
  * been raised and nobody has it, green when it is back and closed, the blues
  * in the middle while the Revive Lab works on it. Violet is the side road —
- * a transfer to another Revive Lab.
+ * a transfer to another Revive Lab. The warm colours between in repair and
+ * repaired are a repair waiting on something bought: orange asked for,
+ * yellow being bought, cyan ready for the engineer. Rose is a spare that
+ * cannot be repaired, slate one the customer would not have repaired.
  */
-export type Tone = 'red' | 'amber' | 'sky' | 'indigo' | 'lime' | 'teal' | 'green' | 'violet'
+export type Tone =
+  | 'red' | 'amber' | 'sky' | 'indigo' | 'lime' | 'teal' | 'green' | 'violet'
+  | 'orange' | 'yellow' | 'cyan' | 'rose' | 'slate'
 
 interface StatusMeta {
   /** The full sentence, for the ticket page and the email. */
@@ -67,8 +77,28 @@ export const STATUS: Record<TicketStatus, StatusMeta> = {
     label: 'In repair', short: 'In repair', tone: 'indigo', order: 4,
     waitingOn: 'the engineer to finish the repair',
   },
+  parts_requested: {
+    label: 'Component requested — waiting to be taken on', short: 'Component requested', tone: 'orange', order: 4.2,
+    waitingOn: 'the coordinator or Purchase to accept the component request',
+  },
+  parts_ordered: {
+    label: 'Purchasing a component', short: 'Purchasing', tone: 'yellow', order: 4.4,
+    waitingOn: 'the component to be bought and sent to the engineer',
+  },
+  parts_ready: {
+    label: 'Component ready — the engineer to confirm', short: 'Component ready', tone: 'cyan', order: 4.6,
+    waitingOn: 'the engineer to confirm the purchase and carry on',
+  },
   repaired: {
     label: 'Repaired — pending dispatch', short: 'Pending dispatch', tone: 'lime', order: 5,
+    waitingOn: 'the coordinator to dispatch it back',
+  },
+  not_repairable: {
+    label: 'Not repairable — scrap or dispatch back', short: 'Not repairable', tone: 'rose', order: 5.2,
+    waitingOn: 'the coordinator to move it to scrap or dispatch it back',
+  },
+  service_denied: {
+    label: 'Customer denied service — pending dispatch', short: 'Customer denied', tone: 'slate', order: 5.4,
     waitingOn: 'the coordinator to dispatch it back',
   },
   in_transit_return: {
@@ -76,7 +106,7 @@ export const STATUS: Record<TicketStatus, StatusMeta> = {
     waitingOn: 'the field engineer to confirm it arrived',
   },
   closed: {
-    label: 'Closed — received back', short: 'Closed', tone: 'green', order: 7,
+    label: 'Closed', short: 'Closed', tone: 'green', order: 7,
     waitingOn: 'nobody',
   },
 }
@@ -85,6 +115,15 @@ export const STATUS_ORDER = (Object.keys(STATUS) as TicketStatus[])
   .sort((a, b) => STATUS[a].order - STATUS[b].order)
 
 export const OPEN_STATUSES = STATUS_ORDER.filter(s => s !== 'closed')
+
+/** Waiting on a component: requested, being bought, or ready for the engineer. */
+export const PARTS_STATUSES: readonly TicketStatus[] = ['parts_requested', 'parts_ordered', 'parts_ready']
+
+/** The engineer has it: repairing, or waiting on a component for the repair. */
+export const REPAIRING: readonly TicketStatus[] = ['in_repair', ...PARTS_STATUSES]
+
+/** The repair is closed and the spare waits at the desk to go back. */
+export const DISPATCHABLE: readonly TicketStatus[] = ['repaired', 'not_repairable', 'service_denied']
 
 /** Badge colours per tone, light and dark both — the tokens flip underneath. */
 export const TONE_CLASS: Record<Tone, string> = {
@@ -96,6 +135,11 @@ export const TONE_CLASS: Record<Tone, string> = {
   teal: 'bg-teal-100 text-teal-900',
   green: 'bg-green-100 text-green-900',
   violet: 'bg-violet-100 text-violet-900',
+  orange: 'bg-orange-100 text-orange-900',
+  yellow: 'bg-yellow-100 text-yellow-900',
+  cyan: 'bg-cyan-100 text-cyan-900',
+  rose: 'bg-rose-100 text-rose-900',
+  slate: 'bg-slate-100 text-slate-900',
 }
 
 /** An icon on a soft patch of its colour: section headings and the history. */
@@ -108,6 +152,11 @@ export const TONE_SOFT: Record<Tone, string> = {
   teal: 'bg-teal-100 text-teal-700',
   green: 'bg-green-100 text-green-700',
   violet: 'bg-violet-100 text-violet-700',
+  orange: 'bg-orange-100 text-orange-700',
+  yellow: 'bg-yellow-100 text-yellow-700',
+  cyan: 'bg-cyan-100 text-cyan-700',
+  rose: 'bg-rose-100 text-rose-700',
+  slate: 'bg-slate-100 text-slate-700',
 }
 
 /**
@@ -123,6 +172,11 @@ export const TONE_TEXT: Record<Tone, string> = {
   teal: 'text-teal-600',
   green: 'text-green-600',
   violet: 'text-violet-500',
+  orange: 'text-orange-600',
+  yellow: 'text-yellow-600',
+  cyan: 'text-cyan-600',
+  rose: 'text-rose-600',
+  slate: 'text-slate-500',
 }
 
 /** Chart fills, in the same order of meaning as the badges. */
@@ -135,6 +189,11 @@ export const TONE_FILL: Record<Tone, string> = {
   teal: '#0d9488',
   green: '#16a34a',
   violet: '#7c3aed',
+  orange: '#ea580c',
+  yellow: '#ca8a04',
+  cyan: '#0891b2',
+  rose: '#e11d48',
+  slate: '#64748b',
 }
 
 /**
@@ -164,7 +223,38 @@ export interface Me {
   is_admin: boolean
   is_sw_admin: boolean
   trc_ids: string[]
+  /** Buys what engineers request as a purchase, for the Revive Labs ticked (rl_0013). */
+  is_purchase?: boolean
 }
+
+/* ------------------------------------------------------------------ */
+
+/** A component request, as the ticket list carries it: enough to know whose move it is. */
+export type PartRoute = 'local' | 'purchase'
+export type PartStatus = 'requested' | 'accepted' | 'declined' | 'purchased' | 'received' | 'cancelled'
+
+export interface PartSummary {
+  id: string
+  route: PartRoute
+  status: PartStatus
+}
+
+export const PART_ROUTE_LABEL: Record<PartRoute, string> = {
+  local: 'Local purchase',
+  purchase: 'Purchase',
+}
+
+export const PART_STATUS: Record<PartStatus, { label: string; tone: Tone }> = {
+  requested: { label: 'Requested', tone: 'orange' },
+  accepted: { label: 'Being bought', tone: 'yellow' },
+  purchased: { label: 'Bought — engineer to confirm', tone: 'cyan' },
+  received: { label: 'Confirmed', tone: 'green' },
+  declined: { label: 'Declined', tone: 'rose' },
+  cancelled: { label: 'Cancelled', tone: 'slate' },
+}
+
+/** Still open: nobody has bought it yet. */
+export const partOpen = (s: PartStatus) => s === 'requested' || s === 'accepted'
 
 export interface TicketLike {
   status: TicketStatus
@@ -172,6 +262,7 @@ export interface TicketLike {
   engineer_id: string | null
   stakeholder_id: string
   raised_by: string
+  parts?: readonly PartSummary[] | null
 }
 
 /** A coordinator or manager of that lab: the desk. */
@@ -179,13 +270,27 @@ export function runsTrc(me: Me | null | undefined, trcId: string): boolean {
   return !!me && (me.is_coordinator || me.is_manager) && me.trc_ids.includes(trcId)
 }
 
+/** Holds the Purchase role for that Revive Lab. */
+export function buysFor(me: Me | null | undefined, trcId: string): boolean {
+  return !!me && !!me.is_purchase && me.trc_ids.includes(trcId)
+}
+
+/** Who takes a request on: the desk for a local purchase, Purchase for a purchase. */
+export function handlesPart(me: Me | null | undefined, route: PartRoute, trcId: string): boolean {
+  return route === 'local' ? runsTrc(me, trcId) : buysFor(me, trcId)
+}
+
 export type Action =
   | 'accept' | 'assign' | 'start' | 'return' | 'complete' | 'observe'
   | 'dispatch' | 'transfer' | 'received' | 'courier'
+  | 'use_part' | 'request_part' | 'expect' | 'scrap'
 
 /**
  * What this person may do to this ticket now, in the order the buttons
  * should appear — the forward move first, the side-steps after.
+ *
+ * What is done to one component request — accept it, buy it, confirm it —
+ * sits on the request itself, not here.
  */
 export function actionsFor(t: TicketLike, me: Me | null | undefined): Action[] {
   if (!me) return []
@@ -201,10 +306,12 @@ export function actionsFor(t: TicketLike, me: Me | null | undefined): Action[] {
   }
   if (mine && t.status === 'assigned') out.push('start')
   if (mine && t.status === 'in_repair') out.push('complete')
-  // As often as there is something to write down; the status stays In repair.
-  if (mine && t.status === 'in_repair') out.push('observe')
+  // While it is being repaired — and while a component for it is on its way.
+  if (mine && REPAIRING.includes(t.status)) out.push('use_part', 'request_part', 'observe', 'expect')
   if (desk && (t.status === 'accepted' || t.status === 'assigned')) out.push('assign')
-  if (desk && t.status === 'repaired') out.push('dispatch')
+  if (desk && DISPATCHABLE.includes(t.status)) out.push('dispatch')
+  // Scrap is only for a spare that cannot be repaired.
+  if (desk && t.status === 'not_repairable') out.push('scrap')
   // Only the field engineer it was sent back to: the Revive Lab dispatched
   // it and cannot know it has landed (rl_0005).
   if (t.stakeholder_id === me.employee_id && t.status === 'in_transit_return') out.push('received')
@@ -214,9 +321,86 @@ export function actionsFor(t: TicketLike, me: Me | null | undefined): Action[] {
   return out
 }
 
+/** Component requests waiting on this person: to take on and buy, or to confirm. */
+export function partsWaitingOn(t: TicketLike, me: Me | null | undefined): number {
+  if (!me) return 0
+  const mine = t.engineer_id === me.employee_id
+  return (t.parts ?? []).filter(p =>
+    (partOpen(p.status) && handlesPart(me, p.route, t.trc_id))
+    || (p.status === 'purchased' && mine)).length
+}
+
+const SIDE_STEPS: readonly Action[] = ['transfer', 'return', 'observe', 'courier', 'use_part', 'request_part', 'expect']
+
 /** Whether a ticket is waiting on this person specifically, for "My queue". */
 export function waitingOnMe(t: TicketLike, me: Me | null | undefined): boolean {
-  return actionsFor(t, me).some(a => a !== 'transfer' && a !== 'return' && a !== 'observe' && a !== 'courier')
+  return actionsFor(t, me).some(a => !SIDE_STEPS.includes(a)) || partsWaitingOn(t, me) > 0
+}
+
+/* ------------------------------------------------------------------ */
+
+export type TabId = 'all' | 'repair' | 'assigned' | 'unassigned' | 'parts' | 'open' | 'closed'
+
+export interface TicketTab {
+  id: TabId
+  label: string
+  match: (t: TicketLike) => boolean
+}
+
+const hasPurchase = (t: TicketLike) => (t.parts ?? []).some(p => p.route === 'purchase')
+
+/**
+ * The tabs on the ticket list, by what the person does.
+ *
+ * The desk sorts what has no engineer yet and what is waiting on a
+ * component. An engineer follows repairs and assignments. Purchase sees
+ * only tickets that came to them as a purchase request — nothing else is
+ * theirs to act on. Anybody else, a field engineer, sees theirs open and
+ * closed.
+ */
+export function ticketTabs(me: Me | null | undefined): TicketTab[] {
+  const closed = (t: TicketLike) => t.status === 'closed'
+  const partsPending = (t: TicketLike) => PARTS_STATUSES.includes(t.status)
+
+  if (me && (me.is_coordinator || me.is_manager || me.is_admin)) {
+    return [
+      { id: 'all', label: 'All', match: () => true },
+      { id: 'unassigned', label: 'Not assigned', match: t => ['pending_acceptance', 'transferred', 'accepted'].includes(t.status) },
+      { id: 'parts', label: 'Component pending', match: partsPending },
+      { id: 'closed', label: 'Closed', match: closed },
+    ]
+  }
+  if (me?.is_engineer) {
+    return [
+      { id: 'all', label: 'All', match: () => true },
+      { id: 'repair', label: 'In repair', match: t => REPAIRING.includes(t.status) },
+      { id: 'assigned', label: 'Assigned', match: t => t.status === 'assigned' },
+      { id: 'closed', label: 'Closed', match: closed },
+    ]
+  }
+  if (me?.is_purchase) {
+    return [
+      { id: 'all', label: 'All', match: hasPurchase },
+      { id: 'parts', label: 'Component pending', match: t => (t.parts ?? []).some(p => p.route === 'purchase' && partOpen(p.status)) },
+      { id: 'closed', label: 'Closed', match: t => hasPurchase(t) && closed(t) },
+    ]
+  }
+  return [
+    { id: 'all', label: 'All', match: () => true },
+    { id: 'open', label: 'Open', match: t => !closed(t) },
+    { id: 'closed', label: 'Closed', match: closed },
+  ]
+}
+
+/* ------------------------------------------------------------------ */
+
+/** How the engineer closed the repair (rl_0013). */
+export type Outcome = 'repaired' | 'not_repairable' | 'customer_denied'
+
+export const OUTCOME_LABEL: Record<Outcome, string> = {
+  repaired: 'Repaired',
+  not_repairable: 'Not repairable',
+  customer_denied: 'Customer denied service',
 }
 
 /* ------------------------------------------------------------------ */

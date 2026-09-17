@@ -52,6 +52,7 @@ export default function NewTicket() {
     state: '', district: '', bemmpId: '', hospital: '', equipmentBarcode: '', equipmentName: '',
     sourceTicketNo: '', contactNumber: '', issue: '',
     returnAddress: '', inCourier: '', inAwb: '', inDispatchedOn: '',
+    billingSpare: 'no' as 'yes' | 'no',
   })
   const [lines, setLines] = useState<ItemLine[]>(() => [newLine('spare')])
   const [photos, setPhotos] = useState<PendingPhoto[]>([])
@@ -86,6 +87,8 @@ export default function NewTicket() {
   }, [kind, atLab, trcs])
 
   const districts = districtsOf(form.state)
+  // Pvt asks whether the spare is billed to the customer.
+  const asksBilling = !!bemmpChoices.find(b => b.id === form.bemmpId)?.asks_billing
 
   const set = (k: keyof typeof form) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
@@ -114,7 +117,10 @@ export default function NewTicket() {
     let created: { id: string; code: string } | null = null
     try {
       setStage('raising')
-      created = await raise.mutateAsync({ ...form, items, trcId, stakeholderId: atLab ? holder!.id : null })
+      created = await raise.mutateAsync({
+        ...form, items, trcId, stakeholderId: atLab ? holder!.id : null,
+        billingSpare: asksBilling ? form.billingSpare === 'yes' : null,
+      })
     } catch (err) {
       setStage('idle')
       setError(err instanceof Error ? err.message : 'Could not raise that ticket.')
@@ -224,11 +230,29 @@ export default function NewTicket() {
             </label>
             <label className="block">
               <span className="label">BEMMP <Req /></span>
-              <select className="input mt-1" value={form.bemmpId} onChange={set('bemmpId')}>
+              <select
+                className="input mt-1"
+                value={form.bemmpId}
+                // Another BEMMP starts the answer again from No.
+                onChange={e => setForm(f => ({ ...f, bemmpId: e.target.value, billingSpare: 'no' }))}
+              >
                 <option value="">Choose…</option>
                 {bemmpChoices.map(b => <option key={b.id} value={b.id}>{b.code}</option>)}
               </select>
             </label>
+            {asksBilling && (
+              <label className="block">
+                <span className="label">Billing spare</span>
+                <select
+                  className="input mt-1"
+                  value={form.billingSpare}
+                  onChange={e => setForm(f => ({ ...f, billingSpare: e.target.value as 'yes' | 'no' }))}
+                >
+                  <option value="no">No</option>
+                  <option value="yes">Yes</option>
+                </select>
+              </label>
+            )}
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">

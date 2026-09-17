@@ -3,10 +3,10 @@ import { Link } from 'react-router-dom'
 import {
   Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
-import { ArrowRight, BellRing, Building2, ChartColumn, Inbox, PackagePlus, TrendingUp } from 'lucide-react'
+import { BellRing, Building2, ChartColumn, Inbox, PackagePlus, TrendingUp } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTickets, useTrcs, useVisibleEvents } from '@/lib/queries'
-import { STATUS, STATUS_ORDER, TONE_FILL, itemsSummary, waitingOnMe } from '@/lib/tickets'
+import { REPAIRING, STATUS, STATUS_ORDER, TONE_FILL, itemsSummary, waitingOnMe } from '@/lib/tickets'
 import { asDays, formatSpan, ticketTat, type TatEvent } from '@/lib/tat'
 import { EmptyState, PageLoader, StatTile, StatusBadge } from '@/components/ui'
 import IconChip from '@/components/IconChip'
@@ -86,7 +86,8 @@ export default function Dashboard() {
     return {
       open: all.filter(t => t.status !== 'closed').length,
       mine: all.filter(t => waitingOnMe(t, me)),
-      inRepair: all.filter(t => t.status === 'assigned' || t.status === 'in_repair').length,
+      // Waiting on a component is still in repair.
+      inRepair: all.filter(t => t.status === 'assigned' || REPAIRING.includes(t.status)).length,
       moving: all.filter(t => t.status === 'in_transit_return' || t.status === 'transferred').length,
       closedThisMonth: closed.filter(t => Date.parse(t.closed_at!) >= monthStart).length,
       avgTotal,
@@ -143,12 +144,10 @@ export default function Dashboard() {
                 <h3 className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
                   <IconChip icon={BellRing} tone="red" /> Waiting on you
                 </h3>
-                <Link to="/tickets?view=mine" className="inline-flex items-center gap-1 text-xs font-medium text-ink-600 hover:text-ink-900">
-                  All of them <ArrowRight className="h-3.5 w-3.5" />
-                </Link>
+                <span className="text-xs tabular-nums text-ink-500">{stats.mine.length}</span>
               </div>
               <ul className="divide-y divide-ink-100">
-                {stats.mine.slice(0, 5).map(t => (
+                {stats.mine.map(t => (
                   <li key={t.id}>
                     <Link to={`/tickets/${t.code}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 hover:bg-ink-50">
                       <span className="font-mono text-sm font-semibold text-ink-900">{t.code}</span>

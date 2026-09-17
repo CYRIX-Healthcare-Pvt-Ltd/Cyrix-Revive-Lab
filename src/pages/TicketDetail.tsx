@@ -2,24 +2,29 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import clsx from 'clsx'
 import {
-  ArrowLeft, ArrowRightLeft, CheckCircle2, ClipboardCheck, ClipboardList, Hand, History as HistoryIcon,
-  PackageCheck, PackagePlus, PlayCircle, ScanSearch, Send, Timer, Truck, Undo2, UserCog, UserPlus, Wrench,
+  ArrowLeft, ArrowRightLeft, Boxes, CalendarClock, CheckCircle2, ClipboardCheck, ClipboardList, Hand,
+  History as HistoryIcon, PackageCheck, PackagePlus, PackageX, PlayCircle, Receipt, ScanSearch, Send,
+  ShoppingCart, Timer, Trash2, Truck, Undo2, UserCog, UserPlus, UserX, Wrench, X,
   type LucideIcon,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import {
   useAccept, useAddObservation, useAssign, useCompleteRepair, useDispatch, useHops, useMarkReceived,
-  useMembers, useReturnToDesk, useStartRepair, useTickets, useTrail, useTransfer, useTrcs, useUpdateCourier,
+  useMembers, useReturnToDesk, useScrap, useSetExpectedDate, useStartRepair, useTickets, useTrail, useTransfer,
+  useTrcs, useUpdateCourier,
   type Ticket, type TrailEvent,
 } from '@/lib/queries'
 import {
-  actionsFor, itemsSummary, parseTicketCode, ITEM_KIND_LABEL, STATUS, TONE_SOFT, TONE_TEXT, TRC_KIND_LABEL,
-  type Action, type TicketItem, type Tone,
+  actionsFor, itemsSummary, parseTicketCode, ITEM_KIND_LABEL, OUTCOME_LABEL, REPAIRING, STATUS, TONE_SOFT, TONE_TEXT,
+  TRC_KIND_LABEL, type Action, type Outcome, type TicketItem, type Tone,
 } from '@/lib/tickets'
 import { formatSpan, ticketTat, type Span } from '@/lib/tat'
 import { Alert, EmptyState, PageLoader, Spinner, StatusBadge } from '@/components/ui'
 import IconChip from '@/components/IconChip'
 import AttachmentsCard from '@/components/TicketAttachments'
+import PartsCard from '@/components/PartsCard'
+import { RequestPartForm, UseComponentForm } from '@/components/PartForms'
+import Dialog from '@/components/Dialog'
 import { removeVideoOf } from '@/lib/attachments'
 
 const when = (iso: string | null | undefined) =>
@@ -95,6 +100,24 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
               )}
               {t.status !== 'closed' && <> · waiting on {meta.waitingOn}</>}
             </p>
+            {/* What the field engineer waits for instead of phoning. */}
+            {t.expected_by && (t.status === 'assigned' || REPAIRING.includes(t.status)) && (
+              <p className={clsx(
+                'mt-2 inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium',
+                t.expected_by < localToday() ? 'bg-amber-100 text-amber-900' : 'bg-indigo-100 text-indigo-900',
+              )}>
+                <CalendarClock className="h-3.5 w-3.5" />
+                {t.expected_by < localToday() ? 'Was expected repaired by' : 'Expected repaired by'} {day(t.expected_by)}
+              </p>
+            )}
+            {t.status === 'closed' && t.closure === 'scrapped' && (
+              <p className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-900">
+                <Trash2 className="h-3.5 w-3.5" /> Moved to scrap{t.scrapped_at ? ` ${day(t.scrapped_at)}` : ''}{t.scrapped_by_name ? ` by ${t.scrapped_by_name}` : ''}
+              </p>
+            )}
+            {t.outcome && t.outcome !== 'repaired' && t.status !== 'closed' && !['not_repairable', 'service_denied'].includes(t.status) && (
+              <p className="mt-2 text-xs text-ink-500">Repair closed as {OUTCOME_LABEL[t.outcome].toLowerCase()}</p>
+            )}
           </div>
           {/* Right-aligned beside the title; on a phone it drops below it, and lines up on the left. */}
           <div className="sm:text-right">
@@ -126,6 +149,9 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
               <Row label="State">{t.state}</Row>
               <Row label="District">{t.district}</Row>
               <Row label="BEMMP">{t.bemmp_code}</Row>
+              {t.billing_spare !== null && t.billing_spare !== undefined && (
+                <Row label="Billing spare">{t.billing_spare ? 'Yes' : 'No'}</Row>
+              )}
               <Row label="Hospital name">{t.facility}</Row>
               <Row label="Equipment barcode">{t.equipment_barcode && <span className="font-mono">{t.equipment_barcode}</span>}</Row>
               <Row label="Equipment name">{t.equipment_name}</Row>
@@ -166,6 +192,8 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
           </Section>
 
           <AttachmentsCard ticket={t} />
+
+          <PartsCard ticket={t} />
 
           <div className="grid gap-4 sm:grid-cols-2">
             <Section title="Courier details" icon={Truck} tone="teal">
@@ -267,8 +295,32 @@ function Courier({ name, awb, on, empty }: { name: string | null; awb: string | 
  * same colour as the badge at the top — and the icon of the button that
  * made it, so the history reads as the buttons that were pressed.
  */
+/** A component request's steps, by the button that made them. */
+const PART_STEP: Record<string, { title: string; icon: LucideIcon; tone: Tone }> = {
+  used: { title: 'Used from stock', icon: Boxes, tone: 'indigo' },
+  requested: { title: 'Component requested', icon: ShoppingCart, tone: 'orange' },
+  accepted: { title: 'Purchase accepted', icon: Hand, tone: 'yellow' },
+  declined: { title: 'Purchase declined', icon: X, tone: 'rose' },
+  purchased: { title: 'Bought — sent to the engineer', icon: Receipt, tone: 'cyan' },
+  confirmed: { title: 'Purchase confirmed', icon: PackageCheck, tone: 'green' },
+  cancelled: { title: 'Component request cancelled', icon: Undo2, tone: 'slate' },
+}
+
 function stepLook(e: TrailEvent, earlier: TrailEvent[]): { title: ReactNode; tone: Tone; icon: LucideIcon } {
   const tone = STATUS[e.status]?.tone ?? 'sky'
+  if (e.kind === 'eta') return { title: 'Expected repair date changed', tone: 'indigo', icon: CalendarClock }
+  if (e.action && PART_STEP[e.action] && (e.kind === 'component' || e.kind === 'status')) {
+    const step = PART_STEP[e.action]
+    // The last purchase confirmed puts the repair back in the engineer's hands.
+    if (e.kind === 'status' && e.status === 'in_repair' && (e.action === 'confirmed' || e.action === 'declined' || e.action === 'cancelled')) {
+      return { title: `${step.title} — repair resumed`, tone, icon: step.icon }
+    }
+    return { title: step.title, tone: e.kind === 'status' ? tone : step.tone, icon: step.icon }
+  }
+  if (e.action === 'repaired') return { title: 'Repaired', tone, icon: ClipboardCheck }
+  if (e.action === 'not_repairable') return { title: 'Closed as not repairable', tone, icon: PackageX }
+  if (e.action === 'customer_denied') return { title: 'Customer denied service', tone, icon: UserX }
+  if (e.action === 'scrapped') return { title: 'Moved to scrap — closed', tone: 'slate', icon: Trash2 }
   if (e.kind === 'observation') {
     // Numbered, so "Observation 2" can be talked about on the phone.
     const n = earlier.filter(x => x.kind === 'observation').length + 1
@@ -292,10 +344,10 @@ function stepLook(e: TrailEvent, earlier: TrailEvent[]): { title: ReactNode; ton
         : again ? 'Reassigned to another engineer' : STATUS.assigned.label
       return { title, tone, icon: again ? UserCog : UserPlus }
     }
-    case 'in_repair': return { title: STATUS.in_repair.label, tone, icon: Wrench }
+    case 'in_repair': return { title: e.from_status === 'assigned' ? 'Repair accepted' : STATUS.in_repair.label, tone, icon: Wrench }
     case 'repaired': return { title: STATUS.repaired.label, tone, icon: ClipboardCheck }
     case 'in_transit_return': return { title: STATUS.in_transit_return.label, tone, icon: Send }
-    case 'closed': return { title: STATUS.closed.label, tone, icon: PackageCheck }
+    case 'closed': return { title: 'Received back — closed', tone, icon: PackageCheck }
     case 'transferred': return { title: STATUS.transferred.label, tone, icon: ArrowRightLeft }
     default: return { title: STATUS[e.status]?.label ?? e.status, tone, icon: PackagePlus }
   }
@@ -359,10 +411,11 @@ function TatCard({
 }) {
   return (
     <Section title="Turnaround" icon={Timer} tone="indigo">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className={clsx('grid grid-cols-2 gap-2', tat.parts.ms !== null ? 'sm:grid-cols-5' : 'sm:grid-cols-4')}>
         <SpanCell label="Reach Revive Lab" span={tat.reach} />
         <SpanCell label="To assignment" span={tat.assign} />
         <SpanCell label="Repair" span={tat.repair} />
+        {tat.parts.ms !== null && <SpanCell label="Waiting for components" span={tat.parts} />}
         <SpanCell label="Dispatch & transit" span={tat.dispatch} />
       </div>
 
@@ -425,6 +478,10 @@ const ACTION_META: Record<Action, { label: string; icon: LucideIcon; tone: Tone;
   return: { label: 'Hand back to coordinator', icon: Undo2, tone: 'amber' },
   transfer: { label: 'Transfer to another Revive Lab', icon: ArrowRightLeft, tone: 'violet' },
   courier: { label: 'Update courier details', icon: Truck, tone: 'teal' },
+  use_part: { label: 'Use component', icon: Boxes, tone: 'indigo' },
+  request_part: { label: 'Request component', icon: ShoppingCart, tone: 'orange' },
+  expect: { label: 'Change expected date', icon: CalendarClock, tone: 'indigo' },
+  scrap: { label: 'Move to scrap', icon: Trash2, tone: 'slate' },
 }
 
 /** Once an engineer has it, the same button gives it to somebody else. */
@@ -433,6 +490,7 @@ function actionMeta(action: Action, t: Ticket) {
   if (action === 'assign' && t.engineer_id) return { ...m, label: 'Reassign engineer', icon: UserCog }
   // Nothing to update yet: the card was raised before it went to a courier.
   if (action === 'courier' && !t.in_courier && !t.in_awb && !t.in_dispatched_on) return { ...m, label: 'Add courier details' }
+  if (action === 'expect' && !t.expected_by) return { ...m, label: 'Set expected date' }
   return m
 }
 
@@ -467,7 +525,32 @@ function ActionBar({ ticket: t, actions }: { ticket: Ticket; actions: Action[] }
           )
         })}
       </div>
-      {open && (
+      {open && POP_UP.includes(open) && (
+        <ActionDialog
+          key={open}
+          ticket={t}
+          action={open}
+          onClose={() => setOpen(null)}
+          onDone={msg => { setOpen(null); setError(null); setDone(msg) }}
+        />
+      )}
+      {open === 'use_part' && (
+        <UseComponentForm
+          ticket={t}
+          onCancel={() => setOpen(null)}
+          onError={setError}
+          onDone={msg => { setOpen(null); setError(null); setDone(msg) }}
+        />
+      )}
+      {open === 'request_part' && (
+        <RequestPartForm
+          ticket={t}
+          onCancel={() => setOpen(null)}
+          onError={setError}
+          onDone={(msg, warning) => { setOpen(null); setError(warning ?? null); setDone(msg) }}
+        />
+      )}
+      {open && !POP_UP.includes(open) && open !== 'use_part' && open !== 'request_part' && (
         <ActionForm
           key={open}
           ticket={t}
@@ -508,6 +591,7 @@ function ActionForm({
   const reassign = action === 'assign' && !!t.engineer_id
 
   const [note, setNote] = useState('')
+  const [outcome, setOutcome] = useState<Outcome>('repaired')
   const [engineerId, setEngineerId] = useState(reassign ? '' : t.engineer_id ?? '')
   const [toTrc, setToTrc] = useState('')
   // Changing the courier details starts from what is there.
@@ -544,8 +628,12 @@ function ActionForm({
         case 'return':
           await giveBack.mutateAsync({ id: t.id, note }); onDone('Handed back to the coordinator.'); break
         case 'complete':
-          if (note.trim().length < 3) { onError('Say what action was taken on it.'); return }
-          await complete.mutateAsync({ id: t.id, note }); onDone('Repair closed. It is with the coordinator for dispatch.'); break
+          if (note.trim().length < 3) { onError(outcome === 'repaired' ? 'Say what action was taken on it.' : 'Say why.'); return }
+          await complete.mutateAsync({ id: t.id, note, outcome })
+          onDone(outcome === 'repaired' ? 'Repair closed. It is with the coordinator for dispatch.'
+            : outcome === 'not_repairable' ? 'Closed as not repairable. The coordinator moves it to scrap or sends it back.'
+              : 'Closed: the customer denied service. The coordinator sends it back.')
+          break
         case 'dispatch':
           await dispatch.mutateAsync({ id: t.id, courier, awb, on, note }); onDone('Dispatched back to the field.'); break
         case 'received':
@@ -614,6 +702,31 @@ function ActionForm({
         </div>
       )}
 
+      {action === 'complete' && (
+        <div>
+          <span className="label">How did the repair end?</span>
+          <div className="mt-1 grid gap-2 sm:grid-cols-3">
+            {(['repaired', 'not_repairable', 'customer_denied'] as const).map(o => (
+              <button
+                key={o}
+                type="button"
+                onClick={() => setOutcome(o)}
+                aria-pressed={outcome === o}
+                className={clsx(
+                  'flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm font-medium transition-colors',
+                  outcome === o
+                    ? o === 'repaired' ? 'border-lime-300 bg-lime-50 text-lime-900' : o === 'not_repairable' ? 'border-rose-300 bg-rose-50 text-rose-900' : 'border-slate-300 bg-slate-50 text-slate-900'
+                    : 'border-ink-200 text-ink-700 hover:border-ink-400',
+                )}
+              >
+                {o === 'repaired' ? <ClipboardCheck className="h-4 w-4 text-lime-600" /> : o === 'not_repairable' ? <PackageX className="h-4 w-4 text-rose-600" /> : <UserX className="h-4 w-4 text-slate-500" />}
+                {OUTCOME_LABEL[o]}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {needsCourier && (
         <div className="grid gap-3 sm:grid-cols-3">
           <label className="block">
@@ -639,7 +752,7 @@ function ActionForm({
         <span className="label">
           {action === 'transfer' ? 'Why it is being transferred'
             : action === 'return' ? 'Why it is going back'
-              : action === 'complete' ? 'Action taken'
+              : action === 'complete' ? (outcome === 'repaired' ? 'Action taken' : outcome === 'not_repairable' ? 'Why it cannot be repaired' : 'What the customer said')
                 : action === 'observe' ? 'What was found'
                 : action === 'received' ? 'Final status'
                   : 'Note (optional)'}
@@ -651,7 +764,7 @@ function ActionForm({
           value={note}
           onChange={e => setNote(e.target.value)}
           placeholder={
-            action === 'complete' ? 'What was done — parts replaced, tests run'
+            action === 'complete' ? (outcome === 'repaired' ? 'What was done — parts replaced, tests run' : outcome === 'not_repairable' ? 'e.g. Board delaminated, controller IC not available' : 'e.g. Hospital declined the quote')
               : action === 'observe' ? 'e.g. Burnt track near the fuse; C12 bulged, replacing it'
               : action === 'received' ? 'e.g. Received, installed and working'
               : action === 'transfer' ? 'e.g. Needs FPGA rework this Revive Lab cannot do'
@@ -670,5 +783,105 @@ function ActionForm({
         <button type="button" className="btn-secondary" onClick={onCancel}>Cancel</button>
       </div>
     </div>
+  )
+}
+
+/** The moves that ask one small question over the page instead of a form under the buttons. */
+const POP_UP: Action[] = ['start', 'expect', 'scrap']
+
+/** Today in the reader's own time, as the date inputs write it. */
+function localToday(offsetDays = 0): string {
+  const d = new Date()
+  d.setDate(d.getDate() + offsetDays)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/**
+ * Accepting a repair asks when it will be done — the date the field
+ * engineer then waits for instead of phoning. The same date can be moved
+ * later. Scrap asks to be sure, because it closes the ticket.
+ */
+function ActionDialog({ ticket: t, action, onClose, onDone }: {
+  ticket: Ticket
+  action: Action
+  onClose: () => void
+  onDone: (msg: string) => void
+}) {
+  const start = useStartRepair()
+  const expect = useSetExpectedDate()
+  const scrap = useScrap()
+  const [date, setDate] = useState(action === 'expect' ? t.expected_by ?? '' : '')
+  const [note, setNote] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const busy = start.isPending || expect.isPending || scrap.isPending
+  const meta = actionMeta(action, t)
+
+  const run = async () => {
+    setError(null)
+    try {
+      if (action === 'start' || action === 'expect') {
+        if (!date) { setError('Choose the date you expect it repaired.'); return }
+        if (date < localToday()) { setError('Choose a date from today.'); return }
+      }
+      if (action === 'start') {
+        await start.mutateAsync({ id: t.id, note, expectedBy: date })
+        onDone(`Repair accepted. ${t.stakeholder_name} sees it is expected by ${day(date)}.`)
+      } else if (action === 'expect') {
+        await expect.mutateAsync({ id: t.id, expectedBy: date, note })
+        onDone(`Expected date moved to ${day(date)}.`)
+      } else if (action === 'scrap') {
+        await scrap.mutateAsync({ id: t.id, note })
+        void removeVideoOf(t.id)
+        onDone(`${t.code} moved to scrap and closed.`)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'That did not go through.')
+    }
+  }
+
+  const quick = [[1, 'Tomorrow'], [3, 'In 3 days'], [7, 'In a week']] as const
+
+  return (
+    <Dialog title={meta.label} icon={<IconChip icon={meta.icon} tone={meta.tone} />} onClose={onClose}>
+      {action === 'scrap' ? (
+        <p className="text-sm text-ink-600">
+          {t.code} ({itemsSummary(t) ?? 'the spare'}) was closed as not repairable. Moving it to scrap closes the ticket —
+          it will not be sent back to {t.stakeholder_name}, and it goes on the scrap list.
+        </p>
+      ) : (
+        <>
+          <p className="text-sm text-ink-600">
+            {action === 'start'
+              ? <>When do you expect to finish it? {t.stakeholder_name} sees this date on the ticket, so they can wait for it.</>
+              : <>The date {t.stakeholder_name} sees on the ticket. Say why it moved.</>}
+          </p>
+          <label className="block">
+            <span className="label">Expected repair date <span className="text-cyrixRed-600">*</span></span>
+            <input className="input mt-1" type="date" min={localToday()} value={date} onChange={e => setDate(e.target.value)} />
+          </label>
+          <div className="flex flex-wrap gap-2">
+            {quick.map(([days, label]) => (
+              <button key={days} type="button" onClick={() => setDate(localToday(days))}
+                className={clsx('rounded-full border px-3 py-1 text-xs font-medium', date === localToday(days) ? 'border-indigo-300 bg-indigo-50 text-indigo-900' : 'border-ink-200 text-ink-600 hover:border-ink-400')}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+      <label className="block">
+        <span className="label">{action === 'expect' ? 'Why it moved' : 'Note'}</span>
+        <textarea className="input mt-1" rows={2} value={note} onChange={e => setNote(e.target.value)} maxLength={500}
+          placeholder={action === 'expect' ? 'e.g. Waiting for a MOSFET from Purchase' : action === 'scrap' ? 'e.g. Not worth the courier back' : ''} />
+      </label>
+      {error && <Alert kind="error">{error}</Alert>}
+      <div className="flex gap-2">
+        <button type="button" className="btn-primary" onClick={run} disabled={busy}>
+          {busy ? <Spinner className="h-4 w-4" /> : <meta.icon className={clsx('h-4 w-4', TONE_TEXT[meta.tone])} />}
+          {action === 'expect' ? 'Save date' : meta.label}
+        </button>
+        <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
+      </div>
+    </Dialog>
   )
 }

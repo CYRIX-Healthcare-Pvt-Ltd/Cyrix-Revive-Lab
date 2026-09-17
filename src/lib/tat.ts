@@ -17,8 +17,15 @@
  *   reach     leg start → the coordinator accepts it
  *   assign    accepted → given to an engineer
  *   repair    the engineer accepts it → repair closed (or → transferred,
- *             when the Revive Lab gave up part way — that was still repair time)
- *   dispatch  repair closed → received back (the last leg only)
+ *             when the Revive Lab gave up part way — that was still repair time),
+ *             less the time spent waiting for components
+ *   parts     waiting for components: requested, being bought, ready and
+ *             not yet confirmed. Kept apart from repair, because the engineer
+ *             cannot hurry a purchase (rl_0013)
+ *   dispatch  repair closed → received back, or moved to scrap (the last leg only)
+ *
+ * A repair closes as repaired, not repairable or denied by the customer;
+ * any of the three ends the repair stage.
  *
  * The ticket's own figures add the legs up, and its total runs from the
  * moment it was raised to the moment it was received back.
@@ -45,6 +52,7 @@ export interface Leg {
   reach: Span
   assign: Span
   repair: Span
+  parts: Span
   dispatch: Span
   total: Span
 }
@@ -54,9 +62,15 @@ export interface TatBreakdown {
   reach: Span
   assign: Span
   repair: Span
+  parts: Span
   dispatch: Span
   total: Span
 }
+
+/** The statuses that end a repair. */
+const REPAIR_END = ['repaired', 'not_repairable', 'service_denied']
+/** The statuses of a repair waiting on a component. */
+const WAITING_FOR_PARTS = ['parts_requested', 'parts_ordered', 'parts_ready']
 
 const NONE: Span = { ms: null, running: false }
 
@@ -87,7 +101,7 @@ export function ticketTat(
 ): TatBreakdown {
   const sorted = [...events].sort((a, b) => t(a.at) - t(b.at))
   if (sorted.length === 0) {
-    return { legs: [], reach: NONE, assign: NONE, repair: NONE, dispatch: NONE, total: NONE }
+    return { legs: [], reach: NONE, assign: NONE, repair: NONE, parts: NONE, dispatch: NONE, total: NONE }
   }
 
   // Cut the trail into legs at every transfer.
@@ -115,8 +129,23 @@ export function ticketTat(
     const accepted = first('accepted')
     const assigned = first('assigned')
     const inRepair = first('in_repair')
-    const repaired = first('repaired')
+    const repaired = ch.events.find(e => REPAIR_END.includes(e.status))?.at
     const transferEnd = ch.end ? ch.end.at : null
+
+    // Every stretch spent waiting for a component, up to the next move.
+    let partsMs = 0
+    let partsRunning = false
+    ch.events.forEach((e, i) => {
+      if (!WAITING_FOR_PARTS.includes(e.status)) return
+      const until = ch.events[i + 1]?.at ?? transferEnd
+      if (until) partsMs += Math.max(0, t(until) - t(e.at))
+      else { partsMs += Math.max(0, now - t(e.at)); partsRunning = true }
+    })
+    const whole = span(inRepair, repaired, transferEnd, now)
+    const repair: Span = whole.ms === null
+      ? whole
+      // Paused while it waits: the repair is not what is running.
+      : { ms: Math.max(0, whole.ms - partsMs), running: whole.running && !partsRunning }
 
     return {
       trcId: ch.trcId,
@@ -125,7 +154,8 @@ export function ticketTat(
       endedBy: ch.end ? 'transfer' : closedAt ? 'closed' : null,
       reach: span(ch.start, accepted, transferEnd, now),
       assign: span(accepted, assigned, transferEnd, now),
-      repair: span(inRepair, repaired, transferEnd, now),
+      repair,
+      parts: partsMs > 0 || partsRunning ? { ms: partsMs, running: partsRunning } : NONE,
       dispatch: ch.end ? NONE : span(repaired, closedAt, null, now),
       total: span(ch.start, end ?? undefined, null, now),
     }
@@ -139,6 +169,7 @@ export function ticketTat(
     reach: sum(legs.map(l => l.reach)),
     assign: sum(legs.map(l => l.assign)),
     repair: sum(legs.map(l => l.repair)),
+    parts: sum(legs.map(l => l.parts)),
     dispatch: sum(legs.map(l => l.dispatch)),
     total: span(raised, closed, null, now),
   }

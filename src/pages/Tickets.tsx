@@ -4,18 +4,10 @@ import clsx from 'clsx'
 import { Inbox, PackagePlus, Search } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTickets, useTrcs, type Ticket } from '@/lib/queries'
-import { STATUS, STATUS_ORDER, itemsSummary, waitingOnMe, parseTicketCode } from '@/lib/tickets'
+import { STATUS, STATUS_ORDER, itemsSummary, parseTicketCode, ticketTabs, type TabId } from '@/lib/tickets'
 import { EmptyState, PageLoader, SortHeader, StatusBadge } from '@/components/ui'
 
-type View = 'mine' | 'open' | 'closed' | 'all'
 type SortKey = 'code' | 'status' | 'trc' | 'facility' | 'age'
-
-const VIEWS: Array<[View, string]> = [
-  ['mine', 'Waiting on me'],
-  ['open', 'Open'],
-  ['closed', 'Closed'],
-  ['all', 'All'],
-]
 
 /** "3d", "5h" — the age of an open ticket, or how long a closed one took. */
 function age(t: Ticket): string {
@@ -34,7 +26,12 @@ export default function Tickets() {
   const { data: tickets, isLoading } = useTickets()
   const { data: trcs } = useTrcs()
 
-  const view = (params.get('view') as View) || 'open'
+  // The tabs for what this person does (tickets.ts); an old link to a tab
+  // they do not have lands on All.
+  const tabs = useMemo(() => ticketTabs(me), [me])
+  const asked = params.get('view') as TabId | null
+  const tab = tabs.find(x => x.id === asked) ?? tabs[0]
+  const view = tab.id
   const [q, setQ] = useState('')
   const [trcId, setTrcId] = useState('')
   const [status, setStatus] = useState('')
@@ -43,22 +40,13 @@ export default function Tickets() {
 
   const counts = useMemo(() => {
     const all = tickets ?? []
-    return {
-      mine: all.filter(t => waitingOnMe(t, me)).length,
-      open: all.filter(t => t.status !== 'closed').length,
-      closed: all.filter(t => t.status === 'closed').length,
-      all: all.length,
-    }
-  }, [tickets, me])
+    return Object.fromEntries(tabs.map(x => [x.id, all.filter(x.match).length])) as Record<TabId, number>
+  }, [tickets, tabs])
 
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase()
     const asNumber = parseTicketCode(q)
-    let rows = (tickets ?? []).filter(t =>
-      view === 'mine' ? waitingOnMe(t, me)
-        : view === 'open' ? t.status !== 'closed'
-          : view === 'closed' ? t.status === 'closed'
-            : true)
+    let rows = (tickets ?? []).filter(tab.match)
     if (trcId) rows = rows.filter(t => t.trc_id === trcId)
     if (status) rows = rows.filter(t => t.status === status)
     if (needle) {
@@ -84,7 +72,7 @@ export default function Tickets() {
       })
     }
     return rows
-  }, [tickets, view, q, trcId, status, sortKey, asc, me])
+  }, [tickets, tab, q, trcId, status, sortKey, asc])
 
   const onSort = (k: SortKey) => {
     if (sortKey === k) setAsc(v => !v)
@@ -108,7 +96,7 @@ export default function Tickets() {
       <div className="card overflow-hidden">
         <div className="flex flex-wrap items-center gap-2 border-b border-ink-200 bg-ink-50 px-3 py-2">
           <div className="flex flex-wrap gap-1">
-            {VIEWS.map(([id, label]) => (
+            {tabs.map(({ id, label }) => (
               <button
                 key={id}
                 type="button"
@@ -147,10 +135,10 @@ export default function Tickets() {
 
         {shown.length === 0 ? (
           <div className="p-4">
-            <EmptyState icon={Inbox} title={view === 'mine' ? 'Nothing is waiting on you' : 'No tickets here'}>
-              {view === 'mine'
-                ? 'When a ticket needs your move — accepting, assigning, repairing, dispatching — it shows up here.'
-                : 'Try another view, or clear the filters.'}
+            <EmptyState icon={Inbox} title={view === 'parts' ? 'No component is pending' : 'No tickets here'}>
+              {view === 'parts'
+                ? 'When a repair is waiting on a component — asked for, being bought, or ready — it shows up here.'
+                : 'Try another tab, or clear the filters.'}
             </EmptyState>
           </div>
         ) : (

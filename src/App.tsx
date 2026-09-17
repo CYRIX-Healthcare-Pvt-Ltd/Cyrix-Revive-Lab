@@ -14,6 +14,7 @@ const Tickets      = lazyRoute(() => import('@/pages/Tickets'))
 const NewTicket    = lazyRoute(() => import('@/pages/NewTicket'))
 const TicketDetail = lazyRoute(() => import('@/pages/TicketDetail'))
 const Access       = lazyRoute(() => import('@/pages/Access'))
+const Components   = lazyRoute(() => import('@/pages/Components'))
 
 export default function App() {
   const { session, loading, hasAccess, me } = useAuth()
@@ -35,6 +36,8 @@ export default function App() {
           <Route path="tickets/:code" element={<TicketDetail />} />
           <Route path="new" element={<NewTicket />} />
           <Route path="access" element={me?.is_admin ? <Access /> : <Navigate to="/" replace />} />
+          {/* Coordinators, managers and admins; Purchase for its requests. */}
+          <Route path="components" element={me && (me.is_coordinator || me.is_manager || me.is_admin || me.is_purchase) ? <Components /> : <Navigate to="/" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
