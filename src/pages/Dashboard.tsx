@@ -6,7 +6,7 @@ import {
 import { BellRing, Building2, ChartColumn, Inbox, PackagePlus, TrendingUp } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTickets, useTrcs, useVisibleEvents } from '@/lib/queries'
-import { REPAIRING, STATUS, STATUS_ORDER, TONE_FILL, itemsSummary, waitingOnMe } from '@/lib/tickets'
+import { REPAIRING, STATUS, STATUS_ORDER, TONE_FILL, canRaise, itemsSummary, ticketTabs, waitingOnMe } from '@/lib/tickets'
 import { asDays, formatSpan, ticketTat, type TatEvent } from '@/lib/tat'
 import { EmptyState, PageLoader, StatTile, StatusBadge } from '@/components/ui'
 import IconChip from '@/components/IconChip'
@@ -30,7 +30,13 @@ export default function Dashboard() {
   const { data: trcs } = useTrcs()
 
   const stats = useMemo(() => {
-    const all = tickets ?? []
+    /*
+      Only what came to this person. Their first tab asks the same question —
+      Purchase sees the tickets a purchase request brought them and nothing
+      else, and a dashboard counting the rest counted other people's work.
+    */
+    const [mine] = ticketTabs(me)
+    const all = (tickets ?? []).filter(mine.match)
     const byTicket = new Map<string, TatEvent[]>()
     for (const e of events ?? []) {
       const list = byTicket.get(e.ticket_id) ?? []
@@ -87,6 +93,8 @@ export default function Dashboard() {
     return {
       open: all.filter(t => t.status !== 'closed').length,
       mine: all.filter(t => waitingOnMe(t, me)),
+      // Back with the field engineer, waiting to be fitted and closed (rl_0015).
+      back: all.filter(t => t.status === 'received_back').length,
       // Waiting on a component is still in repair.
       inRepair: all.filter(t => t.status === 'assigned' || REPAIRING.includes(t.status)).length,
       moving: all.filter(t => t.status === 'in_transit_return' || t.status === 'transferred').length,
@@ -115,9 +123,11 @@ export default function Dashboard() {
             Where every spare is, and how long it has taken.
           </p>
         </div>
-        <Link to="/new" className="btn-primary">
-          <PackagePlus className="h-4 w-4" /> Raise ticket
-        </Link>
+        {canRaise(me) && (
+          <Link to="/new" className="btn-primary">
+            <PackagePlus className="h-4 w-4" /> Raise ticket
+          </Link>
+        )}
       </div>
 
       {/* grid-fill: the fifth tile takes a whole row on a phone rather than half of one. */}
@@ -125,18 +135,25 @@ export default function Dashboard() {
         <StatTile label="Open" value={stats.open} sub={`of ${stats.total} tickets`} />
         <StatTile label="Waiting on you" value={stats.mine.length} sub="your move next" tone={stats.mine.length ? 'brand' : 'default'} />
         <StatTile label="With Revive Lab engineer" value={stats.inRepair} sub="assigned or being repaired" />
-        <StatTile label="In transit" value={stats.moving} sub="going back, or between Revive Labs" />
+        <StatTile
+          label="In transit"
+          value={stats.moving}
+          sub={stats.back ? `going back · ${stats.back} to be fitted` : 'going back, or between Revive Labs'}
+        />
         <StatTile
           label="Average TAT"
           value={stats.avgTotal === null ? '—' : formatSpan(stats.avgTotal)}
-          sub={stats.recentClosed ? `raised to received · ${stats.recentClosed} closed, 90 days` : 'nothing closed in 90 days'}
+          sub={stats.recentClosed
+            ? `raised to back in the field · ${stats.recentClosed} closed in the last 90 days`
+            : 'nothing closed in the last 90 days'}
         />
       </div>
 
       {stats.total === 0 ? (
         <EmptyState icon={Inbox} title="No tickets yet">
           A ticket starts when a field engineer sends a defective spare to a Revive Lab, or when one arrives
-          at the Revive Lab and the coordinator raises it. <Link to="/new" className="link-accent">Raise the first one</Link>.
+          at the Revive Lab and the coordinator raises it.
+          {canRaise(me) && <> <Link to="/new" className="link-accent">Raise the first one</Link>.</>}
         </EmptyState>
       ) : (
         <>

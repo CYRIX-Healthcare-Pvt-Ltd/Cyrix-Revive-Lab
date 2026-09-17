@@ -50,7 +50,8 @@ interface Held<T> {
  */
 export function MediaCapture({ photos, video, voice }: {
   photos?: Held<PendingPhoto[]> & { max?: number }
-  video?: Held<Blob | null>
+  /** `seconds` shortens the clip: 30 explains a fault, 20 shows a repair working. */
+  video?: Held<Blob | null> & { seconds?: number }
   voice?: Held<Blob | null>
 }) {
   const camera = useRef<HTMLInputElement>(null)
@@ -66,8 +67,9 @@ export function MediaCapture({ photos, video, voice }: {
   held.current = taken
   useEffect(() => () => held.current.forEach(p => URL.revokeObjectURL(p.preview)), [])
 
+  const videoSeconds = video?.seconds ?? MAX_VIDEO_SECONDS
   const videoRec = useRecorder({
-    maxSeconds: MAX_VIDEO_SECONDS,
+    maxSeconds: videoSeconds,
     pickMime: isSupported => pickVideoRecorderMime(isSupported, WEBKIT),
     constraints: {
       audio: true,

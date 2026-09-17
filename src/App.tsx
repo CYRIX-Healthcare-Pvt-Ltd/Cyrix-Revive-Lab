@@ -8,6 +8,7 @@ import Shell from '@/components/Shell'
 import { Logo } from '@/components/Logo'
 import { lazyRoute } from '@/lib/lazyRoute'
 import { drainMail } from '@/lib/queries'
+import { canRaise } from '@/lib/tickets'
 
 const Dashboard    = lazyRoute(() => import('@/pages/Dashboard'))
 const Tickets      = lazyRoute(() => import('@/pages/Tickets'))
@@ -34,7 +35,7 @@ export default function App() {
           <Route index element={<Dashboard />} />
           <Route path="tickets" element={<Tickets />} />
           <Route path="tickets/:code" element={<TicketDetail />} />
-          <Route path="new" element={<NewTicket />} />
+          <Route path="new" element={canRaise(me) ? <NewTicket /> : <Navigate to="/" replace />} />
           <Route path="access" element={me?.is_admin ? <Access /> : <Navigate to="/" replace />} />
           {/* Coordinators, managers and admins; Purchase for its requests. */}
           <Route path="components" element={me && (me.is_coordinator || me.is_manager || me.is_admin || me.is_purchase) ? <Components /> : <Navigate to="/" replace />} />

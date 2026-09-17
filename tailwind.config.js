@@ -213,7 +213,17 @@ export default {
           900: 'rgb(var(--slate-900) / <alpha-value>)',
         },
         /* Approval to go to another Revive Lab (rl_0014): fuchsia waiting, pink not
-           approved. Approved is emerald, already themed for the score bands. */
+           approved. Approved is emerald, already themed for the score bands.
+           Blue is the spare back with the field engineer, before they close it (rl_0015). */
+        blue: {
+          50:  'rgb(var(--blue-50) / <alpha-value>)',
+          100: 'rgb(var(--blue-100) / <alpha-value>)',
+          200: 'rgb(var(--blue-200) / <alpha-value>)',
+          300: '#93c5fd', 400: '#60a5fa', 500: '#3b82f6', 600: '#2563eb',
+          700: 'rgb(var(--blue-700) / <alpha-value>)',
+          800: 'rgb(var(--blue-800) / <alpha-value>)',
+          900: 'rgb(var(--blue-900) / <alpha-value>)',
+        },
         fuchsia: {
           50:  'rgb(var(--fuchsia-50) / <alpha-value>)',
           100: 'rgb(var(--fuchsia-100) / <alpha-value>)',

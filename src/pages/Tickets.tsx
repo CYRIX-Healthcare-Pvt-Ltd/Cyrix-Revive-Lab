@@ -4,7 +4,10 @@ import clsx from 'clsx'
 import { Inbox, PackagePlus, Search } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTickets, useTrcs, type Ticket } from '@/lib/queries'
-import { STATUS, STATUS_ORDER, itemsSummary, parseTicketCode, ticketTabs, type TabId } from '@/lib/tickets'
+import {
+  STATUS, STATUS_ORDER, TONE_CLASS, TONE_DOT, TONE_TEXT, canRaise, itemsSummary, parseTicketCode, ticketTabs,
+  type TabId,
+} from '@/lib/tickets'
 import { EmptyState, PageLoader, SortHeader, StatusBadge } from '@/components/ui'
 
 type SortKey = 'code' | 'status' | 'trc' | 'facility' | 'age'
@@ -88,28 +91,37 @@ export default function Tickets() {
           <h1 className="text-xl font-semibold text-ink-900">Tickets</h1>
           <p className="mt-0.5 text-sm text-ink-500">Every spare you can follow, newest first.</p>
         </div>
-        <Link to="/new" className="btn-primary">
-          <PackagePlus className="h-4 w-4" /> Raise ticket
-        </Link>
+        {canRaise(me) && (
+          <Link to="/new" className="btn-primary">
+            <PackagePlus className="h-4 w-4" /> Raise ticket
+          </Link>
+        )}
       </div>
 
       <div className="card overflow-hidden">
         <div className="flex flex-wrap items-center gap-2 border-b border-ink-200 bg-ink-50 px-3 py-2">
+          {/* Each tab in the colour of what it holds, and its count with it:
+              a row of grey numbers says nothing about what needs doing. */}
           <div className="flex flex-wrap gap-1">
-            {tabs.map(({ id, label }) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => setParams(p => { p.set('view', id); return p }, { replace: true })}
-                className={clsx(
-                  'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
-                  view === id ? 'bg-surface text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800',
-                )}
-              >
-                {label}
-                <span className="ml-1.5 tabular-nums text-ink-400">{counts[id]}</span>
-              </button>
-            ))}
+            {tabs.map(({ id, label, tone }) => {
+              const on = view === id
+              const n = counts[id]
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setParams(p => { p.set('view', id); return p }, { replace: true })}
+                  className={clsx(
+                    'inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                    on ? clsx(TONE_CLASS[tone], 'shadow-sm') : 'text-ink-500 hover:text-ink-800',
+                  )}
+                >
+                  <span aria-hidden className={clsx('h-1.5 w-1.5 rounded-full', TONE_DOT[tone], !on && !n && 'opacity-40')} />
+                  {label}
+                  <span className={clsx('tabular-nums', on ? 'opacity-70' : n ? TONE_TEXT[tone] : 'text-ink-300')}>{n}</span>
+                </button>
+              )
+            })}
           </div>
           <div className="ml-auto flex w-full flex-wrap gap-2 sm:w-auto">
             <select className="input !py-1.5 sm:w-40" value={trcId} onChange={e => setTrcId(e.target.value)} aria-label="Filter by Revive Lab">

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   ticketCode, parseTicketCode, actionsFor, runsTrc, waitingOnMe, cleanItems, itemsSummary,
-  partsWaitingOn, ticketTabs, serves, approversOf, orList, statusLook,
+  partsWaitingOn, ticketTabs, serves, approversOf, orList, statusLook, canRaise,
   type Me, type TicketLike,
 } from './tickets'
 
@@ -285,5 +285,38 @@ describe('states, approval and the proposal (rl_0014)', () => {
     expect(statusLook('closed', 'discarded').short).toBe('Discarded')
     expect(statusLook('closed', 'returned').short).toBe('Closed')
     expect(statusLook('awaiting_approval').short).toBe('Waiting for approval')
+  })
+})
+
+describe('the receipt, and who raises tickets (rl_0015)', () => {
+  const desk = me({ is_coordinator: true, trc_ids: [REG] })
+  const engineer = me({ employee_id: 'eng', is_engineer: true, trc_ids: [REG] })
+  const field = me({ employee_id: 'field' })
+
+  it('gives the field engineer the spare back, and then the close', () => {
+    const arriving = ticket({ status: 'in_transit_return' })
+    expect(actionsFor(arriving, field)).toEqual(['received'])
+    const back = ticket({ status: 'received_back' })
+    expect(actionsFor(back, field)).toEqual(['close_ticket'])
+    expect(waitingOnMe(back, field)).toBe(true)
+    // Not the Revive Lab's to close: they sent it, and cannot know it fits.
+    expect(actionsFor(back, desk)).toEqual([])
+    expect(actionsFor(back, engineer)).toEqual([])
+  })
+
+  it('does not offer a Revive Lab engineer a ticket to raise', () => {
+    expect(canRaise(engineer)).toBe(false)
+    // A field engineer, and anybody else who sends spares in, still raises.
+    expect(canRaise(field)).toBe(true)
+    expect(canRaise(desk)).toBe(true)
+    expect(canRaise(me({ is_purchase: true, trc_ids: [REG] }))).toBe(true)
+    expect(canRaise(null)).toBe(true)
+    // Somebody who is both keeps it: spares arrive at their desk.
+    expect(canRaise(me({ employee_id: 'both', is_engineer: true, is_coordinator: true, trc_ids: [REG] }))).toBe(true)
+  })
+
+  it('gives every tab the colour of what it holds', () => {
+    expect(ticketTabs(desk).map(x => x.tone)).toEqual(['slate', 'red', 'orange', 'green'])
+    expect(ticketTabs(engineer).map(x => x.tone)).toEqual(['slate', 'indigo', 'sky', 'green'])
   })
 })

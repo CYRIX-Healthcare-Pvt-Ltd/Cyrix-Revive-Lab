@@ -22,7 +22,9 @@
  *   parts     waiting for components: requested, being bought, ready and
  *             not yet confirmed. Kept apart from repair, because the engineer
  *             cannot hurry a purchase (rl_0013)
- *   dispatch  repair closed → received back, or moved to scrap (the last leg only)
+ *   dispatch  repair closed → the field engineer has it back, or it was
+ *             moved to scrap (the last leg only). What they then take to fit
+ *             it and close the ticket is theirs, not the Revive Lab's
  *   approval  waiting to go to another Revive Lab: for the Regional Revive
  *             Lab admins to decide, then for whoever asked to send it (rl_0014).
  *             Kept out of every stage above — none of them could move — and
@@ -32,7 +34,7 @@
  * any of the three ends the repair stage.
  *
  * The ticket's own figures add the legs up, and its total runs from the
- * moment it was raised to the moment it was received back.
+ * moment it was raised to the moment the field engineer had it back.
  */
 
 export interface TatEvent {
@@ -146,7 +148,9 @@ export function ticketTat(
 
   const legs: Leg[] = chunks.map(ch => {
     const first = (status: string) => ch.events.find(e => e.status === status)?.at
-    const closedAt = first('closed')
+    // Back in the field engineer's hands ends the journey; closing the
+    // ticket after fitting it is a note, not a stage.
+    const closedAt = first('received_back') ?? first('closed')
     const end = ch.end?.at ?? closedAt ?? null
     const accepted = first('accepted')
     const assigned = first('assigned')
@@ -204,7 +208,7 @@ export function ticketTat(
   })
 
   const raised = sorted[0].at
-  const closed = sorted.find(e => e.status === 'closed')?.at
+  const closed = sorted.find(e => e.status === 'received_back' || e.status === 'closed')?.at
 
   return {
     legs,

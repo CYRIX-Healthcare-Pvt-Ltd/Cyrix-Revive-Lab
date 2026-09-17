@@ -220,3 +220,31 @@ describe('ticketTat — waiting for approval to go to another Revive Lab', () =>
     expect(tat.total).toEqual({ ms: 2 * D, running: false })
   })
 })
+
+describe('ticketTat — back with the field engineer (rl_0015)', () => {
+  const trail = [
+    ev('pending_acceptance', 0),
+    ev('accepted', D),
+    ev('assigned', D),
+    ev('in_repair', D),
+    ev('repaired', 3 * D),
+    ev('in_transit_return', 3 * D + 2 * H),
+    ev('received_back', 5 * D),   // 2 days in the courier's hands
+    ev('closed', 9 * D),          // fitted four days later
+  ]
+  const tat = ticketTat(trail, 'A', T0 + 20 * D)
+
+  it('ends the journey when they have it back, not when they close it', () => {
+    expect(tat.total).toEqual({ ms: 5 * D, running: false })
+    expect(tat.dispatch).toEqual({ ms: 2 * D, running: false })
+  })
+
+  it('still measures a ticket closed the old way, straight from in transit', () => {
+    const old = ticketTat([
+      ev('pending_acceptance', 0), ev('accepted', D), ev('assigned', D), ev('in_repair', D),
+      ev('repaired', 3 * D), ev('in_transit_return', 3 * D + 2 * H), ev('closed', 5 * D),
+    ], 'A', T0 + 20 * D)
+    expect(old.total).toEqual({ ms: 5 * D, running: false })
+    expect(old.dispatch).toEqual({ ms: 2 * D, running: false })
+  })
+})

@@ -4,6 +4,7 @@ import type {
   Approval, Closure, Outcome, PartRoute, PartStatus, PartSummary, Proposal, TicketItem, TicketStatus, TrcKind,
 } from './tickets'
 import { uploadPartFile } from './partFiles'
+import { uploadStageFile } from './attachments'
 
 // ---------------------------------------------------------------------
 // Shapes
@@ -84,6 +85,18 @@ export interface Ticket {
   trc_state: string | null
   /** The latest request to go to another Revive Lab, whatever became of it. */
   approval: Approval | null
+  /** The coordinator found it damaged in transit, and photographed it (rl_0015). */
+  arrival_damaged: boolean
+  arrival_photos: string[]
+  /** The repaired spare: a photograph, and a short video of it working. */
+  done_photos: string[]
+  done_video: string | null
+  /** How it arrived back with the field engineer. */
+  return_damaged: boolean
+  return_photos: string[]
+  /** What they said when they closed it: it works, or it does not. */
+  final_working: boolean | null
+  received_at: string | null
 }
 
 export interface TrailEvent {
@@ -111,6 +124,8 @@ export interface TrailEvent {
    * repaired, not_repairable, customer_denied, scrapped, expected (rl_0013).
    */
   action: string | null
+  /** An observation spoken instead of typed (rl_0015). */
+  voice_path: string | null
 }
 
 export interface Hop {
@@ -458,16 +473,44 @@ export function useRaiseTicket() {
   }) as Promise<{ id: string; code: string; number: number; status: TicketStatus }>)
 }
 
+/**
+ * Accepting: the photographs of how it arrived go up first, and the paths
+ * go with the call — the damage tick is worth nothing without them. The
+ * courier details are on the same form, because the desk has the
+ * consignment note in its hand and the sender often never came back.
+ */
 export const useAccept = () => useTicketMutation(
-  (a: { id: string; note?: string }) => rpc('revive_accept', { p_ticket_id: a.id, p_note: a.note || null }))
+  async (a: { id: string; note?: string; damaged?: boolean; photos?: Blob[]; courier?: string; awb?: string; on?: string }) => {
+    const paths = await uploadStage(a.id, 'arrival', a.photos)
+    return rpc('revive_accept', {
+      p_ticket_id: a.id, p_note: a.note || null,
+      p_damaged: !!a.damaged, p_photos: paths,
+      p_courier: a.courier || null, p_awb: a.awb || null, p_dispatched_on: a.on || null,
+    })
+  })
+
+/** arrival-1, arrival-2, return-1 … uploaded in order, and their paths. */
+async function uploadStage(ticketId: string, name: 'arrival' | 'return' | 'done', blobs?: Blob[]): Promise<string[]> {
+  const paths: string[] = []
+  for (const [i, blob] of (blobs ?? []).entries()) {
+    paths.push(await uploadStageFile(ticketId, `${name}-${i + 1}` as 'arrival-1', blob))
+  }
+  return paths
+}
 
 export const useAssign = () => useTicketMutation(
   (a: { id: string; engineerId: string; note?: string }) =>
     rpc('revive_assign', { p_ticket_id: a.id, p_engineer_id: a.engineerId, p_note: a.note || null }))
 
-/** What the engineer found while it is in repair. The status stays In repair. */
+/**
+ * What the engineer found while it is in repair, typed or spoken. The
+ * status stays In repair.
+ */
 export const useAddObservation = () => useTicketMutation(
-  (a: { id: string; note: string }) => rpc('revive_add_observation', { p_ticket_id: a.id, p_note: a.note }))
+  async (a: { id: string; note: string; voice?: Blob | null; spoken?: number }) => {
+    const path = a.voice ? await uploadStageFile(a.id, `voice-${a.spoken ?? 1}` as 'voice-1', a.voice) : null
+    return rpc('revive_add_observation', { p_ticket_id: a.id, p_note: a.note, p_voice_path: path })
+  })
 
 /** How the spare is travelling in — added or corrected until the Revive Lab accepts it. */
 export const useUpdateCourier = () => useTicketMutation(
@@ -488,12 +531,20 @@ export const useSetExpectedDate = () => useTicketMutation(
 export const useReturnToDesk = () => useTicketMutation(
   (a: { id: string; note: string }) => rpc('revive_return_to_desk', { p_ticket_id: a.id, p_note: a.note }))
 
-/** Closing the repair: repaired, not repairable — with what should become of it — or the customer denied service. */
+/**
+ * Closing the repair: repaired — with the spare photographed working, and a
+ * short video if it is worth seeing — not repairable, with what should
+ * become of it, or the customer denied service.
+ */
 export const useCompleteRepair = () => useTicketMutation(
-  (a: { id: string; note?: string; outcome: Outcome; proposal?: Proposal | null }) =>
-    rpc('revive_complete_repair', {
+  async (a: { id: string; note?: string; outcome: Outcome; proposal?: Proposal | null; photos?: Blob[]; video?: Blob | null }) => {
+    const photos = a.outcome === 'repaired' ? await uploadStage(a.id, 'done', a.photos) : []
+    const video = a.outcome === 'repaired' && a.video ? await uploadStageFile(a.id, 'done', a.video) : null
+    return rpc('revive_complete_repair', {
       p_ticket_id: a.id, p_note: a.note || null, p_outcome: a.outcome, p_proposal: a.proposal ?? null,
-    }))
+      p_photos: photos, p_video: video,
+    })
+  })
 
 /** Not repairable, and not going back: scrap, which closes the ticket. */
 export const useScrap = () => useTicketMutation(
@@ -569,8 +620,19 @@ export const useDispatch = () => useTicketMutation(
       p_dispatched_on: a.on || null, p_note: a.note || null,
     }))
 
+/** It arrived back: the field engineer has it, and says whether the courier damaged it. */
 export const useMarkReceived = () => useTicketMutation(
-  (a: { id: string; note?: string }) => rpc('revive_mark_received', { p_ticket_id: a.id, p_note: a.note || null }))
+  async (a: { id: string; note?: string; damaged?: boolean; photos?: Blob[] }) => {
+    const paths = await uploadStage(a.id, 'return', a.photos)
+    return rpc('revive_mark_received', {
+      p_ticket_id: a.id, p_note: a.note || null, p_damaged: !!a.damaged, p_photos: paths,
+    })
+  })
+
+/** Fitted, and the ticket closed: working, or not. */
+export const useCloseTicket = () => useTicketMutation(
+  (a: { id: string; working: boolean; note: string }) =>
+    rpc('revive_close_ticket', { p_ticket_id: a.id, p_working: a.working, p_note: a.note }))
 
 /** A transfer is asked for; the Regional Revive Lab admins approve it before it is sent (rl_0014). */
 export const useRequestTransfer = () => useTicketMutation(

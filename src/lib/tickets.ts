@@ -25,6 +25,7 @@ export type TicketStatus =
   | 'not_repairable'
   | 'service_denied'
   | 'in_transit_return'
+  | 'received_back'
   | 'closed'
 
 export type TrcKind = 'regional' | 'project'
@@ -47,7 +48,7 @@ export const TRC_KIND_LABEL: Record<TrcKind, string> = {
  */
 export type Tone =
   | 'red' | 'amber' | 'sky' | 'indigo' | 'lime' | 'teal' | 'green' | 'violet'
-  | 'orange' | 'yellow' | 'cyan' | 'rose' | 'slate' | 'fuchsia' | 'emerald' | 'pink'
+  | 'orange' | 'yellow' | 'cyan' | 'rose' | 'slate' | 'fuchsia' | 'emerald' | 'pink' | 'blue'
 
 interface StatusMeta {
   /** The full sentence, for the ticket page and the email. */
@@ -122,6 +123,10 @@ export const STATUS: Record<TicketStatus, StatusMeta> = {
     label: 'Dispatched — in transit back', short: 'In transit back', tone: 'teal', order: 6,
     waitingOn: 'the field engineer to confirm it arrived',
   },
+  received_back: {
+    label: 'Back with the field engineer', short: 'Received back', tone: 'blue', order: 6.5,
+    waitingOn: 'the field engineer to fit it and close the ticket',
+  },
   closed: {
     label: 'Closed', short: 'Closed', tone: 'green', order: 7,
     waitingOn: 'nobody',
@@ -177,6 +182,7 @@ export const TONE_CLASS: Record<Tone, string> = {
   fuchsia: 'bg-fuchsia-100 text-fuchsia-900',
   emerald: 'bg-emerald-100 text-emerald-900',
   pink: 'bg-pink-100 text-pink-900',
+  blue: 'bg-blue-100 text-blue-900',
 }
 
 /** An icon on a soft patch of its colour: section headings and the history. */
@@ -197,6 +203,7 @@ export const TONE_SOFT: Record<Tone, string> = {
   fuchsia: 'bg-fuchsia-100 text-fuchsia-700',
   emerald: 'bg-emerald-100 text-emerald-700',
   pink: 'bg-pink-100 text-pink-700',
+  blue: 'bg-blue-100 text-blue-700',
 }
 
 /**
@@ -220,6 +227,7 @@ export const TONE_TEXT: Record<Tone, string> = {
   fuchsia: 'text-fuchsia-600',
   emerald: 'text-emerald-600',
   pink: 'text-pink-600',
+  blue: 'text-blue-600',
 }
 
 /** Chart fills, in the same order of meaning as the badges. */
@@ -240,6 +248,28 @@ export const TONE_FILL: Record<Tone, string> = {
   fuchsia: '#c026d3',
   emerald: '#059669',
   pink: '#db2777',
+  blue: '#2563eb',
+}
+
+/** A filled dot in the tone's colour — a tab, a marker beside a label. */
+export const TONE_DOT: Record<Tone, string> = {
+  red: 'bg-cyrixRed-600',
+  amber: 'bg-amber-500',
+  sky: 'bg-sky-500',
+  indigo: 'bg-indigo-500',
+  lime: 'bg-lime-500',
+  teal: 'bg-teal-500',
+  green: 'bg-green-500',
+  violet: 'bg-violet-500',
+  orange: 'bg-orange-500',
+  yellow: 'bg-yellow-500',
+  cyan: 'bg-cyan-500',
+  rose: 'bg-rose-500',
+  slate: 'bg-slate-400',
+  fuchsia: 'bg-fuchsia-500',
+  emerald: 'bg-emerald-500',
+  pink: 'bg-pink-500',
+  blue: 'bg-blue-500',
 }
 
 /**
@@ -401,7 +431,7 @@ export function handlesPart(me: Me | null | undefined, route: PartRoute, trcId: 
 
 export type Action =
   | 'accept' | 'assign' | 'start' | 'return' | 'complete' | 'observe'
-  | 'dispatch' | 'transfer' | 'received' | 'courier'
+  | 'dispatch' | 'transfer' | 'received' | 'close_ticket' | 'courier'
   | 'use_part' | 'request_part' | 'expect' | 'scrap'
   | 'approve' | 'decline_approval' | 'send' | 'cancel_transfer' | 'reroute' | 'discard'
 
@@ -447,6 +477,8 @@ export function actionsFor(t: TicketLike, me: Me | null | undefined): Action[] {
   // Only the field engineer it was sent back to: the Revive Lab dispatched
   // it and cannot know it has landed (rl_0005).
   if (t.stakeholder_id === me.employee_id && t.status === 'in_transit_return') out.push('received')
+  // Back in their hands: they fit it, then close the ticket saying whether it works.
+  if (t.stakeholder_id === me.employee_id && t.status === 'received_back') out.push('close_ticket')
   if (mine && (t.status === 'assigned' || t.status === 'in_repair')) out.push('return')
   if (desk && (t.status === 'accepted' || t.status === 'assigned' || t.status === 'in_repair')) out.push('transfer')
   if (desk && open?.kind === 'transfer' && (t.status === 'awaiting_approval' || t.status === 'approved')) out.push('cancel_transfer')
@@ -484,6 +516,8 @@ export type TabId = 'all' | 'repair' | 'assigned' | 'unassigned' | 'parts' | 'op
 export interface TicketTab {
   id: TabId
   label: string
+  /** The colour of what the tab holds, so the row of them reads at a glance. */
+  tone: Tone
   match: (t: TicketLike) => boolean
 }
 
@@ -504,32 +538,43 @@ export function ticketTabs(me: Me | null | undefined): TicketTab[] {
 
   if (me && (me.is_coordinator || me.is_manager || me.is_admin)) {
     return [
-      { id: 'all', label: 'All', match: () => true },
-      { id: 'unassigned', label: 'Not assigned', match: t => ['pending_acceptance', 'transferred', 'accepted'].includes(t.status) },
-      { id: 'parts', label: 'Component pending', match: partsPending },
-      { id: 'closed', label: 'Closed', match: closed },
+      { id: 'all', label: 'All', tone: 'slate', match: () => true },
+      { id: 'unassigned', label: 'Not assigned', tone: 'red', match: t => ['pending_acceptance', 'transferred', 'accepted'].includes(t.status) },
+      { id: 'parts', label: 'Component pending', tone: 'orange', match: partsPending },
+      { id: 'closed', label: 'Closed', tone: 'green', match: closed },
     ]
   }
   if (me?.is_engineer) {
     return [
-      { id: 'all', label: 'All', match: () => true },
-      { id: 'repair', label: 'In repair', match: t => REPAIRING.includes(t.status) },
-      { id: 'assigned', label: 'Assigned', match: t => t.status === 'assigned' },
-      { id: 'closed', label: 'Closed', match: closed },
+      { id: 'all', label: 'All', tone: 'slate', match: () => true },
+      { id: 'repair', label: 'In repair', tone: 'indigo', match: t => REPAIRING.includes(t.status) },
+      { id: 'assigned', label: 'Assigned', tone: 'sky', match: t => t.status === 'assigned' },
+      { id: 'closed', label: 'Closed', tone: 'green', match: closed },
     ]
   }
   if (me?.is_purchase) {
     return [
-      { id: 'all', label: 'All', match: hasPurchase },
-      { id: 'parts', label: 'Component pending', match: t => (t.parts ?? []).some(p => p.route === 'purchase' && partOpen(p.status)) },
-      { id: 'closed', label: 'Closed', match: t => hasPurchase(t) && closed(t) },
+      { id: 'all', label: 'All', tone: 'slate', match: hasPurchase },
+      { id: 'parts', label: 'Component pending', tone: 'orange', match: t => (t.parts ?? []).some(p => p.route === 'purchase' && partOpen(p.status)) },
+      { id: 'closed', label: 'Closed', tone: 'green', match: t => hasPurchase(t) && closed(t) },
     ]
   }
   return [
-    { id: 'all', label: 'All', match: () => true },
-    { id: 'open', label: 'Open', match: t => !closed(t) },
-    { id: 'closed', label: 'Closed', match: closed },
+    { id: 'all', label: 'All', tone: 'slate', match: () => true },
+    { id: 'open', label: 'Open', tone: 'amber', match: t => !closed(t) },
+    { id: 'closed', label: 'Closed', tone: 'green', match: closed },
   ]
+}
+
+/**
+ * Who raises tickets: whoever sends spares in. A Revive Lab's own engineer
+ * repairs what arrives and never sends one, so they are not offered it —
+ * unless they also run a desk, where spares arrive and cards are written
+ * for them (rl_0015).
+ */
+export function canRaise(me: Me | null | undefined): boolean {
+  if (!me) return true
+  return !me.is_engineer || me.is_coordinator || me.is_manager || me.is_admin
 }
 
 /* ------------------------------------------------------------------ */

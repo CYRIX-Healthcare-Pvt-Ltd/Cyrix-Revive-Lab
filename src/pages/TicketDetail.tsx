@@ -1,22 +1,25 @@
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import clsx from 'clsx'
 import {
-  ArrowLeft, ArrowRightLeft, BadgeCheck, Ban, Boxes, CalendarClock, CheckCircle2, ClipboardCheck, ClipboardList, Hand,
-  History as HistoryIcon, PackageCheck, PackagePlus, PackageX, PlayCircle, Receipt, ScanSearch, Send, ShieldQuestion,
-  ShieldX, ShoppingCart, Signpost, Timer, Trash2, Truck, Undo2, UserCog, UserPlus, UserX, Wrench, X,
+  ArrowLeft, ArrowRightLeft, BadgeCheck, Ban, Boxes, CalendarClock, Camera, CheckCircle2, CircleCheck, ClipboardCheck,
+  ClipboardList, Hand, History as HistoryIcon, PackageCheck, PackagePlus, PackageX, PlayCircle, Receipt, ScanSearch,
+  Send, ShieldQuestion, ShieldX, ShoppingCart, Signpost, Timer, Trash2, TriangleAlert, Truck, Undo2, UserCog, UserPlus,
+  UserX, Wrench, X,
   type LucideIcon,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import {
-  useAccept, useAddObservation, useApprove, useAssign, useCancelTransfer, useCompleteRepair, useDeclineApproval,
-  useDiscard, useDispatch, useHops, useMarkReceived, useMembers, useRequestTransfer, useReroute, useReturnToDesk,
-  useScrap, useSend, useSetExpectedDate, useStartRepair, useTickets, useTrail, useTrcs, useUpdateCourier,
+  useAccept, useAddObservation, useApprove, useAssign, useCancelTransfer, useCloseTicket, useCompleteRepair,
+  useDeclineApproval, useDiscard, useDispatch, useHops, useMarkReceived, useMembers, useRequestTransfer, useReroute,
+  useReturnToDesk, useScrap, useSend, useSetExpectedDate, useStartRepair, useTickets, useTrail, useTrcs,
+  useUpdateCourier,
   type Ticket, type TrailEvent,
 } from '@/lib/queries'
 import {
   actionsFor, approversOf, itemsSummary, orList, parseTicketCode, serves, stateLabel,
-  ITEM_KIND_LABEL, OUTCOME_LABEL, REPAIRING, STATUS, TONE_SOFT, TONE_TEXT, TRC_KIND_LABEL,
+  ITEM_KIND_LABEL, OUTCOME_LABEL, REPAIRING, STATUS, TONE_DOT, TONE_SOFT, TONE_TEXT, TRC_KIND_LABEL, statusLook,
   type Action, type Approval, type Outcome, type Proposal, type TicketItem, type Tone,
 } from '@/lib/tickets'
 import { formatSpan, ticketTat, type Span } from '@/lib/tat'
@@ -27,7 +30,11 @@ import PartsCard from '@/components/PartsCard'
 import { RequestPartForm, UseComponentForm } from '@/components/PartForms'
 import Dialog from '@/components/Dialog'
 import LabOptions from '@/components/LabOptions'
+import PhotoPick, { type PickedPhoto } from '@/components/PhotoPick'
+import { MediaCapture } from '@/components/Attachments'
+import Lightbox from '@/components/Lightbox'
 import { removeVideoOf } from '@/lib/attachments'
+import { signedLinks } from '@/lib/partFiles'
 
 const when = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleString(undefined, {
@@ -89,6 +96,9 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
       <BackLink />
 
       <div className="card overflow-hidden">
+        {/* The status, along the top of the card: the page says where the
+            spare is before a word of it is read. */}
+        <div aria-hidden className={clsx('h-1', TONE_DOT[statusLook(t.status, t.closure, t.proposal).tone])} />
         <div className="flex flex-wrap items-start justify-between gap-3 p-4 sm:p-5">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
@@ -106,7 +116,21 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
                 t.expected_by < localToday() ? 'bg-amber-100 text-amber-900' : 'bg-indigo-100 text-indigo-900',
               )}>
                 <CalendarClock className="h-3.5 w-3.5" />
-                {t.expected_by < localToday() ? 'Was expected repaired by' : 'Expected repaired by'} {day(t.expected_by)}
+                {t.expected_by < localToday() ? 'Repair was expected by' : 'Repair expected by'} {day(t.expected_by)}
+              </p>
+            )}
+            {(t.arrival_damaged || t.return_damaged) && (
+              <p className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900">
+                <TriangleAlert className="h-3.5 w-3.5" />
+                Damaged in transit {t.arrival_damaged ? 'on the way in' : ''}{t.arrival_damaged && t.return_damaged ? ' and ' : ''}{t.return_damaged ? 'on the way back' : ''}
+              </p>
+            )}
+            {t.status === 'closed' && t.final_working !== null && (
+              <p className={clsx(
+                'mt-2 inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium',
+                t.final_working ? 'bg-green-100 text-green-900' : 'bg-rose-100 text-rose-900',
+              )}>
+                <CircleCheck className="h-3.5 w-3.5" /> {t.final_working ? 'Fitted and working' : 'Fitted — not working'}
               </p>
             )}
             {t.status === 'closed' && t.closure === 'scrapped' && (
@@ -128,7 +152,7 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
 
         {actions.length > 0 && (
           <div className="border-t border-ink-200 bg-ink-50 p-4 sm:px-5">
-            <ActionBar ticket={t} actions={actions} />
+            <ActionBar ticket={t} actions={actions} spoken={(trail ?? []).filter(e => e.voice_path).length} />
           </div>
         )}
       </div>
@@ -196,6 +220,8 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
           </Section>
 
           <AttachmentsCard ticket={t} />
+
+          <StageMedia ticket={t} />
 
           <PartsCard ticket={t} />
 
@@ -338,6 +364,74 @@ function ApprovalNote({ ticket: t, approval: a }: { ticket: Ticket; approval: Ap
   )
 }
 
+/**
+ * The photographs the steps take: how the spare arrived, the repair
+ * working, and how it came back. Kept apart from the route card's own
+ * photos, which say what was wrong rather than what was done.
+ */
+function StageMedia({ ticket: t }: { ticket: Ticket }) {
+  const paths = [...t.arrival_photos, ...t.done_photos, ...t.return_photos, ...(t.done_video ? [t.done_video] : [])]
+  const { data: links } = useQuery({
+    enabled: paths.length > 0,
+    queryKey: ['revive', 'stage-media', t.id, paths.join(',')],
+    staleTime: 30 * 60_000,
+    queryFn: () => signedLinks(paths),
+  })
+  const [viewing, setViewing] = useState<number | null>(null)
+  if (paths.length === 0) return null
+
+  const shots = [
+    ...t.arrival_photos.map(p => ({ path: p, alt: 'As it arrived at the Revive Lab' })),
+    ...t.done_photos.map(p => ({ path: p, alt: 'The repaired spare' })),
+    ...t.return_photos.map(p => ({ path: p, alt: 'As it arrived back' })),
+  ].filter(x => links?.[x.path])
+
+  const group = (title: string, tone: string, list: string[], damaged: boolean) => list.length === 0 ? null : (
+    <div>
+      <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-label text-ink-400">
+        {title}
+        {damaged && (
+          <span className={clsx('inline-flex items-center gap-1 rounded px-1.5 py-px text-[10px] normal-case tracking-normal', tone)}>
+            <TriangleAlert className="h-3 w-3" /> Damaged in transit
+          </span>
+        )}
+      </p>
+      <div className="mt-1.5 flex flex-wrap gap-2">
+        {list.map(p => {
+          const at = shots.findIndex(x => x.path === p)
+          return links?.[p] ? (
+            <button key={p} type="button" onClick={() => setViewing(at)} className="h-20 w-20 overflow-hidden rounded-lg border border-ink-200">
+              <img src={links[p]} alt="" className="h-full w-full object-cover" />
+            </button>
+          ) : null
+        })}
+      </div>
+    </div>
+  )
+
+  return (
+    <Section title="Photographs along the way" icon={Camera} tone="sky">
+      <div className="space-y-4">
+        {group('On arrival', 'bg-amber-100 text-amber-900', t.arrival_photos, t.arrival_damaged)}
+        {group('Repaired', 'bg-lime-100 text-lime-900', t.done_photos, false)}
+        {t.done_video && links?.[t.done_video] && (
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-label text-ink-400">The repair, running</p>
+            <video src={links[t.done_video]} controls playsInline className="mt-1.5 max-h-72 w-full rounded-lg border border-ink-200 bg-shade" />
+          </div>
+        )}
+        {group('Back with the field engineer', 'bg-amber-100 text-amber-900', t.return_photos, t.return_damaged)}
+      </div>
+      <Lightbox
+        images={shots.map(x => ({ src: links?.[x.path] ?? '', alt: x.alt }))}
+        index={viewing}
+        onIndex={setViewing}
+        onClose={() => setViewing(null)}
+      />
+    </Section>
+  )
+}
+
 /* ------------------------------------------------------------------ */
 
 function Section({
@@ -445,6 +539,10 @@ function stepLook(e: TrailEvent, earlier: TrailEvent[], proposal: Proposal | nul
     const n = earlier.filter(x => x.kind === 'observation').length + 1
     return { title: `Observation ${n}`, tone, icon: ScanSearch }
   }
+  if (e.action === 'damaged') return { title: e.status === 'accepted' ? 'Accepted — damaged in transit' : 'Received back — damaged in transit', tone: 'amber', icon: TriangleAlert }
+  if (e.action === 'working' || e.action === 'not_working') {
+    return { title: e.action === 'working' ? 'Closed — fitted and working' : 'Closed — fitted, not working', tone, icon: CircleCheck }
+  }
   if (e.kind === 'courier') return { title: 'Courier details updated', tone: 'teal', icon: Truck }
   if (e.from_status === null) return { title: 'Raised', tone, icon: PackagePlus }
 
@@ -466,13 +564,22 @@ function stepLook(e: TrailEvent, earlier: TrailEvent[], proposal: Proposal | nul
     case 'in_repair': return { title: e.from_status === 'assigned' ? 'Repair accepted' : STATUS.in_repair.label, tone, icon: Wrench }
     case 'repaired': return { title: STATUS.repaired.label, tone, icon: ClipboardCheck }
     case 'in_transit_return': return { title: STATUS.in_transit_return.label, tone, icon: Send }
-    case 'closed': return { title: 'Received back — closed', tone, icon: PackageCheck }
+    case 'received_back': return { title: 'Received back by the field engineer', tone, icon: PackageCheck }
+    case 'closed': return { title: 'Closed', tone, icon: CircleCheck }
     case 'transferred': return { title: STATUS.transferred.label, tone, icon: ArrowRightLeft }
     default: return { title: STATUS[e.status]?.label ?? e.status, tone, icon: PackagePlus }
   }
 }
 
 function Timeline({ trail, proposal }: { trail: TrailEvent[]; proposal: Proposal | null }) {
+  // Every spoken observation's link in one go, rather than one call each.
+  const spoken = trail.map(e => e.voice_path).filter((p): p is string => !!p)
+  const { data: voices } = useQuery({
+    enabled: spoken.length > 0,
+    queryKey: ['revive', 'voices', spoken.join(',')],
+    staleTime: 30 * 60_000,
+    queryFn: () => signedLinks(spoken),
+  })
   return (
     <ol>
       {trail.map((e, i) => {
@@ -492,6 +599,9 @@ function Timeline({ trail, proposal }: { trail: TrailEvent[]; proposal: Proposal
               </p>
               {e.note && (
                 <p className="mt-1.5 whitespace-pre-wrap rounded-lg bg-ink-50 px-2.5 py-1.5 text-sm text-ink-700">{e.note}</p>
+              )}
+              {e.voice_path && voices?.[e.voice_path] && (
+                <audio src={voices[e.voice_path]} controls preload="none" className="mt-1.5 h-9 w-full max-w-xs" />
               )}
             </div>
           </li>
@@ -611,7 +721,8 @@ const ACTION_META: Record<Action, { label: string; icon: LucideIcon; tone: Tone;
   complete: { label: 'Close repair', icon: ClipboardCheck, tone: 'lime', weight: 'main', primary: true },
   dispatch: { label: 'Dispatch back', icon: Send, tone: 'teal', weight: 'main', primary: true },
   scrap: { label: 'Move to scrap', icon: Trash2, tone: 'slate', weight: 'main', primary: true },
-  received: { label: 'Received back', icon: PackageCheck, tone: 'green', weight: 'main', primary: true },
+  received: { label: 'Received back', icon: PackageCheck, tone: 'blue', weight: 'main', primary: true },
+  close_ticket: { label: 'Close ticket', icon: CircleCheck, tone: 'green', weight: 'main', primary: true },
   use_part: { label: 'Use component', icon: Boxes, tone: 'indigo', weight: 'tool' },
   request_part: { label: 'Request component', icon: ShoppingCart, tone: 'orange', weight: 'tool' },
   observe: { label: 'Add observation', icon: ScanSearch, tone: 'indigo', weight: 'tool' },
@@ -651,7 +762,7 @@ function actionMeta(action: Action, t: Ticket) {
  * One form open at a time, under the buttons — the question and the answer
  * together — and every move asks only for what that move records.
  */
-function ActionBar({ ticket: t, actions }: { ticket: Ticket; actions: Action[] }) {
+function ActionBar({ ticket: t, actions, spoken }: { ticket: Ticket; actions: Action[]; spoken: number }) {
   const [open, setOpen] = useState<Action | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState<string | null>(null)
@@ -755,17 +866,19 @@ function ActionBar({ ticket: t, actions }: { ticket: Ticket; actions: Action[] }
         />
       )}
       {open && !POP_UP.includes(open) && open !== 'use_part' && open !== 'request_part' && (
-        <ActionForm key={open} ticket={t} action={open} onCancel={() => setOpen(null)} onError={setError} onDone={finish} />
+        <ActionForm key={open} ticket={t} action={open} spoken={spoken} onCancel={() => setOpen(null)} onError={setError} onDone={finish} />
       )}
     </div>
   )
 }
 
 function ActionForm({
-  ticket: t, action, onCancel, onError, onDone,
+  ticket: t, action, spoken, onCancel, onError, onDone,
 }: {
   ticket: Ticket
   action: Action
+  /** How many observations already carry a voice note, so the next has its own name. */
+  spoken: number
   onCancel: () => void
   onError: (msg: string) => void
   onDone: (msg: string) => void
@@ -783,6 +896,7 @@ function ActionForm({
   const updateCourier = useUpdateCourier()
   const send = useSend()
   const reroute = useReroute()
+  const closeTicket = useCloseTicket()
 
   const meta = actionMeta(action, t)
   // Reassigning: somebody has it, and the choice is who has it instead.
@@ -793,10 +907,16 @@ function ActionForm({
   const [note, setNote] = useState('')
   const [outcome, setOutcome] = useState<Outcome>('repaired')
   const [proposal, setProposal] = useState<Proposal | null>(null)
+  // What this step photographs, films or says.
+  const [photos, setPhotos] = useState<PickedPhoto[]>([])
+  const [video, setVideo] = useState<Blob | null>(null)
+  const [voice, setVoice] = useState<Blob | null>(null)
+  const [damaged, setDamaged] = useState(false)
+  const [working, setWorking] = useState<'' | 'yes' | 'no'>('')
   const [engineerId, setEngineerId] = useState(reassign ? '' : t.engineer_id ?? '')
   const [toTrc, setToTrc] = useState('')
   // The field engineer's own courier details start from what is on the card.
-  const fromCard = action === 'courier' || action === 'reroute' || sendingRaise
+  const fromCard = action === 'courier' || action === 'reroute' || action === 'accept' || sendingRaise
   const [courier, setCourier] = useState(fromCard ? t.in_courier ?? '' : '')
   const [awb, setAwb] = useState(fromCard ? t.in_awb ?? '' : '')
   const [on, setOn] = useState((fromCard && t.in_dispatched_on) || new Date().toISOString().slice(0, 10))
@@ -810,14 +930,20 @@ function ActionForm({
   const nearby = (trcs ?? []).filter(x => x.is_active && serves(x, t.state))
   const labName = (id: string) => trcs?.find(x => x.id === id)?.name ?? 'that Revive Lab'
 
-  const busy = [accept, assign, observe, giveBack, complete, dispatch, received, transfer, updateCourier, send, reroute]
+  const busy = [accept, assign, observe, giveBack, complete, dispatch, received, transfer, updateCourier, send, reroute, closeTicket]
     .some(m => m.isPending)
+  const blobs = photos.map(p => p.blob)
 
   const run = async () => {
     try {
       switch (action) {
         case 'accept':
-          await accept.mutateAsync({ id: t.id, note }); onDone(`${t.code} accepted at ${t.trc_name}.`); break
+          if (damaged && blobs.length === 0) { onError('Photograph the damage — it is the only proof there will be.'); return }
+          await accept.mutateAsync({ id: t.id, note, damaged, photos: blobs, courier, awb, on })
+          onDone(damaged
+            ? `${t.code} accepted at ${t.trc_name}, damaged in transit. The photographs are on the ticket.`
+            : `${t.code} accepted at ${t.trc_name}.`)
+          break
         case 'assign': {
           if (!engineerId) { onError('Choose the engineer.'); return }
           await assign.mutateAsync({ id: t.id, engineerId, note })
@@ -825,14 +951,21 @@ function ActionForm({
           onDone(`${reassign ? 'Reassigned' : 'Assigned'} to ${who ?? 'the engineer'}. They accept it before starting.`); break
         }
         case 'observe':
-          if (note.trim().length < 3) { onError('Write what was found.'); return }
-          await observe.mutateAsync({ id: t.id, note }); onDone('Observation added to the history. Add another whenever there is more.'); break
+          if (!voice && note.trim().length < 3) { onError('Write what was found, or record it.'); return }
+          await observe.mutateAsync({ id: t.id, note, voice, spoken: spoken + 1 })
+          onDone('Observation added to the history. Add another whenever there is more.'); break
         case 'return':
           await giveBack.mutateAsync({ id: t.id, note }); onDone('Handed back to the coordinator.'); break
         case 'complete':
           if (outcome === 'not_repairable' && !proposal) { onError('Say what should become of it: scrap, or back to the field engineer.'); return }
           if (note.trim().length < 3) { onError(outcome === 'repaired' ? 'Say what action was taken on it.' : 'Say why.'); return }
-          await complete.mutateAsync({ id: t.id, note, outcome, proposal: outcome === 'not_repairable' ? proposal : null })
+          if (outcome === 'repaired' && blobs.length === 0) { onError('Photograph the repaired spare — one photo at least.'); return }
+          await complete.mutateAsync({
+            id: t.id, note, outcome,
+            proposal: outcome === 'not_repairable' ? proposal : null,
+            photos: outcome === 'repaired' ? blobs : [],
+            video: outcome === 'repaired' ? video : null,
+          })
           onDone(outcome === 'repaired' ? 'Repair closed. It is with the coordinator for dispatch.'
             : outcome === 'not_repairable'
               ? proposal === 'scrap'
@@ -843,8 +976,15 @@ function ActionForm({
         case 'dispatch':
           await dispatch.mutateAsync({ id: t.id, courier, awb, on, note }); onDone('Dispatched back to the field.'); break
         case 'received':
-          if (note.trim().length < 2) { onError('Give the final status — is it working?'); return }
-          await received.mutateAsync({ id: t.id, note }); void removeVideoOf(t.id); onDone(`${t.code} is closed.`); break
+          if (damaged && blobs.length === 0) { onError('Photograph the damage — it is the only proof there will be.'); return }
+          await received.mutateAsync({ id: t.id, note, damaged, photos: blobs })
+          void removeVideoOf(t.id)
+          onDone(`${t.code} is back with you. Close it once it is fitted.`); break
+        case 'close_ticket':
+          if (!working) { onError('Say whether it works.'); return }
+          if (note.trim().length < 2) { onError('Give the final status.'); return }
+          await closeTicket.mutateAsync({ id: t.id, working: working === 'yes', note })
+          onDone(`${t.code} is closed.`); break
         case 'courier':
           if (!courier.trim() && !awb.trim()) { onError('Enter the courier or the tracking number.'); return }
           await updateCourier.mutateAsync({ id: t.id, courier, awb, on })
@@ -872,9 +1012,11 @@ function ActionForm({
 
   // The back of the route card: the Revive Lab's Action taken, and the
   // field engineer's Final status.
-  const needsNote = action === 'return' || action === 'transfer' || action === 'complete' || action === 'received' || action === 'observe'
-  const needsCourier = action === 'dispatch' || action === 'courier' || action === 'send' || action === 'reroute'
+  const needsNote = action === 'return' || action === 'transfer' || action === 'complete' || action === 'close_ticket' || action === 'observe'
+  const needsCourier = action === 'dispatch' || action === 'courier' || action === 'send' || action === 'reroute' || action === 'accept'
   const asksNote = action !== 'courier' && action !== 'reroute'
+  // The tick that asks for the photograph: a courier's damage, in or out.
+  const asksDamage = action === 'accept' || action === 'received'
 
   return (
     <div className="card space-y-3 p-4">
@@ -998,10 +1140,72 @@ function ActionForm({
         </div>
       )}
 
+      {asksDamage && (
+        <div className="space-y-2">
+          <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-ink-200 px-3 py-2">
+            <input type="checkbox" className="mt-0.5 h-4 w-4 accent-amber-600" checked={damaged} onChange={e => setDamaged(e.target.checked)} />
+            <span className="text-sm text-ink-800">
+              Damaged in transit
+              <span className="block text-xs text-ink-500">The courier has done something to it. Photograph it — that is the proof.</span>
+            </span>
+          </label>
+          <div>
+            <span className="label">
+              {action === 'accept' ? 'Photographs as it arrived' : 'Photographs as it came back'}
+              {damaged && <span className="text-cyrixRed-600"> *</span>}
+            </span>
+            <div className="mt-1">
+              <PhotoPick photos={photos} onChange={setPhotos} max={2} noun="photo" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* A repaired spare is shown working: a photograph, and a clip if it helps. */}
+      {action === 'complete' && outcome === 'repaired' && (
+        <div className="space-y-2">
+          <div>
+            <span className="label">The repaired spare <span className="text-cyrixRed-600">*</span></span>
+            <div className="mt-1">
+              <PhotoPick photos={photos} onChange={setPhotos} max={2} noun="photo" />
+            </div>
+          </div>
+          <div>
+            <span className="label">A short video of it working</span>
+            <div className="mt-1">
+              <MediaCapture video={{ value: video, onChange: setVideo, seconds: 20 }} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {action === 'observe' && (
+        <div>
+          <span className="label">Say it instead of typing it</span>
+          <div className="mt-1">
+            <MediaCapture voice={{ value: voice, onChange: setVoice }} />
+          </div>
+        </div>
+      )}
+
+      {action === 'close_ticket' && (
+        <label className="block">
+          <span className="label">Is it working? <span className="text-cyrixRed-600">*</span></span>
+          <select className="input mt-1" value={working} onChange={e => setWorking(e.target.value as 'yes' | 'no')}>
+            <option value="">Choose…</option>
+            <option value="yes">Working</option>
+            <option value="no">Not working</option>
+          </select>
+        </label>
+      )}
+
       {needsCourier && (
         <div className="grid gap-3 sm:grid-cols-3">
           <label className="block">
-            <span className="label">Courier{action === 'dispatch' && <span className="text-cyrixRed-600"> *</span>}</span>
+            <span className="label">
+              {action === 'accept' ? 'Courier it came with' : 'Courier'}
+              {action === 'dispatch' && <span className="text-cyrixRed-600"> *</span>}
+            </span>
             <input className="input mt-1" value={courier} onChange={e => setCourier(e.target.value)} placeholder="DTDC, Blue Dart…" />
           </label>
           <label className="block">
@@ -1018,6 +1222,11 @@ function ActionForm({
       {action === 'courier' && (
         <p className="text-xs text-ink-500">You can change these until {t.trc_name} accepts the spare.</p>
       )}
+      {action === 'accept' && (
+        <p className="text-xs text-ink-500">
+          The consignment note is in your hand — fill in whatever the sender could not, and it stays on the ticket.
+        </p>
+      )}
       {(sendingRaise || action === 'reroute') && (
         <p className="text-xs text-ink-500">No tracking number yet? Send it now and add the courier details from the ticket until it is accepted.</p>
       )}
@@ -1028,9 +1237,10 @@ function ActionForm({
             {action === 'transfer' ? 'Why it is being transferred'
               : action === 'return' ? 'Why it is going back'
                 : action === 'complete' ? (outcome === 'repaired' ? 'Action taken' : outcome === 'not_repairable' ? 'Why it cannot be repaired' : 'What the customer said')
-                  : action === 'observe' ? 'What was found'
-                    : action === 'received' ? 'Final status'
-                      : 'Note (optional)'}
+                  : action === 'observe' ? (voice ? 'What was found (optional beside the recording)' : 'What was found')
+                    : action === 'close_ticket' ? 'Final status'
+                      : action === 'received' ? 'Note (optional)'
+                        : 'Note (optional)'}
             {needsNote && <span className="text-cyrixRed-600"> *</span>}
           </span>
           <textarea
@@ -1042,7 +1252,8 @@ function ActionForm({
             placeholder={
               action === 'complete' ? (outcome === 'repaired' ? 'What was done — parts replaced, tests run' : outcome === 'not_repairable' ? 'e.g. Board delaminated, controller IC not available' : 'e.g. Hospital declined the quote')
                 : action === 'observe' ? 'e.g. Burnt track near the fuse; C12 bulged, replacing it'
-                  : action === 'received' ? 'e.g. Received, installed and working'
+                  : action === 'close_ticket' ? 'e.g. Installed and working; output steady at 12 V'
+                    : action === 'received' ? 'e.g. Box opened, board looks fine'
                     : action === 'transfer' ? 'e.g. Needs FPGA rework this Revive Lab cannot do'
                       : action === 'return' ? 'e.g. Cannot be repaired at this Revive Lab'
                         : reassign ? 'e.g. On leave this week'

@@ -14,6 +14,19 @@ import { extensionFor } from './media'
 export const ATTACHMENT_BUCKET = 'revive-attachments'
 
 export type Slot = 'image-1' | 'image-2' | 'video' | 'voice'
+
+/**
+ * What the steps after the route card add to the same folder (rl_0015):
+ * how the spare arrived, the repair that worked, how it came back, and an
+ * observation spoken rather than typed. The storage rules give each of
+ * those to the person whose step it is — the desk that accepted it, the
+ * engineer repairing it, the field engineer it went back to.
+ */
+export type StageFile =
+  | 'arrival-1' | 'arrival-2'
+  | 'done-1' | 'done-2' | 'done'
+  | 'return-1' | 'return-2'
+  | `voice-${number}`
 export type AttachmentKind = 'image' | 'video' | 'voice'
 
 export interface Attachment {
@@ -43,6 +56,21 @@ export async function uploadAttachment(ticketId: string, slot: Slot, blob: Blob)
     .from(ATTACHMENT_BUCKET)
     .upload(pathFor(ticketId, slot, blob.type), blob, { contentType: blob.type, upsert: false })
   if (error) throw new Error(friendlyError(error))
+}
+
+/**
+ * Uploads one of those, and gives back the path to record on the ticket.
+ * A second try replaces the first: a photograph taken again before the
+ * form is sent should not be refused by the one taken by mistake.
+ */
+export async function uploadStageFile(ticketId: string, file: StageFile, blob: Blob): Promise<string> {
+  const fallback = blob.type.startsWith('video/') ? 'webm' : blob.type.startsWith('audio/') ? 'webm' : 'jpg'
+  const path = `${ticketId}/${file}.${extensionFor(blob.type) || fallback}`
+  const { error } = await supabase.storage
+    .from(ATTACHMENT_BUCKET)
+    .upload(path, blob, { contentType: blob.type || 'image/jpeg', upsert: true })
+  if (error) throw new Error(friendlyError(error))
+  return path
 }
 
 /** What a ticket has, with links to show it by. */
