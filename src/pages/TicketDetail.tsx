@@ -1266,7 +1266,13 @@ function ActionForm({
       <div className="flex gap-2">
         <button type="button" className="btn-primary" onClick={run} disabled={busy}>
           {busy ? <Spinner className="h-4 w-4" /> : action === 'transfer' ? <ShieldQuestion className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
-          {action === 'transfer' ? 'Ask for approval' : action === 'reroute' ? 'Send' : meta.label}
+          {/* Never the same words as the button that opened this: that one
+              asks the question, this one answers it. */}
+          {action === 'transfer' ? 'Ask for approval'
+            : action === 'reroute' ? 'Send'
+              : action === 'received' ? 'Confirm it arrived'
+                : action === 'close_ticket' ? 'Close the ticket'
+                  : meta.label}
         </button>
         <button type="button" className="btn-secondary" onClick={onCancel}>Cancel</button>
       </div>
