@@ -3,12 +3,13 @@ import { Link } from 'react-router-dom'
 import {
   Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
-import { ArrowRight, Inbox, PackagePlus } from 'lucide-react'
+import { ArrowRight, BellRing, Building2, ChartColumn, Inbox, PackagePlus, TrendingUp } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTickets, useTrcs, useVisibleEvents } from '@/lib/queries'
 import { STATUS, STATUS_ORDER, TONE_FILL, waitingOnMe } from '@/lib/tickets'
 import { asDays, formatSpan, ticketTat, type TatEvent } from '@/lib/tat'
 import { EmptyState, PageLoader, StatTile, StatusBadge } from '@/components/ui'
+import IconChip from '@/components/IconChip'
 
 const TOOLTIP = { fontSize: 12, borderRadius: 8, border: '1px solid #d4d8e0' }
 const TICK = { fontSize: 11, fill: '#606b82' }
@@ -139,7 +140,9 @@ export default function Dashboard() {
           {stats.mine.length > 0 && (
             <div className="card overflow-hidden">
               <div className="flex items-center justify-between border-b border-ink-200 bg-ink-50 px-4 py-2.5">
-                <h3 className="text-sm font-semibold text-ink-800">Waiting on you</h3>
+                <h3 className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
+                  <IconChip icon={BellRing} tone="red" /> Waiting on you
+                </h3>
                 <Link to="/tickets?view=mine" className="inline-flex items-center gap-1 text-xs font-medium text-ink-600 hover:text-ink-900">
                   All of them <ArrowRight className="h-3.5 w-3.5" />
                 </Link>
@@ -163,7 +166,9 @@ export default function Dashboard() {
 
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="card p-4">
-              <h3 className="mb-1 text-sm font-semibold text-ink-800">Tickets by status</h3>
+              <h3 className="mb-1 flex items-center gap-2.5 text-sm font-semibold text-ink-800">
+                <IconChip icon={ChartColumn} tone="sky" /> Tickets by status
+              </h3>
               <p className="mb-3 text-xs text-ink-500">Every ticket you can see, by where it is in the journey.</p>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
@@ -181,7 +186,9 @@ export default function Dashboard() {
             </div>
 
             <div className="card p-4">
-              <h3 className="mb-1 text-sm font-semibold text-ink-800">Tickets by Revive Lab</h3>
+              <h3 className="mb-1 flex items-center gap-2.5 text-sm font-semibold text-ink-800">
+                <IconChip icon={Building2} tone="violet" /> Tickets by Revive Lab
+              </h3>
               <p className="mb-3 text-xs text-ink-500">Where each ticket is now — a transferred ticket counts at the Revive Lab it went to.</p>
               <div className="h-64">
                 {stats.byTrc.length === 0 ? (
@@ -195,7 +202,7 @@ export default function Dashboard() {
                       <Tooltip contentStyle={TOOLTIP} />
                       <Legend wrapperStyle={{ fontSize: 12 }} />
                       <Bar dataKey="Open" stackId="a" fill="#d97706" />
-                      <Bar dataKey="Closed" stackId="a" fill="#11141c" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="Closed" stackId="a" fill={TONE_FILL.green} radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 )}
@@ -204,7 +211,9 @@ export default function Dashboard() {
           </div>
 
           <div className="card p-4">
-            <h3 className="mb-1 text-sm font-semibold text-ink-800">TAT trend</h3>
+            <h3 className="mb-1 flex items-center gap-2.5 text-sm font-semibold text-ink-800">
+              <IconChip icon={TrendingUp} tone="indigo" /> TAT trend
+            </h3>
             <p className="mb-3 text-xs text-ink-500">
               Average days, for tickets closed in each month: end to end, repair time with the Revive Lab engineer, and time to reach the Revive Lab.
             </p>

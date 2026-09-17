@@ -26,7 +26,13 @@ export const TRC_KIND_LABEL: Record<TrcKind, string> = {
   project: 'Project Revive Lab',
 }
 
-export type Tone = 'amber' | 'violet' | 'sky' | 'indigo' | 'emerald' | 'teal' | 'ink'
+/**
+ * One colour per status, running the way a spare does: red when it has just
+ * been raised and nobody has it, green when it is back and closed, the blues
+ * in the middle while the Revive Lab works on it. Violet is the side road —
+ * a transfer to another Revive Lab.
+ */
+export type Tone = 'red' | 'amber' | 'sky' | 'indigo' | 'lime' | 'teal' | 'green' | 'violet'
 
 interface StatusMeta {
   /** The full sentence, for the ticket page and the email. */
@@ -42,7 +48,7 @@ interface StatusMeta {
 
 export const STATUS: Record<TicketStatus, StatusMeta> = {
   pending_acceptance: {
-    label: 'Pending Revive Lab acceptance', short: 'Pending acceptance', tone: 'amber', order: 1,
+    label: 'Pending Revive Lab acceptance', short: 'Pending acceptance', tone: 'red', order: 1,
     waitingOn: 'the Revive Lab coordinator to accept it',
   },
   transferred: {
@@ -50,7 +56,7 @@ export const STATUS: Record<TicketStatus, StatusMeta> = {
     waitingOn: 'the receiving Revive Lab to accept it',
   },
   accepted: {
-    label: 'Accepted by the coordinator', short: 'Accepted', tone: 'sky', order: 2,
+    label: 'Accepted by the coordinator', short: 'Accepted', tone: 'amber', order: 2,
     waitingOn: 'the coordinator to assign an engineer',
   },
   assigned: {
@@ -62,7 +68,7 @@ export const STATUS: Record<TicketStatus, StatusMeta> = {
     waitingOn: 'the engineer to finish the repair',
   },
   repaired: {
-    label: 'Repaired — pending dispatch', short: 'Pending dispatch', tone: 'emerald', order: 5,
+    label: 'Repaired — pending dispatch', short: 'Pending dispatch', tone: 'lime', order: 5,
     waitingOn: 'the coordinator to dispatch it back',
   },
   in_transit_return: {
@@ -70,7 +76,7 @@ export const STATUS: Record<TicketStatus, StatusMeta> = {
     waitingOn: 'the field engineer to confirm it arrived',
   },
   closed: {
-    label: 'Closed — received back', short: 'Closed', tone: 'ink', order: 7,
+    label: 'Closed — received back', short: 'Closed', tone: 'green', order: 7,
     waitingOn: 'nobody',
   },
 }
@@ -82,24 +88,53 @@ export const OPEN_STATUSES = STATUS_ORDER.filter(s => s !== 'closed')
 
 /** Badge colours per tone, light and dark both — the tokens flip underneath. */
 export const TONE_CLASS: Record<Tone, string> = {
+  red: 'bg-cyrixRed-100 text-cyrixRed-900',
   amber: 'bg-amber-100 text-amber-900',
-  violet: 'bg-violet-100 text-violet-900',
   sky: 'bg-sky-100 text-sky-900',
   indigo: 'bg-indigo-100 text-indigo-900',
-  emerald: 'bg-emerald-100 text-emerald-900',
+  lime: 'bg-lime-100 text-lime-900',
   teal: 'bg-teal-100 text-teal-900',
-  ink: 'bg-ink-100 text-ink-700',
+  green: 'bg-green-100 text-green-900',
+  violet: 'bg-violet-100 text-violet-900',
+}
+
+/** An icon on a soft patch of its colour: section headings and the history. */
+export const TONE_SOFT: Record<Tone, string> = {
+  red: 'bg-cyrixRed-100 text-cyrixRed-700',
+  amber: 'bg-amber-100 text-amber-700',
+  sky: 'bg-sky-100 text-sky-700',
+  indigo: 'bg-indigo-100 text-indigo-700',
+  lime: 'bg-lime-100 text-lime-700',
+  teal: 'bg-teal-100 text-teal-700',
+  green: 'bg-green-100 text-green-700',
+  violet: 'bg-violet-100 text-violet-700',
+}
+
+/**
+ * An icon in its colour on a plain ground — a tab, a button. Literal shades
+ * that read on white and on the dark page alike.
+ */
+export const TONE_TEXT: Record<Tone, string> = {
+  red: 'text-cyrixRed-600',
+  amber: 'text-amber-600',
+  sky: 'text-sky-600',
+  indigo: 'text-indigo-500',
+  lime: 'text-lime-600',
+  teal: 'text-teal-600',
+  green: 'text-green-600',
+  violet: 'text-violet-500',
 }
 
 /** Chart fills, in the same order of meaning as the badges. */
 export const TONE_FILL: Record<Tone, string> = {
+  red: '#e30613',
   amber: '#d97706',
-  violet: '#7c3aed',
   sky: '#0284c7',
   indigo: '#4f46e5',
-  emerald: '#059669',
+  lime: '#65a30d',
   teal: '#0d9488',
-  ink: '#6b7280',
+  green: '#16a34a',
+  violet: '#7c3aed',
 }
 
 /**
@@ -144,7 +179,7 @@ export function runsTrc(me: Me | null | undefined, trcId: string): boolean {
 }
 
 export type Action =
-  | 'accept' | 'assign' | 'start' | 'return' | 'complete'
+  | 'accept' | 'assign' | 'start' | 'return' | 'complete' | 'observe'
   | 'dispatch' | 'transfer' | 'received'
 
 /**
@@ -160,6 +195,8 @@ export function actionsFor(t: TicketLike, me: Me | null | undefined): Action[] {
   if (desk && (t.status === 'pending_acceptance' || t.status === 'transferred')) out.push('accept')
   if (mine && t.status === 'assigned') out.push('start')
   if (mine && t.status === 'in_repair') out.push('complete')
+  // As often as there is something to write down; the status stays In repair.
+  if (mine && t.status === 'in_repair') out.push('observe')
   if (desk && (t.status === 'accepted' || t.status === 'assigned')) out.push('assign')
   if (desk && t.status === 'repaired') out.push('dispatch')
   // Only the field engineer it was sent back to: the Revive Lab dispatched
@@ -173,5 +210,5 @@ export function actionsFor(t: TicketLike, me: Me | null | undefined): Action[] {
 
 /** Whether a ticket is waiting on this person specifically, for "My queue". */
 export function waitingOnMe(t: TicketLike, me: Me | null | undefined): boolean {
-  return actionsFor(t, me).some(a => a !== 'transfer' && a !== 'return')
+  return actionsFor(t, me).some(a => a !== 'transfer' && a !== 'return' && a !== 'observe')
 }

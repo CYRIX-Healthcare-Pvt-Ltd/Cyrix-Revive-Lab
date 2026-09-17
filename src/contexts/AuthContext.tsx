@@ -1,5 +1,5 @@
 import {
-  createContext, useContext, useEffect, useState, useCallback, type ReactNode,
+  createContext, useContext, useEffect, useRef, useState, useCallback, type ReactNode,
 } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { Session } from '@supabase/supabase-js'
@@ -48,6 +48,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null)
   const [hasAccess, setHasAccess] = useState(false)
   const [loading, setLoading] = useState(true)
+  /** Whose screen this is, to tell a new person from the same one coming back. */
+  const signedInAs = useRef<string | null>(null)
 
   const load = useCallback(async (uid: string | undefined) => {
     if (!uid) {
@@ -74,6 +76,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let alive = true
     supabase.auth.getSession().then(async ({ data }) => {
       if (!alive) return
+      signedInAs.current = data.session?.user.id ?? null
       setSession(data.session)
       await load(data.session?.user.id)
       if (alive) setLoading(false)
@@ -83,13 +86,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // true, and a cached ticket list must not outlive the person it was
       // fetched for.
       if (!s) {
+        signedInAs.current = null
         qc.clear(); setSession(null); setEmployee(null); setMe(null); setHasAccess(false)
+        return
+      }
+      /*
+        The same person, back. Supabase says SIGNED_IN again whenever the tab
+        comes back into view — after minimising, or after a phone's camera
+        app took a photo for the route card. Treating that as a fresh sign-in
+        put the loading screen up and threw away a half-filled form. Their
+        details are refreshed quietly instead; the lists refresh themselves.
+      */
+      if ((event === 'SIGNED_IN' || event === 'USER_UPDATED') && s.user.id === signedInAs.current) {
+        setSession(s)
+        setTimeout(() => { void load(s.user.id) }, 0)
         return
       }
       // Signed in (here, or in another tab): load who they are before the
       // app renders for them. A token refresh is the same person and needs
       // nothing reloaded.
       if (event === 'SIGNED_IN' || event === 'USER_UPDATED') {
+        signedInAs.current = s.user.id
         setLoading(true)
         // Deferred out of the callback: supabase-js holds a lock while it
         // runs, and querying from inside it can wait on itself.

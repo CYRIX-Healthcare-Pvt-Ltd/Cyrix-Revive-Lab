@@ -70,6 +70,11 @@ export interface TrailEvent {
   actor_ecode: string | null
   note: string | null
   at: string
+  /** On an assignment: who it was given to (rl_0009). */
+  engineer_name: string | null
+  engineer_ecode: string | null
+  /** A move, or something the engineer found while repairing it (rl_0010). */
+  kind: 'status' | 'observation'
 }
 
 export interface Hop {
@@ -298,6 +303,10 @@ export const useAccept = () => useTicketMutation(
 export const useAssign = () => useTicketMutation(
   (a: { id: string; engineerId: string; note?: string }) =>
     rpc('revive_assign', { p_ticket_id: a.id, p_engineer_id: a.engineerId, p_note: a.note || null }))
+
+/** What the engineer found while it is in repair. The status stays In repair. */
+export const useAddObservation = () => useTicketMutation(
+  (a: { id: string; note: string }) => rpc('revive_add_observation', { p_ticket_id: a.id, p_note: a.note }))
 
 export const useStartRepair = () => useTicketMutation(
   (a: { id: string; note?: string }) => rpc('revive_start_repair', { p_ticket_id: a.id, p_note: a.note || null }))

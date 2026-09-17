@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ImageOff, Trash2 } from 'lucide-react'
+import { ImageOff, Trash2, TriangleAlert } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import type { Ticket } from '@/lib/queries'
 import {
   listAttachments, removeAttachment, removeVideoOf, uploadAttachment, type Attachment, type Slot,
 } from '@/lib/attachments'
 import { Alert, Spinner } from '@/components/ui'
-import { MediaCapture, type PendingPhoto } from '@/components/Attachments'
+import { MediaCapture, revealLength, type PendingPhoto } from '@/components/Attachments'
+import IconChip from '@/components/IconChip'
+import Lightbox from '@/components/Lightbox'
 
 /**
  * Issue identified — what was written, photographed, filmed and said.
@@ -54,6 +56,7 @@ export default function TicketAttachments({ ticket: t }: { ticket: Ticket }) {
   const [newVideo, setNewVideo] = useState<Blob | null>(null)
   const [newVoice, setNewVoice] = useState<Blob | null>(null)
   const [busy, setBusy] = useState(false)
+  const [viewing, setViewing] = useState<number | null>(null)
   const [message, setMessage] = useState<{ kind: 'error' | 'success'; text: string } | null>(null)
 
   const refresh = () => qc.invalidateQueries({ queryKey: ['revive', 'attachments', t.id] })
@@ -101,7 +104,8 @@ export default function TicketAttachments({ ticket: t }: { ticket: Ticket }) {
 
   return (
     <div className="card overflow-hidden">
-      <div className="border-b border-ink-200 bg-ink-50 px-4 py-2.5">
+      <div className="flex items-center gap-2.5 border-b border-ink-200 bg-ink-50 px-4 py-2">
+        <IconChip icon={TriangleAlert} tone="amber" />
         <h3 className="text-sm font-semibold text-ink-800">Issue identified</h3>
       </div>
       <div className="space-y-4 p-4">
@@ -121,12 +125,13 @@ export default function TicketAttachments({ ticket: t }: { ticket: Ticket }) {
           <>
             {images.length > 0 && (
               <div className="flex flex-wrap gap-3">
-                {images.map(a => (
+                {images.map((a, i) => (
                   <div key={a.path} className="relative">
-                    <a href={a.url} target="_blank" rel="noreferrer" title="Open full size">
+                    {/* Opens over the page, not in a new tab. */}
+                    <button type="button" onClick={() => setViewing(i)} className="block rounded-lg" aria-label={`View photo ${a.slot.slice(-1)}`}>
                       <img src={a.url} alt={`Photo ${a.slot.slice(-1)}`}
                         className="h-36 w-36 rounded-lg border border-ink-200 object-cover" />
-                    </a>
+                    </button>
                     {canAdd && (
                       <button type="button" onClick={() => void remove(a)} disabled={busy}
                         className="absolute right-1.5 top-1.5 rounded-full bg-black/60 p-1.5 text-white"
@@ -139,9 +144,16 @@ export default function TicketAttachments({ ticket: t }: { ticket: Ticket }) {
               </div>
             )}
 
+            <Lightbox
+              images={images.map(a => ({ src: a.url, alt: `Photo ${a.slot.slice(-1)}` }))}
+              index={viewing}
+              onIndex={setViewing}
+              onClose={() => setViewing(null)}
+            />
+
             {videoFile && !closed && (
               <div className="space-y-2">
-                <video controls playsInline preload="metadata" src={videoFile.url}
+                <video controls playsInline preload="metadata" src={videoFile.url} onLoadedMetadata={revealLength}
                   className="aspect-video w-full max-w-md rounded-lg bg-black" />
                 <RemoveButton a={videoFile} label="Remove video" />
               </div>
@@ -149,7 +161,7 @@ export default function TicketAttachments({ ticket: t }: { ticket: Ticket }) {
 
             {voiceFile && (
               <div className="flex flex-wrap items-center gap-2">
-                <audio controls src={voiceFile.url} className="h-10 max-w-full" />
+                <audio controls src={voiceFile.url} onLoadedMetadata={revealLength} className="h-10 max-w-full" />
                 <RemoveButton a={voiceFile} label="Remove" />
               </div>
             )}

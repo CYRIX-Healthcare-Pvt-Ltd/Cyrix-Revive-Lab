@@ -2,18 +2,22 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import clsx from 'clsx'
 import {
-  ArrowLeft, ArrowRightLeft, CheckCircle2, ClipboardCheck, Hand, PackageCheck,
-  PlayCircle, Send, Undo2, UserPlus, Wrench,
+  ArrowLeft, ArrowRightLeft, CheckCircle2, ClipboardCheck, ClipboardList, Hand, History as HistoryIcon,
+  PackageCheck, PackagePlus, PlayCircle, ScanSearch, Send, Timer, Truck, Undo2, UserCog, UserPlus, Wrench,
+  type LucideIcon,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import {
-  useAccept, useAssign, useCompleteRepair, useDispatch, useHops, useMarkReceived,
+  useAccept, useAddObservation, useAssign, useCompleteRepair, useDispatch, useHops, useMarkReceived,
   useMembers, useReturnToDesk, useStartRepair, useTickets, useTrail, useTransfer, useTrcs,
-  type Ticket,
+  type Ticket, type TrailEvent,
 } from '@/lib/queries'
-import { actionsFor, parseTicketCode, STATUS, TRC_KIND_LABEL, type Action } from '@/lib/tickets'
+import {
+  actionsFor, parseTicketCode, STATUS, TONE_SOFT, TONE_TEXT, TRC_KIND_LABEL, type Action, type Tone,
+} from '@/lib/tickets'
 import { formatSpan, ticketTat, type Span } from '@/lib/tat'
 import { Alert, EmptyState, PageLoader, Spinner, StatusBadge } from '@/components/ui'
+import IconChip from '@/components/IconChip'
 import AttachmentsCard from '@/components/TicketAttachments'
 import { removeVideoOf } from '@/lib/attachments'
 
@@ -61,7 +65,7 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
   const { data: hops } = useHops(t.id)
 
   const actions = actionsFor(t, me)
-  const tat = useMemo(() => ticketTat(trail ?? [], t.trc_id), [trail, t.trc_id])
+  const tat = useMemo(() => ticketTat((trail ?? []).filter(e => e.kind !== 'observation'), t.trc_id), [trail, t.trc_id])
   const meta = STATUS[t.status]
   const trcName = (id: string | null) => trail?.find(e => e.trc_id === id)?.trc_name
     ?? hops?.find(h => h.to_trc_id === id)?.to_trc_name ?? (id === t.trc_id ? t.trc_name : '—')
@@ -88,7 +92,8 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
               {t.status !== 'closed' && <> · waiting on {meta.waitingOn}</>}
             </p>
           </div>
-          <div className="text-right">
+          {/* Right-aligned beside the title; on a phone it drops below it, and lines up on the left. */}
+          <div className="sm:text-right">
             <p className="label !mb-0">{t.status === 'closed' ? 'Total TAT' : 'Open for'}</p>
             <p className="text-2xl font-semibold tabular-nums text-ink-900">{formatSpan(tat.total.ms)}</p>
           </div>
@@ -103,7 +108,7 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
-          <TatCard tat={tat} trcName={trcName} closed={t.status === 'closed'} />
+          <TatCard tat={tat} trcName={trcName} />
 
           {uploadFailed && uploadFailed.length > 0 && (
             <Alert kind="warning" title="The ticket was raised, but not everything was sent">
@@ -112,7 +117,7 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
           )}
 
           {/* The route card, in the card's own order. */}
-          <Section title="Service route card">
+          <Section title="Service route card" icon={ClipboardList} tone="sky">
             <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
               <Row label="State">{t.state}</Row>
               <Row label="District">{t.district}</Row>
@@ -146,10 +151,11 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
           <AttachmentsCard ticket={t} />
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <Section title="Courier details">
+            <Section title="Courier details" icon={Truck} tone="teal">
               <Courier name={t.in_courier} awb={t.in_awb} on={t.in_dispatched_on} empty="Not recorded" />
             </Section>
-            <Section title="Return courier">
+            {/* The same truck, facing home. */}
+            <Section title="Return courier" icon={Truck} tone="green" iconClassName="-scale-x-100">
               <div className="space-y-3">
                 <Row label="Spare return address">
                   {t.return_address && <span className="whitespace-pre-wrap">{t.return_address}</span>}
@@ -160,7 +166,7 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
           </div>
 
           {(hops ?? []).length > 0 && (
-            <Section title="Transfers">
+            <Section title="Transfers" icon={ArrowRightLeft} tone="violet">
               <ol className="space-y-3">
                 {hops!.map(h => (
                   <li key={h.hop} className="rounded-lg border border-ink-200 p-3">
@@ -181,25 +187,8 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
           )}
         </div>
 
-        <Section title="History">
-          {!trail ? <Spinner className="h-4 w-4 text-ink-400" /> : (
-            <ol className="relative space-y-4 border-l border-ink-200 pl-4">
-              {trail.map(e => (
-                <li key={e.id} className="relative">
-                  <span className="absolute -left-[21px] top-1.5 h-2.5 w-2.5 rounded-full border-2 border-surface bg-ink-400" />
-                  <p className="text-sm font-medium text-ink-900">
-                    {e.status === 'accepted' && e.from_status && e.from_status !== 'pending_acceptance' && e.from_status !== 'transferred'
-                      ? 'Handed back to the coordinator'
-                      : e.from_status === null ? 'Raised' : STATUS[e.status]?.label ?? e.status}
-                  </p>
-                  <p className="text-xs text-ink-500">
-                    {when(e.at)} · {e.actor_name ?? 'System'}{e.trc_name ? ` · ${e.trc_name}` : ''}
-                  </p>
-                  {e.note && <p className="mt-1 whitespace-pre-wrap text-sm text-ink-600">{e.note}</p>}
-                </li>
-              ))}
-            </ol>
-          )}
+        <Section title="History" icon={HistoryIcon} tone="indigo">
+          {!trail ? <Spinner className="h-4 w-4 text-ink-400" /> : <Timeline trail={trail} />}
         </Section>
       </div>
     </div>
@@ -208,10 +197,19 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
 
 /* ------------------------------------------------------------------ */
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function Section({
+  title, icon, tone, iconClassName, children,
+}: {
+  title: string
+  icon: LucideIcon
+  tone: Tone
+  iconClassName?: string
+  children: ReactNode
+}) {
   return (
     <div className="card overflow-hidden">
-      <div className="border-b border-ink-200 bg-ink-50 px-4 py-2.5">
+      <div className="flex items-center gap-2.5 border-b border-ink-200 bg-ink-50 px-4 py-2">
+        <IconChip icon={icon} tone={tone} iconClassName={iconClassName} />
         <h3 className="text-sm font-semibold text-ink-800">{title}</h3>
       </div>
       <div className="p-4">{children}</div>
@@ -242,6 +240,77 @@ function Courier({ name, awb, on, empty }: { name: string | null; awb: string | 
 
 /* ------------------------------------------------------------------ */
 
+/**
+ * What a step in the history is called, and how it looks.
+ *
+ * Each step takes the colour of the status it moved the ticket to — the
+ * same colour as the badge at the top — and the icon of the button that
+ * made it, so the history reads as the buttons that were pressed.
+ */
+function stepLook(e: TrailEvent, earlier: TrailEvent[]): { title: ReactNode; tone: Tone; icon: LucideIcon } {
+  const tone = STATUS[e.status]?.tone ?? 'sky'
+  if (e.kind === 'observation') {
+    // Numbered, so "Observation 2" can be talked about on the phone.
+    const n = earlier.filter(x => x.kind === 'observation').length + 1
+    return { title: `Observation ${n}`, tone, icon: ScanSearch }
+  }
+  if (e.from_status === null) return { title: 'Raised', tone, icon: PackagePlus }
+
+  switch (e.status) {
+    case 'accepted':
+      return e.from_status !== 'pending_acceptance' && e.from_status !== 'transferred'
+        ? { title: 'Handed back to the coordinator', tone, icon: Undo2 }
+        : { title: STATUS.accepted.label, tone, icon: Hand }
+    case 'assigned': {
+      // Any earlier assignment makes this one a reassignment — straight from
+      // one engineer to another, or again after being handed back.
+      const again = earlier.some(x => x.status === 'assigned')
+      const title = e.engineer_name
+        ? <>{again ? 'Reassigned' : 'Assigned'} to {e.engineer_name}
+          {e.engineer_ecode && <span className="font-normal text-ink-400"> {e.engineer_ecode}</span>}</>
+        : again ? 'Reassigned to another engineer' : STATUS.assigned.label
+      return { title, tone, icon: again ? UserCog : UserPlus }
+    }
+    case 'in_repair': return { title: STATUS.in_repair.label, tone, icon: Wrench }
+    case 'repaired': return { title: STATUS.repaired.label, tone, icon: ClipboardCheck }
+    case 'in_transit_return': return { title: STATUS.in_transit_return.label, tone, icon: Send }
+    case 'closed': return { title: STATUS.closed.label, tone, icon: PackageCheck }
+    case 'transferred': return { title: STATUS.transferred.label, tone, icon: ArrowRightLeft }
+    default: return { title: STATUS[e.status]?.label ?? e.status, tone, icon: PackagePlus }
+  }
+}
+
+function Timeline({ trail }: { trail: TrailEvent[] }) {
+  return (
+    <ol>
+      {trail.map((e, i) => {
+        const look = stepLook(e, trail.slice(0, i))
+        const last = i === trail.length - 1
+        return (
+          <li key={e.id} className={clsx('relative flex gap-3', !last && 'pb-5')}>
+            {/* The thread from this step down to the next. */}
+            {!last && <span aria-hidden className="absolute bottom-0 left-4 top-8 w-px -translate-x-1/2 bg-ink-200" />}
+            <span className={clsx('relative grid h-8 w-8 shrink-0 place-items-center rounded-full', TONE_SOFT[look.tone])}>
+              <look.icon className="h-4 w-4" />
+            </span>
+            <div className="min-w-0 flex-1 pt-1">
+              <p className="text-sm font-medium text-ink-900">{look.title}</p>
+              <p className="mt-0.5 text-xs text-ink-500">
+                {when(e.at)} · {e.actor_name ?? 'System'}{e.trc_name ? ` · ${e.trc_name}` : ''}
+              </p>
+              {e.note && (
+                <p className="mt-1.5 whitespace-pre-wrap rounded-lg bg-ink-50 px-2.5 py-1.5 text-sm text-ink-700">{e.note}</p>
+              )}
+            </div>
+          </li>
+        )
+      })}
+    </ol>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+
 function SpanCell({ span, label }: { span: Span; label: string }) {
   return (
     <div className="rounded-lg border border-ink-200 p-3">
@@ -257,24 +326,23 @@ function SpanCell({ span, label }: { span: Span; label: string }) {
 /**
  * The stages, and — when the spare changed Revive Labs — each Revive Lab's share.
  *
- * Measured from the history below it, so the two cannot disagree: every
- * figure here is the gap between two of those timestamps.
+ * Measured from the history beside it, so the two cannot disagree: every
+ * figure here is the gap between two of those timestamps. The whole of it
+ * is the "Open for" at the top of the page, so it is not said again here.
  */
 function TatCard({
-  tat, trcName, closed,
+  tat, trcName,
 }: {
   tat: ReturnType<typeof ticketTat>
   trcName: (id: string | null) => string
-  closed: boolean
 }) {
   return (
-    <Section title="Turnaround">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+    <Section title="Turnaround" icon={Timer} tone="indigo">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <SpanCell label="Reach Revive Lab" span={tat.reach} />
         <SpanCell label="To assignment" span={tat.assign} />
         <SpanCell label="Repair" span={tat.repair} />
         <SpanCell label="Dispatch & transit" span={tat.dispatch} />
-        <SpanCell label={closed ? 'End to end' : 'So far'} span={tat.total} />
       </div>
 
       {tat.legs.length > 1 && (
@@ -324,15 +392,23 @@ function TatCard({
 
 /* ------------------------------------------------------------------ */
 
-const ACTION_META: Record<Action, { label: string; icon: typeof Hand; primary?: boolean }> = {
-  accept: { label: 'Accept', icon: Hand, primary: true },
-  assign: { label: 'Assign engineer', icon: UserPlus, primary: true },
-  start: { label: 'Accept repair', icon: PlayCircle, primary: true },
-  complete: { label: 'Close repair', icon: ClipboardCheck, primary: true },
-  dispatch: { label: 'Dispatch back', icon: Send, primary: true },
-  received: { label: 'Received back', icon: PackageCheck, primary: true },
-  return: { label: 'Hand back to coordinator', icon: Undo2 },
-  transfer: { label: 'Transfer to another Revive Lab', icon: ArrowRightLeft },
+/** Each move in the colour of the status it leads to — the colour its step takes in the history. */
+const ACTION_META: Record<Action, { label: string; icon: LucideIcon; tone: Tone; primary?: boolean }> = {
+  accept: { label: 'Accept', icon: Hand, tone: 'amber', primary: true },
+  assign: { label: 'Assign engineer', icon: UserPlus, tone: 'sky', primary: true },
+  start: { label: 'Accept repair', icon: PlayCircle, tone: 'indigo', primary: true },
+  complete: { label: 'Close repair', icon: ClipboardCheck, tone: 'lime', primary: true },
+  observe: { label: 'Add observation', icon: ScanSearch, tone: 'indigo' },
+  dispatch: { label: 'Dispatch back', icon: Send, tone: 'teal', primary: true },
+  received: { label: 'Received back', icon: PackageCheck, tone: 'green', primary: true },
+  return: { label: 'Hand back to coordinator', icon: Undo2, tone: 'amber' },
+  transfer: { label: 'Transfer to another Revive Lab', icon: ArrowRightLeft, tone: 'violet' },
+}
+
+/** Once an engineer has it, the same button gives it to somebody else. */
+function actionMeta(action: Action, t: Ticket) {
+  const m = ACTION_META[action]
+  return action === 'assign' && t.engineer_id ? { ...m, label: 'Reassign engineer', icon: UserCog } : m
 }
 
 /**
@@ -352,7 +428,7 @@ function ActionBar({ ticket: t, actions }: { ticket: Ticket; actions: Action[] }
       {done && <Alert kind="success">{done}</Alert>}
       <div className="flex flex-wrap gap-2">
         {actions.map(a => {
-          const m = ACTION_META[a]
+          const m = actionMeta(a, t)
           return (
             <button
               key={a}
@@ -361,7 +437,7 @@ function ActionBar({ ticket: t, actions }: { ticket: Ticket; actions: Action[] }
               className={clsx(m.primary ? 'btn-primary' : 'btn-secondary', open === a && 'ring-2 ring-offset-1 ring-ink-400')}
               aria-expanded={open === a}
             >
-              <m.icon className="h-4 w-4" /> {m.label}
+              <m.icon className={clsx('h-4 w-4', TONE_TEXT[m.tone])} /> {m.label}
             </button>
           )
         })}
@@ -394,26 +470,32 @@ function ActionForm({
   const accept = useAccept()
   const assign = useAssign()
   const start = useStartRepair()
+  const observe = useAddObservation()
   const giveBack = useReturnToDesk()
   const complete = useCompleteRepair()
   const dispatch = useDispatch()
   const received = useMarkReceived()
   const transfer = useTransfer()
 
+  const meta = actionMeta(action, t)
+  // Reassigning: somebody has it, and the choice is who has it instead.
+  const reassign = action === 'assign' && !!t.engineer_id
+
   const [note, setNote] = useState('')
-  const [engineerId, setEngineerId] = useState(t.engineer_id ?? '')
+  const [engineerId, setEngineerId] = useState(reassign ? '' : t.engineer_id ?? '')
   const [toTrc, setToTrc] = useState('')
   const [courier, setCourier] = useState('')
   const [awb, setAwb] = useState('')
   const [on, setOn] = useState(new Date().toISOString().slice(0, 10))
 
-  const engineers = (members ?? []).filter(m => m.is_engineer && m.trc_ids.includes(t.trc_id))
+  const engineers = (members ?? [])
+    .filter(m => m.is_engineer && m.trc_ids.includes(t.trc_id) && m.employee_id !== t.engineer_id)
   // Regional first: an unrepairable spare usually goes up a level.
   const destinations = (trcs ?? [])
     .filter(x => x.is_active && x.id !== t.trc_id)
     .sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'regional' ? -1 : 1))
 
-  const busy = [accept, assign, start, giveBack, complete, dispatch, received, transfer].some(m => m.isPending)
+  const busy = [accept, assign, start, observe, giveBack, complete, dispatch, received, transfer].some(m => m.isPending)
 
   const run = async () => {
     try {
@@ -424,10 +506,13 @@ function ActionForm({
           if (!engineerId) { onError('Choose the engineer.'); return }
           await assign.mutateAsync({ id: t.id, engineerId, note })
           const who = engineers.find(e => e.employee_id === engineerId)?.full_name
-          onDone(`Assigned to ${who ?? 'the engineer'}. They accept it before starting.`); break
+          onDone(`${reassign ? 'Reassigned' : 'Assigned'} to ${who ?? 'the engineer'}. They accept it before starting.`); break
         }
         case 'start':
           await start.mutateAsync({ id: t.id, note }); onDone('Repair accepted — repair time is counting from now.'); break
+        case 'observe':
+          if (note.trim().length < 3) { onError('Write what was found.'); return }
+          await observe.mutateAsync({ id: t.id, note }); onDone('Observation added to the history. Add another whenever there is more.'); break
         case 'return':
           await giveBack.mutateAsync({ id: t.id, note }); onDone('Handed back to the coordinator.'); break
         case 'complete':
@@ -451,21 +536,27 @@ function ActionForm({
 
   // The back of the route card: the Revive Lab's Action taken, and the
   // field engineer's Final status.
-  const needsNote = action === 'return' || action === 'transfer' || action === 'complete' || action === 'received'
+  const needsNote = action === 'return' || action === 'transfer' || action === 'complete' || action === 'received' || action === 'observe'
   const needsCourier = action === 'dispatch' || action === 'transfer'
 
   return (
     <div className="card space-y-3 p-4">
+      <p className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
+        <IconChip icon={meta.icon} tone={meta.tone} /> {meta.label}
+      </p>
+
       {action === 'assign' && (
         <label className="block">
-          <span className="label">Engineer at {t.trc_name}</span>
+          <span className="label">
+            {reassign ? <>Reassign from {t.engineer_name ?? 'the current engineer'} to</> : <>Engineer at {t.trc_name}</>}
+          </span>
           <select className="input mt-1" value={engineerId} onChange={e => setEngineerId(e.target.value)}>
             <option value="">Choose…</option>
             {engineers.map(e => <option key={e.employee_id} value={e.employee_id}>{e.full_name} · {e.ecode}</option>)}
           </select>
-          {engineers.length === 0 && (
+          {members && engineers.length === 0 && (
             <p className="mt-1 text-xs text-cyrixRed-700">
-              Nobody at this Revive Lab has the engineer box ticked. An admin adds them under People &amp; Revive Labs.
+              {reassign ? 'Nobody else' : 'Nobody'} at this Revive Lab has the engineer box ticked. An admin adds them under People &amp; Revive Labs.
             </p>
           )}
         </label>
@@ -513,6 +604,7 @@ function ActionForm({
           {action === 'transfer' ? 'Why it is being transferred'
             : action === 'return' ? 'Why it is going back'
               : action === 'complete' ? 'Action taken'
+                : action === 'observe' ? 'What was found'
                 : action === 'received' ? 'Final status'
                   : 'Note (optional)'}
           {needsNote && <span className="text-cyrixRed-600"> *</span>}
@@ -524,10 +616,12 @@ function ActionForm({
           onChange={e => setNote(e.target.value)}
           placeholder={
             action === 'complete' ? 'What was done — parts replaced, tests run'
+              : action === 'observe' ? 'e.g. Burnt track near the fuse; C12 bulged, replacing it'
               : action === 'received' ? 'e.g. Received, installed and working'
               : action === 'transfer' ? 'e.g. Needs FPGA rework this Revive Lab cannot do'
                 : action === 'return' ? 'e.g. Cannot be repaired at this Revive Lab'
-                  : ''
+                  : reassign ? 'e.g. On leave this week'
+                    : ''
           }
         />
       </label>
@@ -535,7 +629,7 @@ function ActionForm({
       <div className="flex gap-2">
         <button type="button" className="btn-primary" onClick={run} disabled={busy}>
           {busy ? <Spinner className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
-          {ACTION_META[action].label}
+          {meta.label}
         </button>
         <button type="button" className="btn-secondary" onClick={onCancel}>Cancel</button>
       </div>

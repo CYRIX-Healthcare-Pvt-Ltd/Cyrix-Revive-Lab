@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  fitWithin, extensionFor, pickRecorderMime, pickVideoRecorderMime, clock, humanSize,
+  fitWithin, extensionFor, pickRecorderMime, pickVideoRecorderMime, isWebKit, clock, humanSize,
   PHOTO_QUALITIES, MAX_VIDEO_SECONDS, VIDEO_BITS_PER_SECOND, MAX_UPLOAD_BYTES,
 } from './media'
 
@@ -51,9 +51,24 @@ describe('recording formats — whatever this browser can make', () => {
     expect(pickRecorderMime(() => true)).toBe('audio/webm;codecs=opus')
     expect(pickRecorderMime(m => m === 'audio/mp4')).toBe('audio/mp4')
   })
-  it('prefers VP9 WebM for video, MP4 on an iPhone', () => {
+  it('prefers VP9 WebM for video, MP4 where only MP4 records', () => {
     expect(pickVideoRecorderMime(() => true)).toBe('video/webm;codecs=vp9,opus')
     expect(pickVideoRecorderMime(m => m === 'video/mp4')).toBe('video/mp4')
+  })
+  it('records MP4 on WebKit even where WebM is offered, because Chrome cannot play WebKit’s WebM', () => {
+    expect(pickVideoRecorderMime(() => true, true)).toBe('video/mp4;codecs=avc1,mp4a.40.2')
+    expect(pickVideoRecorderMime(m => m === 'video/mp4' || m.startsWith('video/webm'), true)).toBe('video/mp4')
+    expect(pickVideoRecorderMime(m => m.startsWith('video/webm'), true)).toBe('video/webm;codecs=vp9,opus')
+  })
+  it('knows WebKit: Safari and every iPhone browser, not Chrome or Edge elsewhere', () => {
+    const ua = (s: string, extra = {}) => isWebKit({ userAgent: s, ...extra })
+    expect(ua('Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1')).toBe(true)
+    expect(ua('Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/138.0 Mobile/15E148 Safari/604.1')).toBe(true)
+    expect(ua('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Safari/605.1.15')).toBe(true)
+    expect(ua('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Safari/605.1.15', { platform: 'MacIntel', maxTouchPoints: 5 })).toBe(true)
+    expect(ua('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0 Safari/537.36')).toBe(false)
+    expect(ua('Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0 Mobile Safari/537.36')).toBe(false)
+    expect(ua('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0 Safari/537.36 Edg/138.0')).toBe(false)
   })
   it('says so when nothing can be recorded, and survives a browser that throws', () => {
     expect(pickVideoRecorderMime(() => false)).toBeNull()

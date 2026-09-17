@@ -3,7 +3,7 @@ import clsx from 'clsx'
 import { LayoutDashboard, ListChecks, PackagePlus, ShieldCheck, Grid2x2, LogOut } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTickets } from '@/lib/queries'
-import { waitingOnMe } from '@/lib/tickets'
+import { TONE_TEXT, waitingOnMe, type Tone } from '@/lib/tickets'
 import { Logo } from '@/components/Logo'
 import ThemeToggle from '@/components/ThemeToggle'
 import Avatar from '@/components/Avatar'
@@ -29,13 +29,13 @@ export default function Shell() {
   */
   const items: Array<{
     to: string; label: string; short: string
-    icon: typeof LayoutDashboard; end?: boolean; badge?: number
+    icon: typeof LayoutDashboard; tone: Tone; end?: boolean; badge?: number
   }> = [
-    { to: '/', label: 'Dashboard', short: 'Home', icon: LayoutDashboard, end: true },
-    { to: '/tickets', label: 'Tickets', short: 'Tickets', icon: ListChecks, badge: mine },
-    { to: '/new', label: 'Raise ticket', short: 'Raise', icon: PackagePlus },
+    { to: '/', label: 'Dashboard', short: 'Home', icon: LayoutDashboard, tone: 'indigo', end: true },
+    { to: '/tickets', label: 'Tickets', short: 'Tickets', icon: ListChecks, tone: 'amber', badge: mine },
+    { to: '/new', label: 'Raise ticket', short: 'Raise', icon: PackagePlus, tone: 'red' },
     ...(me?.is_admin
-      ? [{ to: '/access', label: 'People & Revive Labs', short: 'People', icon: ShieldCheck }]
+      ? [{ to: '/access', label: 'People & Revive Labs', short: 'People', icon: ShieldCheck, tone: 'violet' as Tone }]
       : []),
   ]
 
@@ -65,7 +65,9 @@ export default function Shell() {
             <nav className="nav-scroll flex items-center gap-1 overflow-x-auto">
               {items.map(item => (
                 <NavLink key={item.to} to={item.to} end={item.end} className="nav-link">
-                  <item.icon className="h-4 w-4" />
+                  {/* Each tab its own colour. Modules stays grey: it is the
+                      way out to the other apps, and looks the same in all of them. */}
+                  <item.icon className={clsx('h-4 w-4', TONE_TEXT[item.tone])} />
                   {item.label}
                   <Badge count={item.badge} />
                 </NavLink>
@@ -123,7 +125,7 @@ export default function Shell() {
               )}
             >
               <span className="relative">
-                <item.icon className="h-5 w-5" />
+                <item.icon className={clsx('h-5 w-5', TONE_TEXT[item.tone])} />
                 {!!item.badge && item.badge > 0 && (
                   <span className="absolute -right-2 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-cyrixRed-600 px-1 text-[10px] font-bold text-white">
                     {item.badge > 99 ? '99+' : item.badge}

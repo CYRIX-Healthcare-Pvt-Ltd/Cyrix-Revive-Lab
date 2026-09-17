@@ -82,9 +82,28 @@ export function pickRecorderMime(isSupported: (mime: string) => boolean): string
   return firstSupported(['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4', 'audio/aac'], isSupported)
 }
 
-/** The video format this browser can record: WebM where it can, MP4 on an iPhone. */
-export function pickVideoRecorderMime(isSupported: (mime: string) => boolean): string | null {
-  return firstSupported(['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'], isSupported)
+/**
+ * The video format this browser can record.
+ *
+ * WebM where it can — except on WebKit, which is Safari and every browser
+ * on an iPhone. WebKit records WebM too, but its VP9 would not decode in
+ * Chrome at all: a video sent from an iPhone was a black box with an error
+ * for a Revive Lab on Chrome. Its MP4 plays everywhere, so WebKit records
+ * that. Chrome and Firefox keep WebM, which they play back cleanly.
+ */
+export function pickVideoRecorderMime(isSupported: (mime: string) => boolean, webkit = false): string | null {
+  const webm = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
+  const mp4 = ['video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4']
+  return firstSupported(webkit ? [...mp4, ...webm] : [...webm, ...mp4], isSupported)
+}
+
+/** Safari, or any browser on an iPhone or iPad — all of them WebKit underneath. */
+export function isWebKit(nav: { userAgent: string; platform?: string; maxTouchPoints?: number }): boolean {
+  const ua = nav.userAgent
+  // iPadOS asks for desktop pages and says it is a Mac; a Mac has no touch screen.
+  const apple = /iPad|iPhone|iPod/.test(ua) || (nav.platform === 'MacIntel' && (nav.maxTouchPoints ?? 0) > 1)
+  const safari = /AppleWebKit/.test(ua) && /Safari/.test(ua) && !/Chrome|Chromium|Edg|OPR|Android/.test(ua)
+  return apple || safari
 }
 
 /** "0:07", "1:00". */

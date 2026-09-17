@@ -64,7 +64,7 @@ describe('actionsFor — who may do what, now', () => {
     const t = ticket({ status: 'assigned', engineer_id: 'eng' })
     expect(actionsFor(t, engineer)).toEqual(['start', 'return'])
     expect(actionsFor(t, me({ employee_id: 'other', is_engineer: true, trc_ids: [REG] }))).toEqual([])
-    expect(actionsFor(ticket({ status: 'in_repair', engineer_id: 'eng' }), engineer)).toEqual(['complete', 'return'])
+    expect(actionsFor(ticket({ status: 'in_repair', engineer_id: 'eng' }), engineer)).toEqual(['complete', 'observe', 'return'])
   })
 
   it('sends a repaired spare to the desk for dispatch', () => {

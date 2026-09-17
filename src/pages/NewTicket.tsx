@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
-import { ArrowLeft, PackagePlus } from 'lucide-react'
+import { ArrowLeft, ClipboardList, MapPin, PackagePlus, Truck } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useBemmpProjects, useRaiseTicket, useTickets, useTrcs, type Person } from '@/lib/queries'
 import { runsTrc, TRC_KIND_LABEL, type TrcKind } from '@/lib/tickets'
@@ -9,6 +9,7 @@ import { STATES, districtsOf } from '@/lib/india'
 import { uploadAttachment, type Slot } from '@/lib/attachments'
 import { Alert, PageLoader, Spinner } from '@/components/ui'
 import PersonPicker from '@/components/PersonPicker'
+import IconChip from '@/components/IconChip'
 import { MediaCapture, type PendingPhoto } from '@/components/Attachments'
 
 /**
@@ -160,7 +161,9 @@ export default function NewTicket() {
 
       <form onSubmit={submit} className="space-y-4">
         <div className="card space-y-3 p-4">
-          <h2 className="text-sm font-semibold text-ink-800">{atLab ? 'Where it arrived' : 'Where it is going'}</h2>
+          <h2 className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
+            <IconChip icon={MapPin} tone="red" /> {atLab ? 'Where it arrived' : 'Where it is going'}
+          </h2>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block">
               <span className="label">Revive Lab type</span>
@@ -189,7 +192,9 @@ export default function NewTicket() {
         {/* The card, top to bottom. */}
         <div className="card space-y-3 p-4">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <h2 className="text-sm font-semibold text-ink-800">Service route card</h2>
+            <h2 className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
+              <IconChip icon={ClipboardList} tone="sky" /> Service route card
+            </h2>
             <span className="text-[11px] text-ink-400">Form CHPL/CRL/SRC</span>
           </div>
 
@@ -257,7 +262,9 @@ export default function NewTicket() {
         </div>
 
         <div className="card space-y-3 p-4">
-          <h2 className="text-sm font-semibold text-ink-800">Courier details</h2>
+          <h2 className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
+            <IconChip icon={Truck} tone="teal" /> Courier details
+          </h2>
           <div className="grid gap-3 sm:grid-cols-3">
             <Field label="Courier" value={form.inCourier} onChange={set('inCourier')} placeholder="DTDC, Blue Dart…" />
             <Field label="Tracking / AWB number" value={form.inAwb} onChange={set('inAwb')} mono />

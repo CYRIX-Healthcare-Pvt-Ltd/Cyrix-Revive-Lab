@@ -1,12 +1,17 @@
-import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useRef, useState, type ReactNode, type SyntheticEvent } from 'react'
 import clsx from 'clsx'
 import { Camera, CheckCircle2, Mic, Square, Trash2, Video, X } from 'lucide-react'
 import {
   MAX_PHOTOS, MAX_UPLOAD_BYTES, MAX_VIDEO_SECONDS, MAX_VOICE_SECONDS,
   VIDEO_BITS_PER_SECOND, VIDEO_FPS, VIDEO_HEIGHT, VIDEO_WIDTH, VOICE_BITS_PER_SECOND,
-  clock, compressPhoto, humanSize, pickRecorderMime, pickVideoRecorderMime,
+  clock, compressPhoto, humanSize, isWebKit, pickRecorderMime, pickVideoRecorderMime,
 } from '@/lib/media'
+import { withDuration } from '@/lib/webm'
 import { Spinner } from '@/components/ui'
+import Lightbox from '@/components/Lightbox'
+
+/** Safari or an iPhone: records MP4, which a Revive Lab on Chrome can play (media.ts). */
+const WEBKIT = typeof navigator !== 'undefined' && isWebKit(navigator)
 
 export interface PendingPhoto {
   blob: Blob
@@ -38,6 +43,7 @@ export function MediaCapture({ photos, video, voice }: {
   voice?: Held<Blob | null>
 }) {
   const input = useRef<HTMLInputElement>(null)
+  const [viewing, setViewing] = useState<number | null>(null)
   const [preparing, setPreparing] = useState(false)
   const [photoError, setPhotoError] = useState<string | null>(null)
   const taken = photos?.value ?? []
@@ -50,7 +56,7 @@ export function MediaCapture({ photos, video, voice }: {
 
   const videoRec = useRecorder({
     maxSeconds: MAX_VIDEO_SECONDS,
-    pickMime: pickVideoRecorderMime,
+    pickMime: isSupported => pickVideoRecorderMime(isSupported, WEBKIT),
     constraints: {
       audio: true,
       video: {
@@ -120,7 +126,7 @@ export function MediaCapture({ photos, video, voice }: {
         <Tile tone="done" icon={<CheckCircle2 className="h-5 w-5" />} title={noun} hint={`${taken.length} of ${max}`} />
       ) : (
         <Tile
-          icon={preparing ? <Spinner className="h-5 w-5" /> : <Camera className="h-5 w-5" />}
+          icon={preparing ? <Spinner className="h-5 w-5" /> : <Camera className="h-5 w-5 text-sky-600" />}
           title={preparing ? 'Preparing…' : noun}
           hint={`${taken.length} of ${max}`}
           label={`Add a photo, ${taken.length} of ${max} added`}
@@ -134,7 +140,9 @@ export function MediaCapture({ photos, video, voice }: {
             <div className="grid grid-cols-3 gap-2 sm:grid-cols-2">
               {taken.map((p, i) => (
                 <div key={p.preview} className="relative aspect-square overflow-hidden rounded-lg border border-ink-200">
-                  <img src={p.preview} alt={`Photo ${i + 1}`} className="h-full w-full object-cover" />
+                  <button type="button" onClick={() => setViewing(i)} className="block h-full w-full" aria-label={`View photo ${i + 1}`}>
+                    <img src={p.preview} alt={`Photo ${i + 1}`} className="h-full w-full object-cover" />
+                  </button>
                   <button
                     type="button"
                     onClick={() => dropPhoto(i)}
@@ -161,7 +169,7 @@ export function MediaCapture({ photos, video, voice }: {
     cells.push({
       key: 'video',
       tile: recorderTile(videoRec, video.value, MAX_VIDEO_SECONDS, {
-        icon: <Video className="h-5 w-5" />,
+        icon: <Video className="h-5 w-5 text-violet-500" />,
         title: 'Video',
         hint: `up to ${MAX_VIDEO_SECONDS} s`,
         label: `Record a video, up to ${MAX_VIDEO_SECONDS} seconds`,
@@ -187,7 +195,7 @@ export function MediaCapture({ photos, video, voice }: {
             </div>
           ) : video.value && videoUrl ? (
             <>
-              <video controls playsInline src={videoUrl} className="aspect-video w-full rounded-lg bg-black" />
+              <video controls playsInline src={videoUrl} onLoadedMetadata={revealLength} className="aspect-video w-full rounded-lg bg-black" />
               <RemoveRecording size={video.value.size} onClick={() => video.onChange(null)} disabled={busy} />
             </>
           ) : null}
@@ -201,7 +209,7 @@ export function MediaCapture({ photos, video, voice }: {
     cells.push({
       key: 'voice',
       tile: recorderTile(voiceRec, voice.value, MAX_VOICE_SECONDS, {
-        icon: <Mic className="h-5 w-5" />,
+        icon: <Mic className="h-5 w-5 text-teal-600" />,
         title: 'Voice note',
         hint: `up to ${MAX_VOICE_SECONDS / 60} min`,
         label: `Record a voice note, up to ${MAX_VOICE_SECONDS / 60} minute`,
@@ -211,7 +219,7 @@ export function MediaCapture({ photos, video, voice }: {
         <div className="space-y-1.5">
           {voice.value && voiceUrl && (
             <>
-              <audio controls src={voiceUrl} className="h-10 w-full" />
+              <audio controls src={voiceUrl} onLoadedMetadata={revealLength} className="h-10 w-full" />
               <RemoveRecording size={voice.value.size} onClick={() => voice.onChange(null)} disabled={busy} />
             </>
           )}
@@ -236,6 +244,13 @@ export function MediaCapture({ photos, video, voice }: {
           </Fragment>
         ))}
       </div>
+
+      <Lightbox
+        images={taken.map((p, i) => ({ src: p.preview, alt: `Photo ${i + 1}` }))}
+        index={viewing}
+        onIndex={setViewing}
+        onClose={() => setViewing(null)}
+      />
 
       {photos && (
         <input
@@ -441,20 +456,26 @@ function useRecorder({
     live.current = got
 
     let rec: MediaRecorder
+    let began = 0
     try {
       rec = new MediaRecorder(got, { mimeType: mime, ...bitrates })
       chunks.current = []
       rec.ondataavailable = e => { if (e.data.size > 0) chunks.current.push(e.data) }
-      rec.onstop = () => {
-        const blob = new Blob(chunks.current, { type: mime.split(';')[0] })
+      rec.onstop = async () => {
+        const raw = new Blob(chunks.current, { type: mime.split(';')[0] })
+        if (raw.size === 0) { setRecording(false); return }
+        // Chrome leaves the length out of the file. Without it a player
+        // shows no length, cannot be dragged along, and a phone can stop
+        // part-way — so it is written in before anyone plays it (webm.ts).
+        const blob = await withDuration(raw, Date.now() - began)
         setRecording(false)
-        if (blob.size === 0) return
         if (blob.size > MAX_UPLOAD_BYTES) {
           setError(`That came out at ${humanSize(blob.size)}, over the ${humanSize(MAX_UPLOAD_BYTES)} limit. Record a shorter one.`)
           return
         }
         onDone(blob)
       }
+      began = Date.now()
       rec.start(1000)
     } catch {
       release()
@@ -465,7 +486,6 @@ function useRecorder({
     setStream(got)
     setSeconds(0)
     setRecording(true)
-    const began = Date.now()
     timer.current = window.setInterval(() => {
       const s = (Date.now() - began) / 1000
       setSeconds(s)
@@ -474,6 +494,23 @@ function useRecorder({
   }
 
   return { starting, recording, active: starting || recording, seconds, error, stream, start, stop: release }
+}
+
+/**
+ * For a recording that does not carry its length — one sent before the
+ * recorder wrote it in. Asking for a moment far past the end makes the
+ * browser read to the real end and learn the length; then back to the start.
+ */
+export function revealLength(e: SyntheticEvent<HTMLMediaElement>) {
+  const media = e.currentTarget
+  if (media.duration !== Infinity) return
+  const back = () => {
+    if (!Number.isFinite(media.duration)) return
+    media.removeEventListener('durationchange', back)
+    media.currentTime = 0
+  }
+  media.addEventListener('durationchange', back)
+  media.currentTime = 1e101
 }
 
 /** A URL for a blob that is revoked when the blob changes or the component goes. */

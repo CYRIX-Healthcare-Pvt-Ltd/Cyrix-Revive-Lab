@@ -136,6 +136,36 @@ export default {
           800: 'rgb(var(--violet-800) / <alpha-value>)',
           900: 'rgb(var(--violet-900) / <alpha-value>)',
         },
+        /* The status colours: sky for assigned, indigo for in repair, teal for
+           on its way back. Themed like the rest, or those three badges stay
+           pale chips on a dark page. */
+        sky: {
+          50:  'rgb(var(--sky-50) / <alpha-value>)',
+          100: 'rgb(var(--sky-100) / <alpha-value>)',
+          200: 'rgb(var(--sky-200) / <alpha-value>)',
+          300: '#7dd3fc', 400: '#38bdf8', 500: '#0ea5e9', 600: '#0284c7',
+          700: 'rgb(var(--sky-700) / <alpha-value>)',
+          800: 'rgb(var(--sky-800) / <alpha-value>)',
+          900: 'rgb(var(--sky-900) / <alpha-value>)',
+        },
+        indigo: {
+          50:  'rgb(var(--indigo-50) / <alpha-value>)',
+          100: 'rgb(var(--indigo-100) / <alpha-value>)',
+          200: 'rgb(var(--indigo-200) / <alpha-value>)',
+          300: '#a5b4fc', 400: '#818cf8', 500: '#6366f1', 600: '#4f46e5',
+          700: 'rgb(var(--indigo-700) / <alpha-value>)',
+          800: 'rgb(var(--indigo-800) / <alpha-value>)',
+          900: 'rgb(var(--indigo-900) / <alpha-value>)',
+        },
+        teal: {
+          50:  'rgb(var(--teal-50) / <alpha-value>)',
+          100: 'rgb(var(--teal-100) / <alpha-value>)',
+          200: 'rgb(var(--teal-200) / <alpha-value>)',
+          300: '#5eead4', 400: '#2dd4bf', 500: '#14b8a6', 600: '#0d9488',
+          700: 'rgb(var(--teal-700) / <alpha-value>)',
+          800: 'rgb(var(--teal-800) / <alpha-value>)',
+          900: 'rgb(var(--teal-900) / <alpha-value>)',
+        },
         cyrixRed: {
           50:  'rgb(var(--red-50) / <alpha-value>)',
           100: 'rgb(var(--red-100) / <alpha-value>)',
