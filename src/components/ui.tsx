@@ -9,7 +9,7 @@
 import { useEffect, useRef, type ReactNode } from 'react'
 import clsx from 'clsx'
 import { AlertCircle, ArrowDown, ArrowUp, CheckCircle2, Info, Loader2 } from 'lucide-react'
-import { STATUS, TONE_CLASS, type TicketStatus } from '@/lib/tickets'
+import { STATUS, TONE_CLASS, statusLook, type Closure, type Proposal, type TicketStatus } from '@/lib/tickets'
 
 export function Spinner({ className }: { className?: string }) {
   return <Loader2 className={clsx('animate-spin', className ?? 'h-5 w-5')} />
@@ -171,12 +171,18 @@ export function SortHeader<K extends string>({
 }
 
 /** A ticket's status, in the colour of where it is in the journey. */
-export function StatusBadge({ status, full = false }: { status: TicketStatus; full?: boolean }) {
-  const meta = STATUS[status]
-  if (!meta) return <span className="badge bg-ink-100 text-ink-700">{status}</span>
+/** A closed ticket that did not come back says so: Scrapped, Discarded. */
+export function StatusBadge({ status, closure, proposal, full = false }: {
+  status: TicketStatus
+  closure?: Closure | null
+  proposal?: Proposal | null
+  full?: boolean
+}) {
+  if (!STATUS[status]) return <span className="badge bg-ink-100 text-ink-700">{status}</span>
+  const look = statusLook(status, closure, proposal)
   return (
-    <span className={clsx('badge whitespace-nowrap', TONE_CLASS[meta.tone])}>
-      {full ? meta.label : meta.short}
+    <span className={clsx('badge whitespace-nowrap', TONE_CLASS[look.tone])}>
+      {full ? look.label : look.short}
     </span>
   )
 }

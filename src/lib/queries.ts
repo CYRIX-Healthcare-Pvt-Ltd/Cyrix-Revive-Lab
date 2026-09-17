@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase, friendlyError } from './supabase'
-import type { Outcome, PartRoute, PartStatus, PartSummary, TicketItem, TicketStatus, TrcKind } from './tickets'
+import type {
+  Approval, Closure, Outcome, PartRoute, PartStatus, PartSummary, Proposal, TicketItem, TicketStatus, TrcKind,
+} from './tickets'
 import { uploadPartFile } from './partFiles'
 
 // ---------------------------------------------------------------------
@@ -11,6 +13,8 @@ export interface Trc {
   id: string
   name: string
   kind: TrcKind
+  /** The state it serves; null is Regional, every state's (rl_0014). */
+  state: string | null
   is_active: boolean
   sort_order: number
 }
@@ -66,14 +70,20 @@ export interface Ticket {
   closed_at: string | null
   /** How the engineer closed the repair (rl_0013). */
   outcome: Outcome | null
-  /** returned: dispatched back. scrapped: moved to scrap, which closed it. */
-  closure: 'returned' | 'scrapped' | null
+  /** returned: dispatched back. scrapped: moved to scrap. discarded: never sent anywhere (rl_0014). */
+  closure: Closure | null
   scrapped_at: string | null
   scrapped_by_name: string | null
   /** When the Revive Lab engineer expects the repair done. */
   expected_by: string | null
   /** Its component requests, just enough to know whose move each one is. */
   parts: PartSummary[]
+  /** Not repairable: what the engineer proposed (rl_0014). */
+  proposal: Proposal | null
+  /** The state its Revive Lab serves; null for a Regional one. */
+  trc_state: string | null
+  /** The latest request to go to another Revive Lab, whatever became of it. */
+  approval: Approval | null
 }
 
 export interface TrailEvent {
@@ -184,7 +194,7 @@ export function useTrcs() {
     staleTime: 5 * 60_000,
     queryFn: async () => unwrap<Trc[]>(
       await supabase.from('revive_trcs')
-        .select('id, name, kind, is_active, sort_order')
+        .select('id, name, kind, state, is_active, sort_order')
         .order('sort_order').order('name'),
     ),
   })
@@ -241,6 +251,8 @@ export interface BemmpProject {
   sort_order: number
   /** The route card asks Billing spare under this one — Pvt (rl_0012). */
   asks_billing: boolean
+  /** The state whose programme it is; null runs in every state (rl_0014). */
+  state: string | null
 }
 
 /** The BEMMP programmes a ticket can belong to. Admins keep the list. */
@@ -253,7 +265,7 @@ export function useBemmpProjects() {
     staleTime: 5 * 60_000,
     queryFn: async () => unwrap<BemmpProject[]>(
       await supabase.from('revive_bemmp_projects')
-        .select('id, code, is_active, sort_order, asks_billing')
+        .select('id, code, is_active, sort_order, asks_billing, state')
         .order('sort_order').order('code'),
     ),
   })
@@ -417,6 +429,8 @@ export interface RaiseInput {
   inAwb: string
   inDispatchedOn: string
   stakeholderId: string | null
+  /** Why another state's Revive Lab: asked for, and approved before it is sent (rl_0014). */
+  approvalReason: string | null
 }
 
 export function useRaiseTicket() {
@@ -440,7 +454,8 @@ export function useRaiseTicket() {
     p_stakeholder_id: a.stakeholderId,
     p_items: a.items,
     p_billing_spare: a.billingSpare,
-  }) as Promise<{ id: string; code: string; number: number }>)
+    p_approval_reason: a.approvalReason,
+  }) as Promise<{ id: string; code: string; number: number; status: TicketStatus }>)
 }
 
 export const useAccept = () => useTicketMutation(
@@ -473,10 +488,12 @@ export const useSetExpectedDate = () => useTicketMutation(
 export const useReturnToDesk = () => useTicketMutation(
   (a: { id: string; note: string }) => rpc('revive_return_to_desk', { p_ticket_id: a.id, p_note: a.note }))
 
-/** Closing the repair: repaired, not repairable, or the customer denied service. */
+/** Closing the repair: repaired, not repairable — with what should become of it — or the customer denied service. */
 export const useCompleteRepair = () => useTicketMutation(
-  (a: { id: string; note?: string; outcome: Outcome }) =>
-    rpc('revive_complete_repair', { p_ticket_id: a.id, p_note: a.note || null, p_outcome: a.outcome }))
+  (a: { id: string; note?: string; outcome: Outcome; proposal?: Proposal | null }) =>
+    rpc('revive_complete_repair', {
+      p_ticket_id: a.id, p_note: a.note || null, p_outcome: a.outcome, p_proposal: a.proposal ?? null,
+    }))
 
 /** Not repairable, and not going back: scrap, which closes the ticket. */
 export const useScrap = () => useTicketMutation(
@@ -555,12 +572,41 @@ export const useDispatch = () => useTicketMutation(
 export const useMarkReceived = () => useTicketMutation(
   (a: { id: string; note?: string }) => rpc('revive_mark_received', { p_ticket_id: a.id, p_note: a.note || null }))
 
-export const useTransfer = () => useTicketMutation(
-  (a: { id: string; toTrcId: string; reason: string; courier: string; awb: string; on: string }) =>
-    rpc('revive_transfer', {
-      p_ticket_id: a.id, p_to_trc_id: a.toTrcId, p_reason: a.reason,
-      p_courier: a.courier, p_awb: a.awb, p_dispatched_on: a.on || null,
+/** A transfer is asked for; the Regional Revive Lab admins approve it before it is sent (rl_0014). */
+export const useRequestTransfer = () => useTicketMutation(
+  (a: { id: string; toTrcId: string; reason: string }) =>
+    rpc('revive_request_transfer', { p_ticket_id: a.id, p_to_trc_id: a.toTrcId, p_reason: a.reason }))
+
+/** Approved — for what was asked, or for another Revive Lab. */
+export const useApprove = () => useTicketMutation(
+  (a: { id: string; toTrcId?: string | null; note?: string }) =>
+    rpc('revive_approve', { p_ticket_id: a.id, p_to_trc_id: a.toTrcId || null, p_note: a.note || null }))
+
+export const useDeclineApproval = () => useTicketMutation(
+  (a: { id: string; note: string }) => rpc('revive_decline_approval', { p_ticket_id: a.id, p_note: a.note }))
+
+/** Approved, and sent: a raise to its Revive Lab, a transfer on its way. */
+export const useSend = () => useTicketMutation(
+  (a: { id: string; courier: string; awb: string; on: string; note?: string }) =>
+    rpc('revive_send', {
+      p_ticket_id: a.id, p_courier: a.courier || null, p_awb: a.awb || null,
+      p_dispatched_on: a.on || null, p_note: a.note || null,
     }))
+
+export const useCancelTransfer = () => useTicketMutation(
+  (a: { id: string; note?: string }) => rpc('revive_cancel_transfer', { p_ticket_id: a.id, p_note: a.note || null }))
+
+/** Not approved: to the field engineer's own state's or a Regional Revive Lab instead. */
+export const useReroute = () => useTicketMutation(
+  (a: { id: string; trcId: string; courier: string; awb: string; on: string }) =>
+    rpc('revive_reroute', {
+      p_ticket_id: a.id, p_trc_id: a.trcId, p_courier: a.courier || null,
+      p_awb: a.awb || null, p_dispatched_on: a.on || null,
+    }))
+
+/** Given up before it was sent to any Revive Lab. */
+export const useDiscard = () => useTicketMutation(
+  (a: { id: string; note?: string }) => rpc('revive_discard', { p_ticket_id: a.id, p_note: a.note || null }))
 
 export function useSaveMember() {
   const qc = useQueryClient()
@@ -582,8 +628,10 @@ export function useSaveMember() {
 export function useSaveTrc() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (a: { id: string | null; name: string; kind: TrcKind; active: boolean }) =>
-      rpc('revive_save_trc', { p_id: a.id, p_name: a.name, p_kind: a.kind, p_active: a.active }),
+    mutationFn: (a: { id: string | null; name: string; kind: TrcKind; active: boolean; state: string | null }) =>
+      rpc('revive_save_trc', {
+        p_id: a.id, p_name: a.name, p_kind: a.kind, p_active: a.active, p_state: a.state ?? 'Regional',
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['revive'] }),
   })
 }

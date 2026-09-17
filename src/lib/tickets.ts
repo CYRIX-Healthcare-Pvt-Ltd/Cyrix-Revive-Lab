@@ -10,6 +10,9 @@
  */
 
 export type TicketStatus =
+  | 'awaiting_approval'
+  | 'approved'
+  | 'not_approved'
   | 'pending_acceptance'
   | 'transferred'
   | 'accepted'
@@ -39,10 +42,12 @@ export const TRC_KIND_LABEL: Record<TrcKind, string> = {
  * repaired are a repair waiting on something bought: orange asked for,
  * yellow being bought, cyan ready for the engineer. Rose is a spare that
  * cannot be repaired, slate one the customer would not have repaired.
+ * Going to another Revive Lab waits on approval: fuchsia while it waits,
+ * emerald approved, pink not approved.
  */
 export type Tone =
   | 'red' | 'amber' | 'sky' | 'indigo' | 'lime' | 'teal' | 'green' | 'violet'
-  | 'orange' | 'yellow' | 'cyan' | 'rose' | 'slate'
+  | 'orange' | 'yellow' | 'cyan' | 'rose' | 'slate' | 'fuchsia' | 'emerald' | 'pink'
 
 interface StatusMeta {
   /** The full sentence, for the ticket page and the email. */
@@ -57,6 +62,18 @@ interface StatusMeta {
 }
 
 export const STATUS: Record<TicketStatus, StatusMeta> = {
+  awaiting_approval: {
+    label: 'Waiting for approval', short: 'Waiting for approval', tone: 'fuchsia', order: 0.2,
+    waitingOn: 'the Regional Revive Lab admins to approve it',
+  },
+  not_approved: {
+    label: 'Not approved — to send elsewhere or discard', short: 'Not approved', tone: 'pink', order: 0.4,
+    waitingOn: 'the field engineer to send it elsewhere or discard it',
+  },
+  approved: {
+    label: 'Approved — ready to send', short: 'Approved', tone: 'emerald', order: 0.6,
+    waitingOn: 'it to be sent',
+  },
   pending_acceptance: {
     label: 'Pending Revive Lab acceptance', short: 'Pending acceptance', tone: 'red', order: 1,
     waitingOn: 'the Revive Lab coordinator to accept it',
@@ -122,8 +139,25 @@ export const PARTS_STATUSES: readonly TicketStatus[] = ['parts_requested', 'part
 /** The engineer has it: repairing, or waiting on a component for the repair. */
 export const REPAIRING: readonly TicketStatus[] = ['in_repair', ...PARTS_STATUSES]
 
-/** The repair is closed and the spare waits at the desk to go back. */
-export const DISPATCHABLE: readonly TicketStatus[] = ['repaired', 'not_repairable', 'service_denied']
+/** How a ticket ended: sent back, moved to scrap, or discarded before it went anywhere (rl_0014). */
+export type Closure = 'returned' | 'scrapped' | 'discarded'
+
+/**
+ * What a badge says. A closed ticket says how it closed when that was not
+ * the spare coming back — scrapped, or discarded — so a list shows it
+ * without opening the ticket. A spare that cannot be repaired says what the
+ * engineer proposed.
+ */
+export function statusLook(
+  status: TicketStatus, closure?: Closure | null, proposal?: Proposal | null,
+): { label: string; short: string; tone: Tone } {
+  if (status === 'closed' && closure === 'scrapped') return { label: 'Scrapped — closed', short: 'Scrapped', tone: 'slate' }
+  if (status === 'closed' && closure === 'discarded') return { label: 'Discarded — never sent', short: 'Discarded', tone: 'slate' }
+  if (status === 'not_repairable' && proposal) {
+    return { ...STATUS.not_repairable, label: proposal === 'scrap' ? 'Not repairable — to scrap' : 'Not repairable — to send back' }
+  }
+  return STATUS[status] ?? { label: status, short: status, tone: 'slate' }
+}
 
 /** Badge colours per tone, light and dark both — the tokens flip underneath. */
 export const TONE_CLASS: Record<Tone, string> = {
@@ -140,6 +174,9 @@ export const TONE_CLASS: Record<Tone, string> = {
   cyan: 'bg-cyan-100 text-cyan-900',
   rose: 'bg-rose-100 text-rose-900',
   slate: 'bg-slate-100 text-slate-900',
+  fuchsia: 'bg-fuchsia-100 text-fuchsia-900',
+  emerald: 'bg-emerald-100 text-emerald-900',
+  pink: 'bg-pink-100 text-pink-900',
 }
 
 /** An icon on a soft patch of its colour: section headings and the history. */
@@ -157,6 +194,9 @@ export const TONE_SOFT: Record<Tone, string> = {
   cyan: 'bg-cyan-100 text-cyan-700',
   rose: 'bg-rose-100 text-rose-700',
   slate: 'bg-slate-100 text-slate-700',
+  fuchsia: 'bg-fuchsia-100 text-fuchsia-700',
+  emerald: 'bg-emerald-100 text-emerald-700',
+  pink: 'bg-pink-100 text-pink-700',
 }
 
 /**
@@ -177,6 +217,9 @@ export const TONE_TEXT: Record<Tone, string> = {
   cyan: 'text-cyan-600',
   rose: 'text-rose-600',
   slate: 'text-slate-500',
+  fuchsia: 'text-fuchsia-600',
+  emerald: 'text-emerald-600',
+  pink: 'text-pink-600',
 }
 
 /** Chart fills, in the same order of meaning as the badges. */
@@ -194,6 +237,9 @@ export const TONE_FILL: Record<Tone, string> = {
   cyan: '#0891b2',
   rose: '#e11d48',
   slate: '#64748b',
+  fuchsia: '#c026d3',
+  emerald: '#059669',
+  pink: '#db2777',
 }
 
 /**
@@ -225,6 +271,76 @@ export interface Me {
   trc_ids: string[]
   /** Buys what engineers request as a purchase, for the Revive Labs ticked (rl_0013). */
   is_purchase?: boolean
+  /** Approves where a spare goes: an admin of a Regional Revive Lab (rl_0014). */
+  approves?: boolean
+}
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * Which state a Revive Lab or a BEMMP is for. No state is Regional: every
+ * state's. A field engineer's route card offers the state's own and the
+ * Regional ones; any other Revive Lab is asked for, and approved first.
+ */
+export const serves = (x: { state: string | null }, state: string | null | undefined): boolean =>
+  !x.state || x.state === state
+
+export const stateLabel = (state: string | null | undefined): string => state || 'Regional'
+
+/**
+ * Who approves where a spare goes, by name: the admins of a Regional Revive
+ * Lab — or every admin, while no Regional Revive Lab has one. The same rule
+ * as revive_approves(), so the name shown is the person who can.
+ */
+export function approversOf(
+  members: ReadonlyArray<{ full_name: string; is_admin: boolean; trc_ids: string[] }>,
+  labs: ReadonlyArray<{ id: string; state: string | null }>,
+): string[] {
+  const regional = new Set(labs.filter(l => !l.state).map(l => l.id))
+  const admins = members.filter(m => m.is_admin)
+  const there = admins.filter(m => m.trc_ids.some(id => regional.has(id)))
+  return (there.length ? there : admins).map(m => m.full_name)
+}
+
+/** "Henry", "Henry or Saranya", "Henry, Anu or Saranya". */
+export function orList(names: readonly string[]): string {
+  if (names.length <= 1) return names[0] ?? ''
+  return `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}`
+}
+
+export type ApprovalKind = 'raise' | 'transfer'
+export type ApprovalStatus = 'pending' | 'approved' | 'declined' | 'cancelled' | 'sent'
+
+/** A request to go to another Revive Lab, and what became of it (rl_0014). */
+export interface Approval {
+  id: string
+  /** raise: another state's Revive Lab, asked for on the route card. transfer: the desk moving a ticket on. */
+  kind: ApprovalKind
+  status: ApprovalStatus
+  from_trc_id: string | null
+  from_trc_name: string | null
+  asked_trc_id: string
+  asked_trc_name: string
+  /** What was approved — which may not be what was asked for. */
+  to_trc_id: string
+  to_trc_name: string
+  to_trc_state: string | null
+  reason: string
+  /** Where a transfer carries on from if it is not approved. */
+  back_to: TicketStatus | null
+  requested_by_name: string
+  requested_at: string
+  decided_by_name: string | null
+  decided_at: string | null
+  decision_note: string | null
+}
+
+/** Not repairable: what the engineer proposes becomes of it. */
+export type Proposal = 'scrap' | 'return'
+
+export const PROPOSAL_LABEL: Record<Proposal, string> = {
+  scrap: 'Move to scrap',
+  return: 'Send back to the field engineer',
 }
 
 /* ------------------------------------------------------------------ */
@@ -263,6 +379,9 @@ export interface TicketLike {
   stakeholder_id: string
   raised_by: string
   parts?: readonly PartSummary[] | null
+  closure?: Closure | null
+  proposal?: Proposal | null
+  approval?: Pick<Approval, 'kind' | 'status'> | null
 }
 
 /** A coordinator or manager of that lab: the desk. */
@@ -284,6 +403,7 @@ export type Action =
   | 'accept' | 'assign' | 'start' | 'return' | 'complete' | 'observe'
   | 'dispatch' | 'transfer' | 'received' | 'courier'
   | 'use_part' | 'request_part' | 'expect' | 'scrap'
+  | 'approve' | 'decline_approval' | 'send' | 'cancel_transfer' | 'reroute' | 'discard'
 
 /**
  * What this person may do to this ticket now, in the order the buttons
@@ -296,27 +416,44 @@ export function actionsFor(t: TicketLike, me: Me | null | undefined): Action[] {
   if (!me) return []
   const desk = runsTrc(me, t.trc_id)
   const mine = t.engineer_id === me.employee_id
+  const sender = t.raised_by === me.employee_id || t.stakeholder_id === me.employee_id
+  const open = t.approval && (t.approval.status === 'pending' || t.approval.status === 'approved') ? t.approval : null
   const out: Action[] = []
+
+  // Going to another Revive Lab (rl_0014): the Regional Revive Lab admins
+  // decide; approved, whoever asked sends it — the field engineer for their
+  // own ticket, the desk for a transfer.
+  if (me.approves && t.status === 'awaiting_approval') out.push('approve', 'decline_approval')
+  if (t.status === 'approved' && open && (open.kind === 'raise' ? sender : desk)) out.push('send')
+  // Not approved: their own state's or a Regional Revive Lab instead.
+  if (sender && t.status === 'not_approved') out.push('reroute')
 
   if (desk && (t.status === 'pending_acceptance' || t.status === 'transferred')) out.push('accept')
   // Whoever sent it in, until it arrives: a card is often raised before the
   // courier has given a tracking number (rl_0011).
-  if ((t.raised_by === me.employee_id || t.stakeholder_id === me.employee_id) && t.status === 'pending_acceptance') {
-    out.push('courier')
-  }
+  if (sender && t.status === 'pending_acceptance') out.push('courier')
   if (mine && t.status === 'assigned') out.push('start')
   if (mine && t.status === 'in_repair') out.push('complete')
   // While it is being repaired — and while a component for it is on its way.
   if (mine && REPAIRING.includes(t.status)) out.push('use_part', 'request_part', 'observe', 'expect')
   if (desk && (t.status === 'accepted' || t.status === 'assigned')) out.push('assign')
-  if (desk && DISPATCHABLE.includes(t.status)) out.push('dispatch')
-  // Scrap is only for a spare that cannot be repaired.
-  if (desk && t.status === 'not_repairable') out.push('scrap')
+  if (desk && (t.status === 'repaired' || t.status === 'service_denied')) out.push('dispatch')
+  // Not repairable: the one move the engineer proposed. A repair closed by
+  // an app from before the proposal leaves the desk both (rl_0014).
+  if (desk && t.status === 'not_repairable') {
+    if (t.proposal !== 'scrap') out.push('dispatch')
+    if (t.proposal !== 'return') out.push('scrap')
+  }
   // Only the field engineer it was sent back to: the Revive Lab dispatched
   // it and cannot know it has landed (rl_0005).
   if (t.stakeholder_id === me.employee_id && t.status === 'in_transit_return') out.push('received')
   if (mine && (t.status === 'assigned' || t.status === 'in_repair')) out.push('return')
   if (desk && (t.status === 'accepted' || t.status === 'assigned' || t.status === 'in_repair')) out.push('transfer')
+  if (desk && open?.kind === 'transfer' && (t.status === 'awaiting_approval' || t.status === 'approved')) out.push('cancel_transfer')
+  // A ticket raised for another state's Revive Lab that never went anywhere.
+  if (sender && (t.status === 'not_approved' || (open?.kind === 'raise' && (t.status === 'awaiting_approval' || t.status === 'approved')))) {
+    out.push('discard')
+  }
 
   return out
 }
@@ -330,7 +467,10 @@ export function partsWaitingOn(t: TicketLike, me: Me | null | undefined): number
     || (p.status === 'purchased' && mine)).length
 }
 
-const SIDE_STEPS: readonly Action[] = ['transfer', 'return', 'observe', 'courier', 'use_part', 'request_part', 'expect']
+const SIDE_STEPS: readonly Action[] = [
+  'transfer', 'return', 'observe', 'courier', 'use_part', 'request_part', 'expect',
+  'decline_approval', 'cancel_transfer', 'discard',
+]
 
 /** Whether a ticket is waiting on this person specifically, for "My queue". */
 export function waitingOnMe(t: TicketLike, me: Me | null | undefined): boolean {

@@ -12,6 +12,10 @@
  * two ticks, not a role somebody had to invent. The database checks every
  * save (revive_save_member): only an admin or the software administrator
  * may change anything, and nobody can untick their own Admin box.
+ *
+ * A Revive Lab and a BEMMP each belong to a state, or are Regional — every
+ * state's. The route card offers a state's own and the Regional ones, and
+ * the admins of a Regional Revive Lab approve anything else (rl_0014).
  */
 import { useMemo, useState } from 'react'
 import clsx from 'clsx'
@@ -23,7 +27,47 @@ import { Alert, EmptyState, Spinner, StatTile } from '@/components/ui'
 type TrcKind = 'regional' | 'project'
 const KIND_LABEL: Record<TrcKind, string> = { regional: 'Regional Revive Lab', project: 'Project Revive Lab' }
 
-interface Trc { id: string; name: string; kind: TrcKind; is_active: boolean; sort_order: number }
+/** No state: Regional, serving every state. */
+interface Trc { id: string; name: string; kind: TrcKind; state: string | null; is_active: boolean; sort_order: number }
+
+/**
+ * India's states and union territories — the route card's list, spelled the
+ * same, because a Revive Lab is matched to a ticket's state by its name.
+ * Here rather than imported so this file stays the same in both apps.
+ */
+const STATES = [
+  'Andaman and Nicobar Islands', 'Andhra Pradesh', 'Arunachal Pradesh', 'Assam',
+  'Bihar', 'Chandigarh', 'Chhattisgarh', 'Dadra and Nagar Haveli and Daman and Diu',
+  'Delhi', 'Goa', 'Gujarat', 'Haryana',
+  'Himachal Pradesh', 'Jammu and Kashmir', 'Jharkhand', 'Karnataka',
+  'Kerala', 'Ladakh', 'Lakshadweep', 'Madhya Pradesh',
+  'Maharashtra', 'Manipur', 'Meghalaya', 'Mizoram',
+  'Nagaland', 'Odisha', 'Puducherry', 'Punjab',
+  'Rajasthan', 'Sikkim', 'Tamil Nadu', 'Telangana',
+  'Tripura', 'Uttar Pradesh', 'Uttarakhand', 'West Bengal',
+] as const
+
+/** The choice as a select holds it: '' is Regional, '__' not chosen yet. */
+const REGIONAL = ''
+const UNCHOSEN = '__'
+const stateValue = (state: string | null | undefined) => (state === undefined ? UNCHOSEN : state ?? REGIONAL)
+const stateFrom = (value: string): string | null | undefined => (value === UNCHOSEN ? undefined : value || null)
+
+function StateSelect({ value, onChange, className }: {
+  value: string | null | undefined
+  onChange: (state: string | null | undefined) => void
+  className?: string
+}) {
+  return (
+    <select className={clsx('input', className)} value={stateValue(value)} onChange={e => onChange(stateFrom(e.target.value))}>
+      {value === undefined && <option value={UNCHOSEN}>State or Regional…</option>}
+      <option value={REGIONAL}>Regional — every state</option>
+      <optgroup label="One state">
+        {STATES.map(x => <option key={x} value={x}>{x}</option>)}
+      </optgroup>
+    </select>
+  )
+}
 interface Member {
   employee_id: string; ecode: string; full_name: string; designation: string | null
   is_engineer: boolean; is_coordinator: boolean; is_manager: boolean; is_admin: boolean
@@ -78,7 +122,7 @@ export function ReviveLabAccess() {
     queryKey: ['revive', 'trcs'],
     queryFn: async () => {
       const { data, error } = await supabase.from('revive_trcs')
-        .select('id, name, kind, is_active, sort_order').order('sort_order').order('name')
+        .select('id, name, kind, state, is_active, sort_order').order('sort_order').order('name')
       if (error) throw new Error(friendlyError(error))
       return data as Trc[]
     },
@@ -303,36 +347,54 @@ export function ReviveLabAccess() {
  * become three programmes in every report. Revive Lab admins and the
  * software administrator add to it; a programme that ends is retired rather
  * than deleted, so the tickets that named it still say so.
+ *
+ * Each is a state's programme, or Regional — Pvt runs in every state. The
+ * route card offers only the chosen state's and the Regional ones.
  */
+interface Bemmp { id: string; code: string; state: string | null; is_active: boolean; sort_order: number }
+
 function BemmpTable({ canEdit }: { canEdit: boolean }) {
   const qc = useQueryClient()
   const { data: rows, isLoading } = useQuery({
     queryKey: ['revive', 'bemmp'],
     queryFn: async () => {
       const { data, error } = await supabase.from('revive_bemmp_projects')
-        .select('id, code, is_active, sort_order').order('sort_order').order('code')
+        .select('id, code, state, is_active, sort_order').order('sort_order').order('code')
       if (error) throw new Error(friendlyError(error))
-      return data as Array<{ id: string; code: string; is_active: boolean; sort_order: number }>
+      return data as Bemmp[]
     },
   })
   const save = useMutation({
-    mutationFn: (b: { id: string | null; code: string; active: boolean }) =>
-      call('revive_save_bemmp', { p_id: b.id, p_code: b.code, p_active: b.active }),
+    // No state leaves it as it is: retiring a BEMMP does not change whose it is.
+    mutationFn: (b: { id: string | null; code: string; active: boolean; state?: string | null }) =>
+      call('revive_save_bemmp', {
+        p_id: b.id, p_code: b.code, p_active: b.active,
+        p_state: b.state === undefined ? null : b.state ?? 'Regional',
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['revive', 'bemmp'] }),
   })
   const [adding, setAdding] = useState('')
+  const [addingState, setAddingState] = useState<string | null | undefined>(undefined)
+  const [editing, setEditing] = useState<{ id: string; code: string; state: string | null | undefined } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
-    try { await save.mutateAsync({ id: null, code: adding, active: true }); setAdding('') }
+    if (addingState === undefined) { setError('Choose its state, or Regional.'); return }
+    try { await save.mutateAsync({ id: null, code: adding, active: true, state: addingState }); setAdding(''); setAddingState(undefined) }
     catch (err) { setError(err instanceof Error ? err.message : 'Could not add that.') }
   }
-  const toggle = async (b: { id: string; code: string; is_active: boolean }) => {
+  const toggle = async (b: Bemmp) => {
     setError(null)
     try { await save.mutateAsync({ id: b.id, code: b.code, active: !b.is_active }) }
     catch (err) { setError(err instanceof Error ? err.message : 'Could not change that.') }
+  }
+  const saveEdit = async (b: Bemmp) => {
+    if (!editing) return
+    setError(null)
+    try { await save.mutateAsync({ id: b.id, code: editing.code, active: b.is_active, state: editing.state }); setEditing(null) }
+    catch (err) { setError(err instanceof Error ? err.message : 'Could not save that.') }
   }
 
   return (
@@ -347,25 +409,52 @@ function BemmpTable({ canEdit }: { canEdit: boolean }) {
         {error && <Alert kind="error">{error}</Alert>}
         {isLoading ? <Spinner className="h-4 w-4 text-ink-400" /> : (
           <div className="flex flex-wrap gap-2">
-            {(rows ?? []).map(b => (
+            {(rows ?? []).map(b => editing?.id === b.id ? (
+              <span key={b.id} className="inline-flex flex-wrap items-center gap-2 rounded-lg border border-ink-300 bg-ink-50 p-1.5">
+                <input
+                  autoFocus
+                  className="input !py-1 w-20"
+                  value={editing.code}
+                  onChange={e => setEditing({ ...editing, code: e.target.value })}
+                  maxLength={20}
+                  aria-label="BEMMP code"
+                />
+                <StateSelect className="!py-1 w-52" value={editing.state} onChange={state => setEditing({ ...editing, state })} />
+                <button type="button" className="btn-primary !px-3 !py-1 text-xs" onClick={() => void saveEdit(b)}
+                  disabled={save.isPending || !editing.code.trim() || editing.state === undefined}>
+                  {save.isPending && <Spinner className="h-3.5 w-3.5" />} Save
+                </button>
+                <button type="button" className="btn-secondary !px-3 !py-1 text-xs" onClick={() => setEditing(null)}>Cancel</button>
+              </span>
+            ) : (
               <span
                 key={b.id}
                 className={clsx(
                   'inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm',
-                  b.is_active ? 'border-ink-200 text-ink-900' : 'border-ink-200 bg-ink-50 text-ink-400 line-through',
+                  b.is_active ? 'border-ink-200 text-ink-900' : 'border-ink-200 bg-ink-50 text-ink-400',
                 )}
               >
-                {b.code}
+                <span className={clsx(!b.is_active && 'line-through')}>{b.code}</span>
+                <span className="text-xs text-ink-500">{b.state ?? 'Regional'}</span>
                 {canEdit && (
-                  <button
-                    type="button"
-                    onClick={() => void toggle(b)}
-                    disabled={save.isPending}
-                    className="text-xs font-medium text-ink-500 no-underline hover:text-ink-900"
-                    title={b.is_active ? 'Retire — tickets that name it keep it' : 'Bring back'}
-                  >
-                    {b.is_active ? 'Retire' : 'Restore'}
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => { setError(null); setEditing({ id: b.id, code: b.code, state: b.state }) }}
+                      className="text-xs font-medium text-ink-500 hover:text-ink-900"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void toggle(b)}
+                      disabled={save.isPending}
+                      className="text-xs font-medium text-ink-500 hover:text-ink-900"
+                      title={b.is_active ? 'Retire — tickets that name it keep it' : 'Bring back'}
+                    >
+                      {b.is_active ? 'Retire' : 'Restore'}
+                    </button>
+                  </>
                 )}
               </span>
             ))}
@@ -374,14 +463,15 @@ function BemmpTable({ canEdit }: { canEdit: boolean }) {
         {canEdit && (
           <form onSubmit={add} className="flex flex-wrap items-center gap-2">
             <input
-              className="input !py-1.5 w-40"
+              className="input !py-1.5 w-28"
               value={adding}
               onChange={e => setAdding(e.target.value)}
               placeholder="e.g. TN"
               maxLength={20}
               aria-label="New BEMMP code"
             />
-            <button type="submit" className="btn-secondary !py-1.5" disabled={save.isPending || !adding.trim()}>
+            <StateSelect className="!py-1.5 w-56" value={addingState} onChange={setAddingState} />
+            <button type="submit" className="btn-secondary !py-1.5" disabled={save.isPending || !adding.trim() || addingState === undefined}>
               {save.isPending ? <Spinner className="h-4 w-4" /> : <Plus className="h-4 w-4" />} Add BEMMP
             </button>
           </form>
@@ -631,14 +721,19 @@ function AddPerson({ existing, onPick, onCancel }: {
 
 /* ------------------------------------------------------------------ */
 
+/** A Revive Lab being added or edited. A state not chosen yet is undefined; Regional is null. */
+interface TrcDraft { id: string | null; name: string; kind: TrcKind; state: string | null | undefined; active: boolean }
+
 function TrcTable({ trcs, canEdit, members }: { trcs: Trc[]; canEdit: boolean; members: Member[] }) {
   const qc = useQueryClient()
   const saveTrc = useMutation({
-    mutationFn: (t: { id: string | null; name: string; kind: TrcKind; active: boolean }) =>
-      call('revive_save_trc', { p_id: t.id, p_name: t.name, p_kind: t.kind, p_active: t.active }),
+    mutationFn: (t: TrcDraft) =>
+      call('revive_save_trc', {
+        p_id: t.id, p_name: t.name, p_kind: t.kind, p_active: t.active, p_state: t.state ?? 'Regional',
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['revive'] }),
   })
-  const [draft, setDraft] = useState<{ id: string | null; name: string; kind: TrcKind; active: boolean } | null>(null)
+  const [draft, setDraft] = useState<TrcDraft | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const staff = (id: string) => members.filter(m => m.trc_ids.includes(id))
@@ -646,6 +741,7 @@ function TrcTable({ trcs, canEdit, members }: { trcs: Trc[]; canEdit: boolean; m
   const save = async () => {
     if (!draft) return
     setError(null)
+    if (draft.state === undefined) { setError('Choose the state it serves, or Regional.'); return }
     try { await saveTrc.mutateAsync(draft); setDraft(null) }
     catch (err) { setError(err instanceof Error ? err.message : 'Could not save that Revive Lab.') }
   }
@@ -658,7 +754,7 @@ function TrcTable({ trcs, canEdit, members }: { trcs: Trc[]; canEdit: boolean; m
         </h3>
         {canEdit && (
           <button type="button" className="btn-secondary ml-auto !py-1.5"
-            onClick={() => setDraft({ id: null, name: '', kind: 'regional', active: true })}>
+            onClick={() => setDraft({ id: null, name: '', kind: 'regional', state: undefined, active: true })}>
             <Plus className="h-4 w-4" /> Add Revive Lab
           </button>
         )}
@@ -680,13 +776,18 @@ function TrcTable({ trcs, canEdit, members }: { trcs: Trc[]; canEdit: boolean; m
               <option value="project">Project Revive Lab</option>
             </select>
           </label>
+          {/* Which route cards offer it: one state's, or every state's. */}
+          <label className="block">
+            <span className="label">State</span>
+            <StateSelect className="mt-1 w-56" value={draft.state} onChange={state => setDraft({ ...draft, state })} />
+          </label>
           {draft.id && (
             <label className="flex items-center gap-2 pb-2 text-sm text-ink-700">
               <input type="checkbox" className="h-4 w-4" checked={draft.active} onChange={e => setDraft({ ...draft, active: e.target.checked })} />
               Taking tickets
             </label>
           )}
-          <button type="button" className="btn-primary" onClick={save} disabled={saveTrc.isPending || draft.name.trim().length < 2}>
+          <button type="button" className="btn-primary" onClick={save} disabled={saveTrc.isPending || draft.name.trim().length < 2 || draft.state === undefined}>
             {saveTrc.isPending && <Spinner className="h-4 w-4" />} Save
           </button>
           <button type="button" className="btn-secondary" onClick={() => setDraft(null)}>Cancel</button>
@@ -699,6 +800,7 @@ function TrcTable({ trcs, canEdit, members }: { trcs: Trc[]; canEdit: boolean; m
             <tr className="border-b border-ink-200 text-left text-xs font-semibold uppercase tracking-wide text-ink-500">
               <th className="px-4 py-2.5 font-medium">Revive Lab</th>
               <th className="px-4 py-2.5 font-medium">Type</th>
+              <th className="px-4 py-2.5 font-medium">State</th>
               <th className="px-4 py-2.5 font-medium">Coordinators</th>
               <th className="px-4 py-2.5 font-medium">Engineers</th>
               <th className="px-4 py-2.5 font-medium">Status</th>
@@ -714,6 +816,9 @@ function TrcTable({ trcs, canEdit, members }: { trcs: Trc[]; canEdit: boolean; m
                   <td className="px-4 py-3 font-medium text-ink-900">{t.name}</td>
                   <td className="px-4 py-3 text-ink-600">{KIND_LABEL[t.kind]}</td>
                   <td className="px-4 py-3 text-ink-600">
+                    {t.state ?? <>Regional <span className="text-ink-400">· every state</span></>}
+                  </td>
+                  <td className="px-4 py-3 text-ink-600">
                     {coordinators.length
                       ? coordinators.map(p => p.full_name).join(', ')
                       : <span className="text-amber-700">Nobody — tickets here would wait unseen</span>}
@@ -727,7 +832,7 @@ function TrcTable({ trcs, canEdit, members }: { trcs: Trc[]; canEdit: boolean; m
                   {canEdit && (
                     <td className="px-4 py-3 text-right">
                       <button type="button" className="btn-secondary !px-2.5 !py-1.5 text-xs"
-                        onClick={() => setDraft({ id: t.id, name: t.name, kind: t.kind, active: t.is_active })}>
+                        onClick={() => setDraft({ id: t.id, name: t.name, kind: t.kind, state: t.state, active: t.is_active })}>
                         <Pencil className="h-3.5 w-3.5" /> Edit
                       </button>
                     </td>

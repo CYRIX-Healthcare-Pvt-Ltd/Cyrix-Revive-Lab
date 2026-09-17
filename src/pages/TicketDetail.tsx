@@ -1,22 +1,23 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import clsx from 'clsx'
 import {
-  ArrowLeft, ArrowRightLeft, Boxes, CalendarClock, CheckCircle2, ClipboardCheck, ClipboardList, Hand,
-  History as HistoryIcon, PackageCheck, PackagePlus, PackageX, PlayCircle, Receipt, ScanSearch, Send,
-  ShoppingCart, Timer, Trash2, Truck, Undo2, UserCog, UserPlus, UserX, Wrench, X,
+  ArrowLeft, ArrowRightLeft, BadgeCheck, Ban, Boxes, CalendarClock, CheckCircle2, ClipboardCheck, ClipboardList, Hand,
+  History as HistoryIcon, PackageCheck, PackagePlus, PackageX, PlayCircle, Receipt, ScanSearch, Send, ShieldQuestion,
+  ShieldX, ShoppingCart, Signpost, Timer, Trash2, Truck, Undo2, UserCog, UserPlus, UserX, Wrench, X,
   type LucideIcon,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import {
-  useAccept, useAddObservation, useAssign, useCompleteRepair, useDispatch, useHops, useMarkReceived,
-  useMembers, useReturnToDesk, useScrap, useSetExpectedDate, useStartRepair, useTickets, useTrail, useTransfer,
-  useTrcs, useUpdateCourier,
+  useAccept, useAddObservation, useApprove, useAssign, useCancelTransfer, useCompleteRepair, useDeclineApproval,
+  useDiscard, useDispatch, useHops, useMarkReceived, useMembers, useRequestTransfer, useReroute, useReturnToDesk,
+  useScrap, useSend, useSetExpectedDate, useStartRepair, useTickets, useTrail, useTrcs, useUpdateCourier,
   type Ticket, type TrailEvent,
 } from '@/lib/queries'
 import {
-  actionsFor, itemsSummary, parseTicketCode, ITEM_KIND_LABEL, OUTCOME_LABEL, REPAIRING, STATUS, TONE_SOFT, TONE_TEXT,
-  TRC_KIND_LABEL, type Action, type Outcome, type TicketItem, type Tone,
+  actionsFor, approversOf, itemsSummary, orList, parseTicketCode, serves, stateLabel,
+  ITEM_KIND_LABEL, OUTCOME_LABEL, REPAIRING, STATUS, TONE_SOFT, TONE_TEXT, TRC_KIND_LABEL,
+  type Action, type Approval, type Outcome, type Proposal, type TicketItem, type Tone,
 } from '@/lib/tickets'
 import { formatSpan, ticketTat, type Span } from '@/lib/tat'
 import { Alert, EmptyState, PageLoader, Spinner, StatusBadge } from '@/components/ui'
@@ -25,6 +26,7 @@ import AttachmentsCard from '@/components/TicketAttachments'
 import PartsCard from '@/components/PartsCard'
 import { RequestPartForm, UseComponentForm } from '@/components/PartForms'
 import Dialog from '@/components/Dialog'
+import LabOptions from '@/components/LabOptions'
 import { removeVideoOf } from '@/lib/attachments'
 
 const when = (iso: string | null | undefined) =>
@@ -63,6 +65,9 @@ function BackLink() {
   )
 }
 
+/** The statuses a request to go to another Revive Lab puts a ticket in. */
+const DECIDING = ['awaiting_approval', 'approved', 'not_approved']
+
 function TicketView({ ticket: t }: { ticket: Ticket }) {
   const { me } = useAuth()
   // Set by the raise screen when a photo or the voice note did not upload.
@@ -75,7 +80,7 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
   const tat = useMemo(() => ticketTat((trail ?? []).filter(e => e.kind === 'status'), t.trc_id), [trail, t.trc_id])
   const summary = itemsSummary(t)
   const items: TicketItem[] = t.items?.length ? t.items : t.spare_name ? [{ kind: 'spare', name: t.spare_name }] : []
-  const meta = STATUS[t.status]
+  const approval = t.approval && DECIDING.includes(t.status) ? t.approval : null
   const trcName = (id: string | null) => trail?.find(e => e.trc_id === id)?.trc_name
     ?? hops?.find(h => h.to_trc_id === id)?.to_trc_name ?? (id === t.trc_id ? t.trc_name : '—')
 
@@ -88,18 +93,12 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="font-mono text-2xl font-semibold text-ink-900">{t.code}</h1>
-              <StatusBadge status={t.status} full />
+              <StatusBadge status={t.status} closure={t.closure} proposal={t.proposal} full />
             </div>
             <p className="mt-1 text-sm text-ink-600">
               {t.facility}{summary ? ` · ${summary}` : ''}
             </p>
-            <p className="mt-0.5 text-xs text-ink-500">
-              At {t.trc_name}
-              {!t.trc_name.toLowerCase().includes(TRC_KIND_LABEL[t.trc_kind].toLowerCase()) && (
-                <> ({TRC_KIND_LABEL[t.trc_kind]})</>
-              )}
-              {t.status !== 'closed' && <> · waiting on {meta.waitingOn}</>}
-            </p>
+            <p className="mt-0.5 text-xs text-ink-500"><WhereItIs ticket={t} /></p>
             {/* What the field engineer waits for instead of phoning. */}
             {t.expected_by && (t.status === 'assigned' || REPAIRING.includes(t.status)) && (
               <p className={clsx(
@@ -118,6 +117,7 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
             {t.outcome && t.outcome !== 'repaired' && t.status !== 'closed' && !['not_repairable', 'service_denied'].includes(t.status) && (
               <p className="mt-2 text-xs text-ink-500">Repair closed as {OUTCOME_LABEL[t.outcome].toLowerCase()}</p>
             )}
+            {approval && <ApprovalNote ticket={t} approval={approval} />}
           </div>
           {/* Right-aligned beside the title; on a phone it drops below it, and lines up on the left. */}
           <div className="sm:text-right">
@@ -152,6 +152,10 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
               {t.billing_spare !== null && t.billing_spare !== undefined && (
                 <Row label="Billing spare">{t.billing_spare ? 'Yes' : 'No'}</Row>
               )}
+              <Row label="Revive Lab">
+                {t.trc_name}
+                <span className="text-xs text-ink-500"> · {stateLabel(t.trc_state)}</span>
+              </Row>
               <Row label="Hospital name">{t.facility}</Row>
               <Row label="Equipment barcode">{t.equipment_barcode && <span className="font-mono">{t.equipment_barcode}</span>}</Row>
               <Row label="Equipment name">{t.equipment_name}</Row>
@@ -199,7 +203,7 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
             <Section title="Courier details" icon={Truck} tone="teal">
               <Courier
                 name={t.in_courier} awb={t.in_awb} on={t.in_dispatched_on}
-                empty={t.status === 'pending_acceptance' ? 'Not added yet' : 'Not recorded'}
+                empty={t.status === 'pending_acceptance' || DECIDING.includes(t.status) ? 'Not added yet' : 'Not recorded'}
               />
             </Section>
             {/* The same truck, facing home. */}
@@ -236,8 +240,99 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
         </div>
 
         <Section title="History" icon={HistoryIcon} tone="indigo">
-          {!trail ? <Spinner className="h-4 w-4 text-ink-400" /> : <Timeline trail={trail} />}
+          {!trail ? <Spinner className="h-4 w-4 text-ink-400" /> : <Timeline trail={trail} proposal={t.proposal} />}
         </Section>
+      </div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * Where the spare is and whose move it is, in one line. Most statuses say
+ * it plainly; a request to go to another Revive Lab, and a spare that
+ * cannot be repaired, say what was asked for.
+ */
+function WhereItIs({ ticket: t }: { ticket: Ticket }) {
+  const a = t.approval
+  const at = (
+    <>
+      At {t.trc_name}
+      {!t.trc_name.toLowerCase().includes(TRC_KIND_LABEL[t.trc_kind].toLowerCase()) && <> ({TRC_KIND_LABEL[t.trc_kind]})</>}
+    </>
+  )
+  switch (t.status) {
+    case 'awaiting_approval':
+      return a?.kind === 'transfer'
+        ? <>{at} · transfer to {a.to_trc_name} waiting on the Regional Revive Lab admins</>
+        : <>For {t.trc_name} · waiting on the Regional Revive Lab admins to approve it</>
+    case 'approved':
+      return a?.kind === 'transfer'
+        ? <>{at} · transfer to {a.to_trc_name} approved · waiting on the coordinator to send it</>
+        : <>Approved for {t.trc_name} · waiting on {t.stakeholder_name} to send it</>
+    case 'not_approved':
+      return <>{t.trc_name} not approved · waiting on {t.stakeholder_name} to send it elsewhere or discard it</>
+    case 'not_repairable':
+      return (
+        <>
+          {at} · waiting on the coordinator to {t.proposal === 'scrap' ? 'move it to scrap, as the engineer proposed'
+            : t.proposal === 'return' ? 'dispatch it back, as the engineer proposed'
+              : 'move it to scrap or dispatch it back'}
+        </>
+      )
+    case 'closed':
+      return t.closure === 'discarded' ? <>Discarded before it was sent to a Revive Lab</> : at
+    default:
+      return <>{at} · waiting on {STATUS[t.status]?.waitingOn}</>
+  }
+}
+
+const APPROVAL_LOOK = {
+  awaiting_approval: { icon: ShieldQuestion, box: 'border-fuchsia-200 bg-fuchsia-50', ink: 'text-fuchsia-900', mark: 'text-fuchsia-600' },
+  approved: { icon: BadgeCheck, box: 'border-emerald-200 bg-emerald-50', ink: 'text-emerald-900', mark: 'text-emerald-600' },
+  not_approved: { icon: ShieldX, box: 'border-pink-200 bg-pink-50', ink: 'text-pink-900', mark: 'text-pink-600' },
+} as const
+
+/**
+ * The request to go to another Revive Lab, on the ticket itself: what was
+ * asked and why, who decides, and what they said — so nobody has to phone
+ * to find out why the spare has not moved.
+ */
+function ApprovalNote({ ticket: t, approval: a }: { ticket: Ticket; approval: Approval }) {
+  const { data: members } = useMembers()
+  const { data: trcs } = useTrcs()
+  const look = APPROVAL_LOOK[t.status as keyof typeof APPROVAL_LOOK]
+  if (!look) return null
+  const approvers = approversOf(members ?? [], trcs ?? [])
+  const to = <>{a.to_trc_name}<span className="font-normal"> · {stateLabel(a.to_trc_state)}</span></>
+
+  return (
+    <div className={clsx('mt-3 max-w-xl rounded-lg border px-3 py-2.5', look.box)}>
+      <p className={clsx('flex items-start gap-2 text-sm font-medium', look.ink)}>
+        <look.icon className={clsx('mt-0.5 h-4 w-4 shrink-0', look.mark)} />
+        <span>
+          {t.status === 'awaiting_approval'
+            ? <>{a.kind === 'transfer' ? 'Asked to transfer it to ' : 'Asked for '}{to}</>
+            : t.status === 'approved'
+              ? <>Approved for {to}{a.to_trc_id !== a.asked_trc_id && <span className="font-normal"> instead of {a.asked_trc_name}</span>}</>
+              : <>{a.to_trc_name} not approved</>}
+        </span>
+      </p>
+      <div className="mt-1 space-y-1 pl-6">
+        <p className="whitespace-pre-wrap text-sm text-ink-700">{a.reason}</p>
+        <p className="text-xs text-ink-500">Asked by {a.requested_by_name} · {when(a.requested_at)}</p>
+        {t.status === 'awaiting_approval' && approvers.length > 0 && (
+          <p className="text-xs text-ink-500">Waiting on {orList(approvers)}</p>
+        )}
+        {t.status !== 'awaiting_approval' && a.decided_by_name && (
+          <>
+            <p className="text-xs text-ink-500">
+              {t.status === 'approved' ? 'Approved' : 'Not approved'} by {a.decided_by_name} · {when(a.decided_at)}
+            </p>
+            {a.decision_note && <p className="whitespace-pre-wrap text-sm text-ink-700">{a.decision_note}</p>}
+          </>
+        )}
       </div>
     </div>
   )
@@ -306,9 +401,28 @@ const PART_STEP: Record<string, { title: string; icon: LucideIcon; tone: Tone }>
   cancelled: { title: 'Component request cancelled', icon: Undo2, tone: 'slate' },
 }
 
-function stepLook(e: TrailEvent, earlier: TrailEvent[]): { title: ReactNode; tone: Tone; icon: LucideIcon } {
+function stepLook(e: TrailEvent, earlier: TrailEvent[], proposal: Proposal | null): { title: ReactNode; tone: Tone; icon: LucideIcon } {
   const tone = STATUS[e.status]?.tone ?? 'sky'
   if (e.kind === 'eta') return { title: 'Expected repair date changed', tone: 'indigo', icon: CalendarClock }
+
+  // Going to another Revive Lab (rl_0014). Checked before the component
+  // steps: "declined" is theirs too, and only these come from waiting for approval.
+  if (e.action === 'lab_requested') {
+    return { title: e.from_status === null ? 'Raised — for another state’s Revive Lab' : 'Asked for another state’s Revive Lab', tone, icon: ShieldQuestion }
+  }
+  if (e.action === 'transfer_requested') return { title: 'Transfer asked for', tone, icon: ArrowRightLeft }
+  if (e.action === 'approved') return { title: 'Approved', tone, icon: BadgeCheck }
+  if (e.action === 'declined' && e.from_status === 'awaiting_approval') {
+    return { title: e.status === 'not_approved' ? 'Not approved' : 'Transfer not approved', tone: 'pink', icon: ShieldX }
+  }
+  if (e.action === 'transfer_cancelled') return { title: 'Transfer cancelled', tone: 'slate', icon: Undo2 }
+  if (e.action === 'discarded') return { title: 'Discarded — closed', tone: 'slate', icon: Ban }
+  if (e.action === 'sent') {
+    return e.status === 'transferred'
+      ? { title: STATUS.transferred.label, tone, icon: ArrowRightLeft }
+      : { title: 'Sent to the Revive Lab', tone, icon: Send }
+  }
+
   if (e.action && PART_STEP[e.action] && (e.kind === 'component' || e.kind === 'status')) {
     const step = PART_STEP[e.action]
     // The last purchase confirmed puts the repair back in the engineer's hands.
@@ -318,7 +432,12 @@ function stepLook(e: TrailEvent, earlier: TrailEvent[]): { title: ReactNode; ton
     return { title: step.title, tone: e.kind === 'status' ? tone : step.tone, icon: step.icon }
   }
   if (e.action === 'repaired') return { title: 'Repaired', tone, icon: ClipboardCheck }
-  if (e.action === 'not_repairable') return { title: 'Closed as not repairable', tone, icon: PackageX }
+  if (e.action === 'not_repairable') {
+    return {
+      title: proposal ? `Closed as not repairable — proposes ${proposal === 'scrap' ? 'scrap' : 'sending it back'}` : 'Closed as not repairable',
+      tone, icon: PackageX,
+    }
+  }
   if (e.action === 'customer_denied') return { title: 'Customer denied service', tone, icon: UserX }
   if (e.action === 'scrapped') return { title: 'Moved to scrap — closed', tone: 'slate', icon: Trash2 }
   if (e.kind === 'observation') {
@@ -353,11 +472,11 @@ function stepLook(e: TrailEvent, earlier: TrailEvent[]): { title: ReactNode; ton
   }
 }
 
-function Timeline({ trail }: { trail: TrailEvent[] }) {
+function Timeline({ trail, proposal }: { trail: TrailEvent[]; proposal: Proposal | null }) {
   return (
     <ol>
       {trail.map((e, i) => {
-        const look = stepLook(e, trail.slice(0, i))
+        const look = stepLook(e, trail.slice(0, i), proposal)
         const last = i === trail.length - 1
         return (
           <li key={e.id} className={clsx('relative flex gap-3', !last && 'pb-5')}>
@@ -396,6 +515,9 @@ function SpanCell({ span, label }: { span: Span; label: string }) {
   )
 }
 
+/** Stage cells per row on a computer, by how many there are. */
+const CELL_COLUMNS: Record<number, string> = { 4: 'sm:grid-cols-4', 5: 'sm:grid-cols-5', 6: 'sm:grid-cols-3' }
+
 /**
  * The stages, and — when the spare changed Revive Labs — each Revive Lab's share.
  *
@@ -409,14 +531,19 @@ function TatCard({
   tat: ReturnType<typeof ticketTat>
   trcName: (id: string | null) => string
 }) {
+  const cells: Array<[string, Span]> = [
+    ['Reach Revive Lab', tat.reach],
+    ['To assignment', tat.assign],
+    ['Repair', tat.repair],
+    ...(tat.parts.ms !== null ? [['Waiting for components', tat.parts] as [string, Span]] : []),
+    ...(tat.approval.ms !== null ? [['Waiting for approval', tat.approval] as [string, Span]] : []),
+    ['Dispatch & transit', tat.dispatch],
+  ]
   return (
     <Section title="Turnaround" icon={Timer} tone="indigo">
-      <div className={clsx('grid grid-cols-2 gap-2', tat.parts.ms !== null ? 'sm:grid-cols-5' : 'sm:grid-cols-4')}>
-        <SpanCell label="Reach Revive Lab" span={tat.reach} />
-        <SpanCell label="To assignment" span={tat.assign} />
-        <SpanCell label="Repair" span={tat.repair} />
-        {tat.parts.ms !== null && <SpanCell label="Waiting for components" span={tat.parts} />}
-        <SpanCell label="Dispatch & transit" span={tat.dispatch} />
+      {/* Two to a row on a phone, and an odd last one across the whole row. */}
+      <div className={clsx('grid-pairs grid grid-cols-2 gap-2', CELL_COLUMNS[cells.length])}>
+        {cells.map(([label, span]) => <SpanCell key={label} label={label} span={span} />)}
       </div>
 
       {tat.legs.length > 1 && (
@@ -466,36 +593,60 @@ function TatCard({
 
 /* ------------------------------------------------------------------ */
 
+/**
+ * How much weight a move carries on the page: the move that takes the
+ * ticket forward, a tool used along the way, or a way out.
+ */
+type Weight = 'main' | 'tool' | 'aside'
+
 /** Each move in the colour of the status it leads to — the colour its step takes in the history. */
-const ACTION_META: Record<Action, { label: string; icon: LucideIcon; tone: Tone; primary?: boolean }> = {
-  accept: { label: 'Accept', icon: Hand, tone: 'amber', primary: true },
-  assign: { label: 'Assign engineer', icon: UserPlus, tone: 'sky', primary: true },
-  start: { label: 'Accept repair', icon: PlayCircle, tone: 'indigo', primary: true },
-  complete: { label: 'Close repair', icon: ClipboardCheck, tone: 'lime', primary: true },
-  observe: { label: 'Add observation', icon: ScanSearch, tone: 'indigo' },
-  dispatch: { label: 'Dispatch back', icon: Send, tone: 'teal', primary: true },
-  received: { label: 'Received back', icon: PackageCheck, tone: 'green', primary: true },
-  return: { label: 'Hand back to coordinator', icon: Undo2, tone: 'amber' },
-  transfer: { label: 'Transfer to another Revive Lab', icon: ArrowRightLeft, tone: 'violet' },
-  courier: { label: 'Update courier details', icon: Truck, tone: 'teal' },
-  use_part: { label: 'Use component', icon: Boxes, tone: 'indigo' },
-  request_part: { label: 'Request component', icon: ShoppingCart, tone: 'orange' },
-  expect: { label: 'Change expected date', icon: CalendarClock, tone: 'indigo' },
-  scrap: { label: 'Move to scrap', icon: Trash2, tone: 'slate' },
+const ACTION_META: Record<Action, { label: string; icon: LucideIcon; tone: Tone; weight: Weight; primary?: boolean }> = {
+  approve: { label: 'Approve', icon: BadgeCheck, tone: 'emerald', weight: 'main', primary: true },
+  decline_approval: { label: 'Decline', icon: ShieldX, tone: 'pink', weight: 'main' },
+  send: { label: 'Send', icon: Send, tone: 'red', weight: 'main', primary: true },
+  reroute: { label: 'Send to another Revive Lab', icon: Signpost, tone: 'red', weight: 'main', primary: true },
+  accept: { label: 'Accept', icon: Hand, tone: 'amber', weight: 'main', primary: true },
+  assign: { label: 'Assign engineer', icon: UserPlus, tone: 'sky', weight: 'main', primary: true },
+  start: { label: 'Accept repair', icon: PlayCircle, tone: 'indigo', weight: 'main', primary: true },
+  complete: { label: 'Close repair', icon: ClipboardCheck, tone: 'lime', weight: 'main', primary: true },
+  dispatch: { label: 'Dispatch back', icon: Send, tone: 'teal', weight: 'main', primary: true },
+  scrap: { label: 'Move to scrap', icon: Trash2, tone: 'slate', weight: 'main', primary: true },
+  received: { label: 'Received back', icon: PackageCheck, tone: 'green', weight: 'main', primary: true },
+  use_part: { label: 'Use component', icon: Boxes, tone: 'indigo', weight: 'tool' },
+  request_part: { label: 'Request component', icon: ShoppingCart, tone: 'orange', weight: 'tool' },
+  observe: { label: 'Add observation', icon: ScanSearch, tone: 'indigo', weight: 'tool' },
+  expect: { label: 'Change expected date', icon: CalendarClock, tone: 'indigo', weight: 'tool' },
+  courier: { label: 'Update courier details', icon: Truck, tone: 'teal', weight: 'tool' },
+  return: { label: 'Hand back to coordinator', icon: Undo2, tone: 'amber', weight: 'aside' },
+  transfer: { label: 'Transfer to another Revive Lab', icon: ArrowRightLeft, tone: 'violet', weight: 'aside' },
+  cancel_transfer: { label: 'Cancel transfer', icon: Undo2, tone: 'slate', weight: 'aside' },
+  discard: { label: 'Discard ticket', icon: Ban, tone: 'slate', weight: 'aside' },
 }
 
-/** Once an engineer has it, the same button gives it to somebody else. */
+/** A button says where it goes when it can. */
 function actionMeta(action: Action, t: Ticket) {
   const m = ACTION_META[action]
+  // Once an engineer has it, the same button gives it to somebody else.
   if (action === 'assign' && t.engineer_id) return { ...m, label: 'Reassign engineer', icon: UserCog }
   // Nothing to update yet: the card was raised before it went to a courier.
   if (action === 'courier' && !t.in_courier && !t.in_awb && !t.in_dispatched_on) return { ...m, label: 'Add courier details' }
   if (action === 'expect' && !t.expected_by) return { ...m, label: 'Set expected date' }
+  if (action === 'send' && t.approval) {
+    return t.approval.kind === 'transfer'
+      ? { ...m, label: `Send to ${t.approval.to_trc_name}`, icon: ArrowRightLeft, tone: 'violet' as Tone }
+      : { ...m, label: `Send to ${t.trc_name}` }
+  }
+  if (action === 'reroute' && t.state) return { ...m, label: `Send to a ${t.state} or Regional Revive Lab` }
   return m
 }
 
 /**
  * The moves this person can make, and the one form each needs.
+ *
+ * Laid out by weight. On a phone the move forward takes the whole width,
+ * the tools sit two to a row as tiles, and the ways out — handing back,
+ * transferring, giving up — come last, quietly, under a rule. On a
+ * computer they share one line, the ways out at its far end.
  *
  * One form open at a time, under the buttons — the question and the answer
  * together — and every move asks only for what that move records.
@@ -505,42 +656,95 @@ function ActionBar({ ticket: t, actions }: { ticket: Ticket; actions: Action[] }
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState<string | null>(null)
 
+  const toggle = (a: Action) => { setOpen(open === a ? null : a); setError(null); setDone(null) }
+  const weighing = (w: Weight) => actions.filter(a => ACTION_META[a].weight === w)
+  const main = weighing('main')
+  const tools = weighing('tool')
+  const aside = weighing('aside')
+  const finish = (msg: string) => { setOpen(null); setError(null); setDone(msg) }
+  // Stable, so a dialog is not refocused every time the ticket refreshes behind it.
+  const close = useCallback(() => setOpen(null), [])
+
   return (
     <div className="space-y-3">
       {error && <Alert kind="error">{error}</Alert>}
       {done && <Alert kind="success">{done}</Alert>}
-      <div className="flex flex-wrap gap-2">
-        {actions.map(a => {
-          const m = actionMeta(a, t)
-          return (
-            <button
-              key={a}
-              type="button"
-              onClick={() => { setOpen(open === a ? null : a); setError(null); setDone(null) }}
-              className={clsx(m.primary ? 'btn-primary' : 'btn-secondary', open === a && 'ring-2 ring-offset-1 ring-ink-400')}
-              aria-expanded={open === a}
-            >
-              <m.icon className={clsx('h-4 w-4', TONE_TEXT[m.tone])} /> {m.label}
-            </button>
-          )
-        })}
+
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+        {main.length > 0 && (
+          <div className="grid gap-2 sm:flex sm:flex-wrap">
+            {main.map(a => {
+              const m = actionMeta(a, t)
+              return (
+                <button
+                  key={a}
+                  type="button"
+                  onClick={() => toggle(a)}
+                  aria-expanded={open === a}
+                  className={clsx(m.primary ? 'btn-primary' : 'btn-secondary', open === a && 'ring-2 ring-ink-400 ring-offset-1')}
+                >
+                  <m.icon className={clsx('h-4 w-4', TONE_TEXT[m.tone])} /> {m.label}
+                </button>
+              )
+            })}
+          </div>
+        )}
+
+        {tools.length > 0 && (
+          <div className={clsx('grid gap-2 sm:flex sm:flex-wrap', tools.length > 1 && 'grid-pairs grid-cols-2')}>
+            {tools.map(a => {
+              const m = actionMeta(a, t)
+              return (
+                <button
+                  key={a}
+                  type="button"
+                  onClick={() => toggle(a)}
+                  aria-expanded={open === a}
+                  className={clsx(
+                    'btn-secondary',
+                    // Tiles on a phone: the icon over the words, so a long label wraps evenly.
+                    tools.length > 1 && 'flex-col gap-1.5 px-2 py-3 text-center leading-tight sm:flex-row sm:gap-2 sm:px-4 sm:py-2.5 sm:leading-normal',
+                    open === a && 'ring-2 ring-ink-400 ring-offset-1',
+                  )}
+                >
+                  <m.icon className={clsx(tools.length > 1 ? 'h-5 w-5 sm:h-4 sm:w-4' : 'h-4 w-4', TONE_TEXT[m.tone])} /> {m.label}
+                </button>
+              )
+            })}
+          </div>
+        )}
+
+        {aside.length > 0 && (
+          <div className={clsx(
+            'flex flex-wrap gap-x-5 gap-y-1 sm:ml-auto',
+            (main.length > 0 || tools.length > 0) && 'mt-1 border-t border-ink-200 pt-2 sm:mt-0 sm:border-0 sm:pt-0',
+          )}>
+            {aside.map(a => {
+              const m = actionMeta(a, t)
+              return (
+                <button
+                  key={a}
+                  type="button"
+                  onClick={() => toggle(a)}
+                  aria-expanded={open === a}
+                  className={clsx(
+                    'btn-press inline-flex items-center gap-1.5 rounded-md py-1.5 text-sm font-medium',
+                    open === a ? 'text-ink-900 underline underline-offset-4' : 'text-ink-600 hover:text-ink-900',
+                  )}
+                >
+                  <m.icon className={clsx('h-4 w-4', TONE_TEXT[m.tone])} /> {m.label}
+                </button>
+              )
+            })}
+          </div>
+        )}
       </div>
+
       {open && POP_UP.includes(open) && (
-        <ActionDialog
-          key={open}
-          ticket={t}
-          action={open}
-          onClose={() => setOpen(null)}
-          onDone={msg => { setOpen(null); setError(null); setDone(msg) }}
-        />
+        <ActionDialog key={open} ticket={t} action={open} onClose={close} onDone={finish} />
       )}
       {open === 'use_part' && (
-        <UseComponentForm
-          ticket={t}
-          onCancel={() => setOpen(null)}
-          onError={setError}
-          onDone={msg => { setOpen(null); setError(null); setDone(msg) }}
-        />
+        <UseComponentForm ticket={t} onCancel={() => setOpen(null)} onError={setError} onDone={finish} />
       )}
       {open === 'request_part' && (
         <RequestPartForm
@@ -551,14 +755,7 @@ function ActionBar({ ticket: t, actions }: { ticket: Ticket; actions: Action[] }
         />
       )}
       {open && !POP_UP.includes(open) && open !== 'use_part' && open !== 'request_part' && (
-        <ActionForm
-          key={open}
-          ticket={t}
-          action={open}
-          onCancel={() => setOpen(null)}
-          onError={setError}
-          onDone={msg => { setOpen(null); setError(null); setDone(msg) }}
-        />
+        <ActionForm key={open} ticket={t} action={open} onCancel={() => setOpen(null)} onError={setError} onDone={finish} />
       )}
     </div>
   )
@@ -577,37 +774,44 @@ function ActionForm({
   const { data: trcs } = useTrcs()
   const accept = useAccept()
   const assign = useAssign()
-  const start = useStartRepair()
   const observe = useAddObservation()
   const giveBack = useReturnToDesk()
   const complete = useCompleteRepair()
   const dispatch = useDispatch()
   const received = useMarkReceived()
-  const transfer = useTransfer()
+  const transfer = useRequestTransfer()
   const updateCourier = useUpdateCourier()
+  const send = useSend()
+  const reroute = useReroute()
 
   const meta = actionMeta(action, t)
   // Reassigning: somebody has it, and the choice is who has it instead.
   const reassign = action === 'assign' && !!t.engineer_id
+  // The field engineer sending their own spare, once approved.
+  const sendingRaise = action === 'send' && t.approval?.kind === 'raise'
 
   const [note, setNote] = useState('')
   const [outcome, setOutcome] = useState<Outcome>('repaired')
+  const [proposal, setProposal] = useState<Proposal | null>(null)
   const [engineerId, setEngineerId] = useState(reassign ? '' : t.engineer_id ?? '')
   const [toTrc, setToTrc] = useState('')
-  // Changing the courier details starts from what is there.
-  const editing = action === 'courier'
-  const [courier, setCourier] = useState(editing ? t.in_courier ?? '' : '')
-  const [awb, setAwb] = useState(editing ? t.in_awb ?? '' : '')
-  const [on, setOn] = useState((editing && t.in_dispatched_on) || new Date().toISOString().slice(0, 10))
+  // The field engineer's own courier details start from what is on the card.
+  const fromCard = action === 'courier' || action === 'reroute' || sendingRaise
+  const [courier, setCourier] = useState(fromCard ? t.in_courier ?? '' : '')
+  const [awb, setAwb] = useState(fromCard ? t.in_awb ?? '' : '')
+  const [on, setOn] = useState((fromCard && t.in_dispatched_on) || new Date().toISOString().slice(0, 10))
 
   const engineers = (members ?? [])
     .filter(m => m.is_engineer && m.trc_ids.includes(t.trc_id) && m.employee_id !== t.engineer_id)
-  // Regional first: an unrepairable spare usually goes up a level.
-  const destinations = (trcs ?? [])
-    .filter(x => x.is_active && x.id !== t.trc_id)
-    .sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'regional' ? -1 : 1))
+  const approvers = approversOf(members ?? [], trcs ?? [])
+  // Any other Revive Lab: every transfer is approved first, wherever it goes.
+  const destinations = (trcs ?? []).filter(x => x.is_active && x.id !== t.trc_id)
+  // Not approved: the state's own Revive Labs and the Regional ones, which need no approval.
+  const nearby = (trcs ?? []).filter(x => x.is_active && serves(x, t.state))
+  const labName = (id: string) => trcs?.find(x => x.id === id)?.name ?? 'that Revive Lab'
 
-  const busy = [accept, assign, start, observe, giveBack, complete, dispatch, received, transfer, updateCourier].some(m => m.isPending)
+  const busy = [accept, assign, observe, giveBack, complete, dispatch, received, transfer, updateCourier, send, reroute]
+    .some(m => m.isPending)
 
   const run = async () => {
     try {
@@ -620,18 +824,20 @@ function ActionForm({
           const who = engineers.find(e => e.employee_id === engineerId)?.full_name
           onDone(`${reassign ? 'Reassigned' : 'Assigned'} to ${who ?? 'the engineer'}. They accept it before starting.`); break
         }
-        case 'start':
-          await start.mutateAsync({ id: t.id, note }); onDone('Repair accepted — repair time is counting from now.'); break
         case 'observe':
           if (note.trim().length < 3) { onError('Write what was found.'); return }
           await observe.mutateAsync({ id: t.id, note }); onDone('Observation added to the history. Add another whenever there is more.'); break
         case 'return':
           await giveBack.mutateAsync({ id: t.id, note }); onDone('Handed back to the coordinator.'); break
         case 'complete':
+          if (outcome === 'not_repairable' && !proposal) { onError('Say what should become of it: scrap, or back to the field engineer.'); return }
           if (note.trim().length < 3) { onError(outcome === 'repaired' ? 'Say what action was taken on it.' : 'Say why.'); return }
-          await complete.mutateAsync({ id: t.id, note, outcome })
+          await complete.mutateAsync({ id: t.id, note, outcome, proposal: outcome === 'not_repairable' ? proposal : null })
           onDone(outcome === 'repaired' ? 'Repair closed. It is with the coordinator for dispatch.'
-            : outcome === 'not_repairable' ? 'Closed as not repairable. The coordinator moves it to scrap or sends it back.'
+            : outcome === 'not_repairable'
+              ? proposal === 'scrap'
+                ? 'Closed as not repairable. The coordinator moves it to scrap, as you proposed.'
+                : `Closed as not repairable. The coordinator sends it back to ${t.stakeholder_name}, as you proposed.`
               : 'Closed: the customer denied service. The coordinator sends it back.')
           break
         case 'dispatch':
@@ -643,11 +849,21 @@ function ActionForm({
           if (!courier.trim() && !awb.trim()) { onError('Enter the courier or the tracking number.'); return }
           await updateCourier.mutateAsync({ id: t.id, courier, awb, on })
           onDone('Courier details saved. The Revive Lab sees them on this ticket.'); break
-        case 'transfer': {
+        case 'transfer':
           if (!toTrc) { onError('Choose the Revive Lab it is going to.'); return }
-          await transfer.mutateAsync({ id: t.id, toTrcId: toTrc, reason: note, courier, awb, on })
-          onDone(`Transferred to ${trcs?.find(x => x.id === toTrc)?.name}. Their coordinators accept it on arrival.`); break
-        }
+          if (note.trim().length < 5) { onError('Say why it is being transferred.'); return }
+          await transfer.mutateAsync({ id: t.id, toTrcId: toTrc, reason: note })
+          onDone(`Transfer to ${labName(toTrc)} asked for. Once the Regional Revive Lab admins approve it, send it from here.`); break
+        case 'send':
+          await send.mutateAsync({ id: t.id, courier, awb, on, note })
+          onDone(sendingRaise
+            ? `Sent to ${t.trc_name}. Their coordinators accept it when it arrives.`
+            : `Transferred to ${t.approval?.to_trc_name ?? 'the Revive Lab'}. Their coordinators accept it on arrival.`)
+          break
+        case 'reroute':
+          if (!toTrc) { onError('Choose the Revive Lab it is going to.'); return }
+          await reroute.mutateAsync({ id: t.id, trcId: toTrc, courier, awb, on })
+          onDone(`Sent to ${labName(toTrc)}. Their coordinators accept it when it arrives.`); break
       }
     } catch (err) {
       onError(err instanceof Error ? err.message : 'That did not go through.')
@@ -657,7 +873,8 @@ function ActionForm({
   // The back of the route card: the Revive Lab's Action taken, and the
   // field engineer's Final status.
   const needsNote = action === 'return' || action === 'transfer' || action === 'complete' || action === 'received' || action === 'observe'
-  const needsCourier = action === 'dispatch' || action === 'transfer' || action === 'courier'
+  const needsCourier = action === 'dispatch' || action === 'courier' || action === 'send' || action === 'reroute'
+  const asksNote = action !== 'courier' && action !== 'reroute'
 
   return (
     <div className="card space-y-3 p-4">
@@ -683,13 +900,40 @@ function ActionForm({
       )}
 
       {action === 'transfer' && (
+        <>
+          <label className="block">
+            <span className="label">Transfer to <span className="text-cyrixRed-600">*</span></span>
+            <select className="input mt-1" value={toTrc} onChange={e => setToTrc(e.target.value)}>
+              <option value="">Choose…</option>
+              <LabOptions labs={destinations} first={t.state} />
+            </select>
+          </label>
+          <p className="text-xs text-ink-500">
+            The Regional Revive Lab admins{approvers.length ? <> — {orList(approvers)} —</> : null} approve it first.
+            Then it comes back here to send, with the courier details.
+          </p>
+        </>
+      )}
+
+      {action === 'reroute' && (
         <label className="block">
-          <span className="label">Transfer to</span>
+          <span className="label">Revive Lab <span className="text-cyrixRed-600">*</span></span>
           <select className="input mt-1" value={toTrc} onChange={e => setToTrc(e.target.value)}>
             <option value="">Choose…</option>
-            {destinations.map(x => <option key={x.id} value={x.id}>{x.name} · {TRC_KIND_LABEL[x.kind]}</option>)}
+            <LabOptions labs={nearby} first={t.state} />
           </select>
         </label>
+      )}
+
+      {action === 'send' && (
+        <div className="rounded-lg border border-ink-200 bg-ink-50 p-3">
+          <p className="text-[11px] font-semibold uppercase tracking-label text-ink-400">Send it to</p>
+          <p className="mt-0.5 text-sm text-ink-900">
+            {sendingRaise ? t.trc_name : t.approval?.to_trc_name}
+            <span className="text-xs text-ink-500"> · {stateLabel(sendingRaise ? t.trc_state : t.approval?.to_trc_state)}</span>
+          </p>
+          <p className="mt-1 text-xs text-ink-500">Approved by {t.approval?.decided_by_name ?? 'the Regional Revive Lab admins'}. They accept it when it arrives.</p>
+        </div>
       )}
 
       {action === 'dispatch' && (
@@ -727,6 +971,33 @@ function ActionForm({
         </div>
       )}
 
+      {/* The coordinator may not know what a board is worth: the engineer says, and the coordinator does it. */}
+      {action === 'complete' && outcome === 'not_repairable' && (
+        <div>
+          <span className="label">What should become of it? <span className="text-cyrixRed-600">*</span></span>
+          <div className="mt-1 grid gap-2 sm:grid-cols-2">
+            {(['scrap', 'return'] as const).map(p => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => setProposal(p)}
+                aria-pressed={proposal === p}
+                className={clsx(
+                  'flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm font-medium transition-colors',
+                  proposal === p
+                    ? p === 'scrap' ? 'border-slate-300 bg-slate-50 text-slate-900' : 'border-teal-300 bg-teal-50 text-teal-900'
+                    : 'border-ink-200 text-ink-700 hover:border-ink-400',
+                )}
+              >
+                {p === 'scrap' ? <Trash2 className="h-4 w-4 text-slate-500" /> : <Undo2 className="h-4 w-4 text-teal-600" />}
+                {p === 'scrap' ? 'Propose scrap' : `Send back to ${t.stakeholder_name}`}
+              </button>
+            ))}
+          </div>
+          <p className="mt-1 text-xs text-ink-500">The coordinator closes it the way you propose.</p>
+        </div>
+      )}
+
       {needsCourier && (
         <div className="grid gap-3 sm:grid-cols-3">
           <label className="block">
@@ -738,47 +1009,53 @@ function ActionForm({
             <input className="input mt-1" value={awb} onChange={e => setAwb(e.target.value)} />
           </label>
           <label className="block">
-            <span className="label">{editing ? 'Date of dispatch' : 'Dispatched on'}</span>
+            <span className="label">{fromCard ? 'Date of dispatch' : 'Dispatched on'}</span>
             <input className="input mt-1" type="date" value={on} onChange={e => setOn(e.target.value)} />
           </label>
         </div>
       )}
 
-      {editing && (
+      {action === 'courier' && (
         <p className="text-xs text-ink-500">You can change these until {t.trc_name} accepts the spare.</p>
       )}
+      {(sendingRaise || action === 'reroute') && (
+        <p className="text-xs text-ink-500">No tracking number yet? Send it now and add the courier details from the ticket until it is accepted.</p>
+      )}
 
-      {!editing && <label className="block">
-        <span className="label">
-          {action === 'transfer' ? 'Why it is being transferred'
-            : action === 'return' ? 'Why it is going back'
-              : action === 'complete' ? (outcome === 'repaired' ? 'Action taken' : outcome === 'not_repairable' ? 'Why it cannot be repaired' : 'What the customer said')
-                : action === 'observe' ? 'What was found'
-                : action === 'received' ? 'Final status'
-                  : 'Note (optional)'}
-          {needsNote && <span className="text-cyrixRed-600"> *</span>}
-        </span>
-        <textarea
-          className="input mt-1"
-          rows={2}
-          value={note}
-          onChange={e => setNote(e.target.value)}
-          placeholder={
-            action === 'complete' ? (outcome === 'repaired' ? 'What was done — parts replaced, tests run' : outcome === 'not_repairable' ? 'e.g. Board delaminated, controller IC not available' : 'e.g. Hospital declined the quote')
-              : action === 'observe' ? 'e.g. Burnt track near the fuse; C12 bulged, replacing it'
-              : action === 'received' ? 'e.g. Received, installed and working'
-              : action === 'transfer' ? 'e.g. Needs FPGA rework this Revive Lab cannot do'
-                : action === 'return' ? 'e.g. Cannot be repaired at this Revive Lab'
-                  : reassign ? 'e.g. On leave this week'
-                    : ''
-          }
-        />
-      </label>}
+      {asksNote && (
+        <label className="block">
+          <span className="label">
+            {action === 'transfer' ? 'Why it is being transferred'
+              : action === 'return' ? 'Why it is going back'
+                : action === 'complete' ? (outcome === 'repaired' ? 'Action taken' : outcome === 'not_repairable' ? 'Why it cannot be repaired' : 'What the customer said')
+                  : action === 'observe' ? 'What was found'
+                    : action === 'received' ? 'Final status'
+                      : 'Note (optional)'}
+            {needsNote && <span className="text-cyrixRed-600"> *</span>}
+          </span>
+          <textarea
+            className="input mt-1"
+            rows={2}
+            value={note}
+            onChange={e => setNote(e.target.value)}
+            maxLength={action === 'transfer' ? 500 : undefined}
+            placeholder={
+              action === 'complete' ? (outcome === 'repaired' ? 'What was done — parts replaced, tests run' : outcome === 'not_repairable' ? 'e.g. Board delaminated, controller IC not available' : 'e.g. Hospital declined the quote')
+                : action === 'observe' ? 'e.g. Burnt track near the fuse; C12 bulged, replacing it'
+                  : action === 'received' ? 'e.g. Received, installed and working'
+                    : action === 'transfer' ? 'e.g. Needs FPGA rework this Revive Lab cannot do'
+                      : action === 'return' ? 'e.g. Cannot be repaired at this Revive Lab'
+                        : reassign ? 'e.g. On leave this week'
+                          : ''
+            }
+          />
+        </label>
+      )}
 
       <div className="flex gap-2">
         <button type="button" className="btn-primary" onClick={run} disabled={busy}>
-          {busy ? <Spinner className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
-          {meta.label}
+          {busy ? <Spinner className="h-4 w-4" /> : action === 'transfer' ? <ShieldQuestion className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+          {action === 'transfer' ? 'Ask for approval' : action === 'reroute' ? 'Send' : meta.label}
         </button>
         <button type="button" className="btn-secondary" onClick={onCancel}>Cancel</button>
       </div>
@@ -787,7 +1064,7 @@ function ActionForm({
 }
 
 /** The moves that ask one small question over the page instead of a form under the buttons. */
-const POP_UP: Action[] = ['start', 'expect', 'scrap']
+const POP_UP: Action[] = ['start', 'expect', 'scrap', 'approve', 'decline_approval', 'cancel_transfer', 'discard']
 
 /** Today in the reader's own time, as the date inputs write it. */
 function localToday(offsetDays = 0): string {
@@ -799,7 +1076,8 @@ function localToday(offsetDays = 0): string {
 /**
  * Accepting a repair asks when it will be done — the date the field
  * engineer then waits for instead of phoning. The same date can be moved
- * later. Scrap asks to be sure, because it closes the ticket.
+ * later. Scrap and discard ask to be sure, because they close the ticket.
+ * Approving asks where to — what was asked for, or another Revive Lab.
  */
 function ActionDialog({ ticket: t, action, onClose, onDone }: {
   ticket: Ticket
@@ -810,11 +1088,21 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
   const start = useStartRepair()
   const expect = useSetExpectedDate()
   const scrap = useScrap()
+  const approve = useApprove()
+  const decline = useDeclineApproval()
+  const cancelTransfer = useCancelTransfer()
+  const discard = useDiscard()
+  const { data: trcs } = useTrcs()
+  const a = t.approval
   const [date, setDate] = useState(action === 'expect' ? t.expected_by ?? '' : '')
   const [note, setNote] = useState('')
+  const [toTrc, setToTrc] = useState(action === 'approve' ? a?.to_trc_id ?? '' : '')
   const [error, setError] = useState<string | null>(null)
-  const busy = start.isPending || expect.isPending || scrap.isPending
+  const busy = [start, expect, scrap, approve, decline, cancelTransfer, discard].some(m => m.isPending)
   const meta = actionMeta(action, t)
+  // Approving a transfer for the Revive Lab it is already at would be no transfer.
+  const approvable = (trcs ?? []).filter(x => x.is_active && !(a?.kind === 'transfer' && x.id === a.from_trc_id))
+  const backTo = a?.back_to ? STATUS[a.back_to]?.short.toLowerCase() : null
 
   const run = async () => {
     setError(null)
@@ -833,6 +1121,26 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
         await scrap.mutateAsync({ id: t.id, note })
         void removeVideoOf(t.id)
         onDone(`${t.code} moved to scrap and closed.`)
+      } else if (action === 'approve') {
+        if (!toTrc) { setError('Choose the Revive Lab it is approved for.'); return }
+        await approve.mutateAsync({ id: t.id, toTrcId: toTrc, note })
+        const name = trcs?.find(x => x.id === toTrc)?.name ?? a?.to_trc_name
+        onDone(a?.kind === 'transfer'
+          ? `Approved. ${t.trc_name} sends it to ${name}.`
+          : `Approved for ${name}. ${t.stakeholder_name} sends it now.`)
+      } else if (action === 'decline_approval') {
+        if (note.trim().length < 3) { setError('Say why it is not approved.'); return }
+        await decline.mutateAsync({ id: t.id, note })
+        onDone(a?.kind === 'transfer'
+          ? `Not approved. It carries on at ${t.trc_name}.`
+          : `Not approved. ${t.stakeholder_name} sends it to a ${t.state ?? 'nearby'} or Regional Revive Lab, or discards it.`)
+      } else if (action === 'cancel_transfer') {
+        await cancelTransfer.mutateAsync({ id: t.id, note })
+        onDone('Transfer cancelled. It carries on here.')
+      } else if (action === 'discard') {
+        await discard.mutateAsync({ id: t.id, note })
+        void removeVideoOf(t.id)
+        onDone(`${t.code} is discarded.`)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'That did not go through.')
@@ -843,12 +1151,15 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
 
   return (
     <Dialog title={meta.label} icon={<IconChip icon={meta.icon} tone={meta.tone} />} onClose={onClose}>
-      {action === 'scrap' ? (
+      {action === 'scrap' && (
         <p className="text-sm text-ink-600">
+          {t.proposal === 'scrap' && <>{t.engineer_name ?? 'The engineer'} proposed scrap. </>}
           {t.code} ({itemsSummary(t) ?? 'the spare'}) was closed as not repairable. Moving it to scrap closes the ticket —
           it will not be sent back to {t.stakeholder_name}, and it goes on the scrap list.
         </p>
-      ) : (
+      )}
+
+      {(action === 'start' || action === 'expect') && (
         <>
           <p className="text-sm text-ink-600">
             {action === 'start'
@@ -869,10 +1180,66 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
           </div>
         </>
       )}
+
+      {(action === 'approve' || action === 'decline_approval') && a && (
+        <div className="space-y-2">
+          <p className="text-sm text-ink-600">
+            {a.requested_by_name} asks to {a.kind === 'transfer'
+              ? <>transfer {t.code} from {a.from_trc_name} to {a.asked_trc_name}</>
+              : <>send {t.code}, a {t.state} spare, to {a.asked_trc_name}</>}:
+          </p>
+          <p className="whitespace-pre-wrap rounded-lg bg-ink-50 px-3 py-2 text-sm text-ink-800">{a.reason}</p>
+        </div>
+      )}
+
+      {action === 'approve' && (
+        <label className="block">
+          <span className="label">Approve for <span className="text-cyrixRed-600">*</span></span>
+          <select className="input mt-1" value={toTrc} onChange={e => setToTrc(e.target.value)}>
+            <option value="">Choose…</option>
+            <LabOptions labs={approvable} first={a?.to_trc_state} />
+          </select>
+          <span className="mt-1 block text-xs text-ink-500">
+            Another Revive Lab can be approved instead. {a?.kind === 'transfer' ? `${t.trc_name} sends it there.` : `${t.stakeholder_name} sends it there.`}
+          </span>
+        </label>
+      )}
+
+      {action === 'decline_approval' && (
+        <p className="text-sm text-ink-600">
+          {a?.kind === 'transfer'
+            ? <>It carries on at {t.trc_name}{backTo ? <>, {backTo}</> : null}.</>
+            : <>It goes back to {t.stakeholder_name}, to send to a {t.state ?? 'nearby'} or Regional Revive Lab instead, or to discard.</>}
+        </p>
+      )}
+
+      {action === 'cancel_transfer' && (
+        <p className="text-sm text-ink-600">
+          The transfer to {a?.to_trc_name ?? 'the other Revive Lab'} is dropped{a?.status === 'approved' ? ', though it was approved' : ''}, and
+          it carries on at {t.trc_name}{backTo ? <>, {backTo}</> : null}.
+        </p>
+      )}
+
+      {action === 'discard' && (
+        <p className="text-sm text-ink-600">
+          {t.code} has not been sent to any Revive Lab. Discarding it closes the ticket; it stays in the list as Discarded.
+        </p>
+      )}
+
       <label className="block">
-        <span className="label">{action === 'expect' ? 'Why it moved' : 'Note'}</span>
-        <textarea className="input mt-1" rows={2} value={note} onChange={e => setNote(e.target.value)} maxLength={500}
-          placeholder={action === 'expect' ? 'e.g. Waiting for a MOSFET from Purchase' : action === 'scrap' ? 'e.g. Not worth the courier back' : ''} />
+        <span className="label">
+          {action === 'expect' ? 'Why it moved' : action === 'decline_approval' ? 'Why not' : action === 'discard' ? 'Why' : 'Note'}
+          {action === 'decline_approval' && <span className="text-cyrixRed-600"> *</span>}
+        </span>
+        <textarea className="input mt-1" rows={2} value={note} onChange={e => setNote(e.target.value)} maxLength={action === 'discard' || action === 'cancel_transfer' ? 300 : 500}
+          placeholder={
+            action === 'expect' ? 'e.g. Waiting for a MOSFET from Purchase'
+              : action === 'scrap' ? 'e.g. Not worth the courier back'
+                : action === 'decline_approval' ? 'e.g. Send it to the Regional Revive Lab instead'
+                  : action === 'discard' ? 'e.g. Repaired on site after all'
+                    : action === 'approve' ? 'e.g. Go ahead — they are expecting it'
+                      : ''
+          } />
       </label>
       {error && <Alert kind="error">{error}</Alert>}
       <div className="flex gap-2">
@@ -880,7 +1247,9 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
           {busy ? <Spinner className="h-4 w-4" /> : <meta.icon className={clsx('h-4 w-4', TONE_TEXT[meta.tone])} />}
           {action === 'expect' ? 'Save date' : meta.label}
         </button>
-        <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
+        <button type="button" className="btn-secondary" onClick={onClose}>
+          {action === 'cancel_transfer' || action === 'discard' ? 'Keep it' : 'Cancel'}
+        </button>
       </div>
     </Dialog>
   )

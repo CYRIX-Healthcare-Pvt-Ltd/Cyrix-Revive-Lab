@@ -155,3 +155,68 @@ describe('ticketTat — waiting for components', () => {
     expect(plain.parts).toEqual({ ms: null, running: false })
   })
 })
+
+describe('ticketTat — waiting for approval to go to another Revive Lab', () => {
+  it('keeps the approval out of reaching the Revive Lab', () => {
+    const tat = ticketTat([
+      ev('awaiting_approval', 0),      // raised for another state's Revive Lab
+      ev('approved', D),               // a day for the admins
+      ev('pending_acceptance', D + 3 * H), // 3 hours before it was sent
+      ev('accepted', 3 * D),
+    ], 'A', T0 + 4 * D)
+    expect(tat.approval).toEqual({ ms: D + 3 * H, running: false })
+    expect(tat.reach).toEqual({ ms: D + 21 * H, running: false })
+    expect(tat.total).toEqual({ ms: 4 * D, running: true })
+  })
+
+  it('stops the repair clock while a transfer waits, and starts it again if it is not approved', () => {
+    const tat = ticketTat([
+      ev('pending_acceptance', 0), ev('accepted', D), ev('assigned', D), ev('in_repair', D),
+      ev('awaiting_approval', 2 * D),  // a day of repair, then a transfer asked for
+      ev('in_repair', 2 * D + 5 * H),  // not approved after 5 hours
+      ev('repaired', 3 * D),
+    ], 'A', T0 + 4 * D)
+    expect(tat.approval).toEqual({ ms: 5 * H, running: false })
+    expect(tat.repair).toEqual({ ms: D + 19 * H, running: false })
+  })
+
+  it('says the approval is what is running while it waits', () => {
+    const tat = ticketTat([
+      ev('pending_acceptance', 0), ev('accepted', D), ev('assigned', D), ev('in_repair', D),
+      ev('awaiting_approval', 2 * D),
+    ], 'A', T0 + 3 * D)
+    expect(tat.approval).toEqual({ ms: D, running: true })
+    expect(tat.repair).toEqual({ ms: D, running: false })
+  })
+
+  it('ends an approved transfer\'s leg when it is sent, with the wait kept out of the repair', () => {
+    const tat = ticketTat([
+      ev('pending_acceptance', 0, 'A'), ev('accepted', D, 'A'), ev('assigned', D, 'A'), ev('in_repair', D, 'A'),
+      ev('awaiting_approval', 2 * D, 'A'),
+      ev('approved', 2 * D + 4 * H, 'A'),
+      ev('transferred', 2 * D + 6 * H, 'A'),
+      ev('accepted', 4 * D, 'B'),
+    ], 'B', T0 + 5 * D)
+    expect(tat.legs).toHaveLength(2)
+    expect(tat.legs[0].repair).toEqual({ ms: D, running: false })
+    expect(tat.legs[0].approval).toEqual({ ms: 6 * H, running: false })
+    expect(tat.legs[1].reach).toEqual({ ms: 2 * D - 6 * H, running: false })
+  })
+
+  it('has not started reaching a Revive Lab while the raise waits', () => {
+    const tat = ticketTat([ev('awaiting_approval', 0), ev('approved', D)], 'A', T0 + 2 * D)
+    expect(tat.reach).toEqual({ ms: null, running: false })
+    expect(tat.approval).toEqual({ ms: 2 * D, running: true })
+  })
+
+  it('stops measuring a ticket discarded before any Revive Lab had it', () => {
+    const tat = ticketTat([
+      ev('awaiting_approval', 0),
+      ev('not_approved', D),
+      ev('closed', 2 * D),
+    ], 'A', T0 + 10 * D)
+    expect(tat.reach).toEqual({ ms: null, running: false })
+    expect(tat.approval).toEqual({ ms: 2 * D, running: false })
+    expect(tat.total).toEqual({ ms: 2 * D, running: false })
+  })
+})

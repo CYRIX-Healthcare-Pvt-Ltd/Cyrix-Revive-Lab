@@ -23,6 +23,10 @@
  *             not yet confirmed. Kept apart from repair, because the engineer
  *             cannot hurry a purchase (rl_0013)
  *   dispatch  repair closed → received back, or moved to scrap (the last leg only)
+ *   approval  waiting to go to another Revive Lab: for the Regional Revive
+ *             Lab admins to decide, then for whoever asked to send it (rl_0014).
+ *             Kept out of every stage above — none of them could move — and
+ *             reported on its own
  *
  * A repair closes as repaired, not repairable or denied by the customer;
  * any of the three ends the repair stage.
@@ -54,6 +58,7 @@ export interface Leg {
   repair: Span
   parts: Span
   dispatch: Span
+  approval: Span
   total: Span
 }
 
@@ -64,6 +69,7 @@ export interface TatBreakdown {
   repair: Span
   parts: Span
   dispatch: Span
+  approval: Span
   total: Span
 }
 
@@ -71,6 +77,8 @@ export interface TatBreakdown {
 const REPAIR_END = ['repaired', 'not_repairable', 'service_denied']
 /** The statuses of a repair waiting on a component. */
 const WAITING_FOR_PARTS = ['parts_requested', 'parts_ordered', 'parts_ready']
+/** Waiting on approval to go to another Revive Lab, and on it being sent once decided. */
+const WAITING_FOR_APPROVAL = ['awaiting_approval', 'approved', 'not_approved']
 
 const NONE: Span = { ms: null, running: false }
 
@@ -82,6 +90,20 @@ function span(from: string | undefined, to: string | undefined, end: string | nu
   if (to) return { ms: Math.max(0, t(to) - t(from)), running: false }
   if (end) return { ms: Math.max(0, t(end) - t(from)), running: false }
   return { ms: Math.max(0, now - t(from)), running: true }
+}
+
+/**
+ * A stage less the stretches inside it that belong to something else. The
+ * stage ran from `from` for `s.ms`; whatever of that fell inside a hold was
+ * not that stage's time, and while a hold is still on, the stage is not
+ * what is running.
+ */
+function less(s: Span, from: string | undefined, holds: ReadonlyArray<[number, number]>, heldNow: boolean): Span {
+  if (s.ms === null || !from || holds.length === 0) return s
+  const a = t(from)
+  const b = a + s.ms
+  const inside = holds.reduce((sum, [x, y]) => sum + Math.max(0, Math.min(b, y) - Math.max(a, x)), 0)
+  return { ms: Math.max(0, s.ms - inside), running: s.running && !heldNow }
 }
 
 /** Adds spans that have begun; running if any of them still is. */
@@ -101,7 +123,7 @@ export function ticketTat(
 ): TatBreakdown {
   const sorted = [...events].sort((a, b) => t(a.at) - t(b.at))
   if (sorted.length === 0) {
-    return { legs: [], reach: NONE, assign: NONE, repair: NONE, parts: NONE, dispatch: NONE, total: NONE }
+    return { legs: [], reach: NONE, assign: NONE, repair: NONE, parts: NONE, dispatch: NONE, approval: NONE, total: NONE }
   }
 
   // Cut the trail into legs at every transfer.
@@ -132,6 +154,23 @@ export function ticketTat(
     const repaired = ch.events.find(e => REPAIR_END.includes(e.status))?.at
     const transferEnd = ch.end ? ch.end.at : null
 
+    // Every stretch waiting on approval, up to the next move.
+    const holds: Array<[number, number]> = []
+    let heldNow = false
+    ch.events.forEach((e, i) => {
+      if (!WAITING_FOR_APPROVAL.includes(e.status)) return
+      const until = ch.events[i + 1]?.at ?? transferEnd ?? closedAt
+      if (until) holds.push([t(e.at), t(until)])
+      else { holds.push([t(e.at), now]); heldNow = true }
+    })
+    const approvalMs = holds.reduce((sum, [x, y]) => sum + Math.max(0, y - x), 0)
+    // A raise that waited for approval starts reaching its Revive Lab when it
+    // is sent — and one discarded, or not sent yet, has not started at all.
+    const sent = ch.events.find(e => !WAITING_FOR_APPROVAL.includes(e.status))
+    const reachFrom = ch.events.length > 0 && WAITING_FOR_APPROVAL.includes(ch.events[0].status)
+      ? (sent && sent.status !== 'closed' ? sent.at : undefined)
+      : ch.start
+
     // Every stretch spent waiting for a component, up to the next move.
     let partsMs = 0
     let partsRunning = false
@@ -141,7 +180,7 @@ export function ticketTat(
       if (until) partsMs += Math.max(0, t(until) - t(e.at))
       else { partsMs += Math.max(0, now - t(e.at)); partsRunning = true }
     })
-    const whole = span(inRepair, repaired, transferEnd, now)
+    const whole = less(span(inRepair, repaired, transferEnd, now), inRepair, holds, heldNow)
     const repair: Span = whole.ms === null
       ? whole
       // Paused while it waits: the repair is not what is running.
@@ -152,11 +191,14 @@ export function ticketTat(
       startedAt: ch.start,
       endedAt: end,
       endedBy: ch.end ? 'transfer' : closedAt ? 'closed' : null,
-      reach: span(ch.start, accepted, transferEnd, now),
-      assign: span(accepted, assigned, transferEnd, now),
+      // To the end of the leg when the next move never came: a ticket
+      // discarded before any Revive Lab had it did not keep reaching one.
+      reach: less(span(reachFrom, accepted, end, now), reachFrom, holds, heldNow),
+      assign: less(span(accepted, assigned, end, now), accepted, holds, heldNow),
       repair,
       parts: partsMs > 0 || partsRunning ? { ms: partsMs, running: partsRunning } : NONE,
       dispatch: ch.end ? NONE : span(repaired, closedAt, null, now),
+      approval: holds.length ? { ms: approvalMs, running: heldNow } : NONE,
       total: span(ch.start, end ?? undefined, null, now),
     }
   })
@@ -171,6 +213,7 @@ export function ticketTat(
     repair: sum(legs.map(l => l.repair)),
     parts: sum(legs.map(l => l.parts)),
     dispatch: sum(legs.map(l => l.dispatch)),
+    approval: sum(legs.map(l => l.approval)),
     total: span(raised, closed, null, now),
   }
 }

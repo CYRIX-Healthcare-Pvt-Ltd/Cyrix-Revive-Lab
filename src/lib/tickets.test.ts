@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   ticketCode, parseTicketCode, actionsFor, runsTrc, waitingOnMe, cleanItems, itemsSummary,
-  partsWaitingOn, ticketTabs,
+  partsWaitingOn, ticketTabs, serves, approversOf, orList, statusLook,
   type Me, type TicketLike,
 } from './tickets'
 
@@ -204,5 +204,86 @@ describe('components and how a repair ends (rl_0013)', () => {
     expect(ticketTabs(engineer).find(x => x.id === 'repair')!.match(t)).toBe(true)
     expect(ticketTabs(desk).find(x => x.id === 'parts')!.match(t)).toBe(true)
     expect(ticketTabs(desk).find(x => x.id === 'unassigned')!.match(ticket({ status: 'accepted' }))).toBe(true)
+  })
+})
+
+describe('states, approval and the proposal (rl_0014)', () => {
+  const desk = me({ is_coordinator: true, trc_ids: [REG] })
+  const engineer = me({ employee_id: 'eng', is_engineer: true, trc_ids: [REG] })
+  const approver = me({ employee_id: 'boss', is_admin: true, approves: true, trc_ids: [REG] })
+  const field = me({ employee_id: 'field' })
+
+  it('offers a state its own Revive Labs and BEMMPs, and the Regional ones', () => {
+    expect(serves({ state: 'Kerala' }, 'Kerala')).toBe(true)
+    expect(serves({ state: null }, 'Kerala')).toBe(true)
+    expect(serves({ state: 'Rajasthan' }, 'Kerala')).toBe(false)
+    expect(serves({ state: 'Kerala' }, '')).toBe(false)
+  })
+
+  it('names the admins of a Regional Revive Lab as the approvers, or every admin while it has none', () => {
+    const labs = [{ id: REG, state: null }, { id: PRJ, state: 'Rajasthan' }]
+    const people = [
+      { full_name: 'Henry', is_admin: true, trc_ids: [REG, PRJ] },
+      { full_name: 'Anu', is_admin: true, trc_ids: [PRJ] },
+      { full_name: 'Kevin', is_admin: false, trc_ids: [REG] },
+    ]
+    expect(approversOf(people, labs)).toEqual(['Henry'])
+    expect(approversOf(people, [{ id: REG, state: 'Kerala' }, { id: PRJ, state: 'Rajasthan' }])).toEqual(['Henry', 'Anu'])
+    expect(orList(['Henry'])).toBe('Henry')
+    expect(orList(['Henry', 'Saranya'])).toBe('Henry or Saranya')
+    expect(orList(['Henry', 'Anu', 'Saranya'])).toBe('Henry, Anu or Saranya')
+  })
+
+  it('asks the approvers, and nobody else, while it waits', () => {
+    const raised = ticket({ status: 'awaiting_approval', approval: { kind: 'raise', status: 'pending' } })
+    expect(actionsFor(raised, approver)).toEqual(['approve', 'decline_approval'])
+    expect(waitingOnMe(raised, approver)).toBe(true)
+    // The field engineer who asked can only give it up; it is not their move.
+    expect(actionsFor(raised, field)).toEqual(['discard'])
+    expect(waitingOnMe(raised, field)).toBe(false)
+    expect(actionsFor(raised, desk)).toEqual([])
+    expect(actionsFor(raised, engineer)).toEqual([])
+  })
+
+  it('hands an approved raise back to the field engineer to send, and a transfer to the desk', () => {
+    const raise = ticket({ status: 'approved', approval: { kind: 'raise', status: 'approved' } })
+    expect(actionsFor(raise, field)).toEqual(['send', 'discard'])
+    expect(waitingOnMe(raise, field)).toBe(true)
+    expect(actionsFor(raise, desk)).toEqual([])
+
+    const transfer = ticket({ status: 'approved', engineer_id: 'eng', approval: { kind: 'transfer', status: 'approved' } })
+    expect(actionsFor(transfer, desk)).toEqual(['send', 'cancel_transfer'])
+    expect(waitingOnMe(transfer, desk)).toBe(true)
+    expect(actionsFor(transfer, field)).toEqual([])
+    expect(actionsFor(transfer, engineer)).toEqual([])
+  })
+
+  it('lets the desk cancel a transfer while it waits, without it counting as their move', () => {
+    const t = ticket({ status: 'awaiting_approval', engineer_id: 'eng', approval: { kind: 'transfer', status: 'pending' } })
+    expect(actionsFor(t, desk)).toEqual(['cancel_transfer'])
+    expect(waitingOnMe(t, desk)).toBe(false)
+    // Nothing for the engineer until it is decided.
+    expect(actionsFor(t, engineer)).toEqual([])
+  })
+
+  it('gives a raise that was not approved back to the field engineer: send it elsewhere, or discard it', () => {
+    const t = ticket({ status: 'not_approved', approval: { kind: 'raise', status: 'declined' } })
+    expect(actionsFor(t, field)).toEqual(['reroute', 'discard'])
+    expect(waitingOnMe(t, field)).toBe(true)
+    expect(actionsFor(t, approver)).toEqual([])
+  })
+
+  it('offers the desk only the move the engineer proposed for a spare that cannot be repaired', () => {
+    expect(actionsFor(ticket({ status: 'not_repairable', proposal: 'scrap' }), desk)).toEqual(['scrap'])
+    expect(actionsFor(ticket({ status: 'not_repairable', proposal: 'return' }), desk)).toEqual(['dispatch'])
+    // Closed by an app from before the proposal: the desk chooses, as it did.
+    expect(actionsFor(ticket({ status: 'not_repairable', proposal: null }), desk)).toEqual(['dispatch', 'scrap'])
+  })
+
+  it('says how a closed ticket ended when it did not come back', () => {
+    expect(statusLook('closed', 'scrapped').short).toBe('Scrapped')
+    expect(statusLook('closed', 'discarded').short).toBe('Discarded')
+    expect(statusLook('closed', 'returned').short).toBe('Closed')
+    expect(statusLook('awaiting_approval').short).toBe('Waiting for approval')
   })
 })

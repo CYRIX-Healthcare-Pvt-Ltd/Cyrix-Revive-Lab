@@ -170,7 +170,7 @@ export default function Tickets() {
                         </Link>
                         {t.source_ticket_no && <p className="text-xs text-ink-400">{t.source_ticket_no}</p>}
                       </td>
-                      <td className="px-4 py-3"><StatusBadge status={t.status} /></td>
+                      <td className="px-4 py-3"><StatusBadge status={t.status} closure={t.closure} /></td>
                       <td className="px-4 py-3 text-ink-700">{t.trc_name}</td>
                       <td className="px-4 py-3">
                         <p className="text-ink-900">{t.facility}</p>
@@ -195,7 +195,7 @@ export default function Tickets() {
                   <Link to={`/tickets/${t.code}`} className="block space-y-1.5 px-4 py-3 hover:bg-ink-50">
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-mono font-semibold text-ink-900">{t.code}</span>
-                      <StatusBadge status={t.status} />
+                      <StatusBadge status={t.status} closure={t.closure} />
                     </div>
                     <p className="text-sm text-ink-800">{t.facility}</p>
                     <p className="text-xs text-ink-500">

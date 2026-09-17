@@ -212,6 +212,26 @@ export default {
           800: 'rgb(var(--slate-800) / <alpha-value>)',
           900: 'rgb(var(--slate-900) / <alpha-value>)',
         },
+        /* Approval to go to another Revive Lab (rl_0014): fuchsia waiting, pink not
+           approved. Approved is emerald, already themed for the score bands. */
+        fuchsia: {
+          50:  'rgb(var(--fuchsia-50) / <alpha-value>)',
+          100: 'rgb(var(--fuchsia-100) / <alpha-value>)',
+          200: 'rgb(var(--fuchsia-200) / <alpha-value>)',
+          300: '#f0abfc', 400: '#e879f9', 500: '#d946ef', 600: '#c026d3',
+          700: 'rgb(var(--fuchsia-700) / <alpha-value>)',
+          800: 'rgb(var(--fuchsia-800) / <alpha-value>)',
+          900: 'rgb(var(--fuchsia-900) / <alpha-value>)',
+        },
+        pink: {
+          50:  'rgb(var(--pink-50) / <alpha-value>)',
+          100: 'rgb(var(--pink-100) / <alpha-value>)',
+          200: 'rgb(var(--pink-200) / <alpha-value>)',
+          300: '#f9a8d4', 400: '#f472b6', 500: '#ec4899', 600: '#db2777',
+          700: 'rgb(var(--pink-700) / <alpha-value>)',
+          800: 'rgb(var(--pink-800) / <alpha-value>)',
+          900: 'rgb(var(--pink-900) / <alpha-value>)',
+        },
         cyrixRed: {
           50:  'rgb(var(--red-50) / <alpha-value>)',
           100: 'rgb(var(--red-100) / <alpha-value>)',

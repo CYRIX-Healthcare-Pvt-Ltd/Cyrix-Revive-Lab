@@ -43,7 +43,8 @@ export default function Dashboard() {
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
     const ninetyDays = Date.now() - 90 * 86_400_000
 
-    const closed = all.filter(t => t.status === 'closed' && t.closed_at)
+    // A ticket discarded before it went anywhere took no turnaround to count.
+    const closed = all.filter(t => t.status === 'closed' && t.closed_at && t.closure !== 'discarded')
     const recentClosed = closed.filter(t => Date.parse(t.closed_at!) >= ninetyDays)
     const avgTotal = recentClosed.length
       ? recentClosed.reduce((a, t) => a + (tatOf(t.id, t.trc_id).total.ms ?? 0), 0) / recentClosed.length
@@ -119,7 +120,8 @@ export default function Dashboard() {
         </Link>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+      {/* grid-fill: the fifth tile takes a whole row on a phone rather than half of one. */}
+      <div className="grid-fill grid grid-cols-2 gap-3 lg:grid-cols-5">
         <StatTile label="Open" value={stats.open} sub={`of ${stats.total} tickets`} />
         <StatTile label="Waiting on you" value={stats.mine.length} sub="your move next" tone={stats.mine.length ? 'brand' : 'default'} />
         <StatTile label="With Revive Lab engineer" value={stats.inRepair} sub="assigned or being repaired" />
@@ -151,7 +153,7 @@ export default function Dashboard() {
                   <li key={t.id}>
                     <Link to={`/tickets/${t.code}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 hover:bg-ink-50">
                       <span className="font-mono text-sm font-semibold text-ink-900">{t.code}</span>
-                      <StatusBadge status={t.status} />
+                      <StatusBadge status={t.status} closure={t.closure} />
                       <span className="min-w-0 flex-1 truncate text-sm text-ink-600">
                         {t.facility}{itemsSummary(t) ? ` · ${itemsSummary(t)}` : ''}
                       </span>
