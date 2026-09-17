@@ -2,31 +2,36 @@ import { useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import {
-  Boxes, Download, FileSpreadsheet, IndianRupee, Receipt, Search, ShoppingCart, Trash2, Upload,
+  Boxes, CheckCircle2, Download, FileSpreadsheet, IndianRupee, PackageMinus, Receipt, Search, ShoppingCart, Trash2,
+  Upload, X,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import {
-  useComponents, usePartRequests, useTickets, useTrcs, useUploadStock, type Component, type PartRequest,
+  useApproveUse, useComponents, usePartRequests, useStockUses, useTickets, useTrcs, useUploadStock,
+  type Component, type PartRequest, type StockUseRow,
 } from '@/lib/queries'
 import {
-  buysFor, itemsSummary, partOpen, PART_ROUTE_LABEL, PART_STATUS, runsTrc, TONE_CLASS, type PartRoute,
+  buysFor, itemsSummary, partOpen, PART_ROUTE_LABEL, PART_STATUS, runsTrc, STOCK_USE_STATUS, TONE_CLASS,
+  type PartRoute,
 } from '@/lib/tickets'
 import { readStockGrid, stockDiff, type SheetRead, type StockDiff } from '@/lib/stockSheet'
 import { Alert, EmptyState, PageLoader, Spinner, StatTile } from '@/components/ui'
 import IconChip from '@/components/IconChip'
-import { rupees } from '@/components/PartsCard'
+import { rupees, DeclineUseDialog } from '@/components/PartsCard'
 
-type Sub = 'stock' | 'requests' | 'purchases' | 'scrap'
+type Sub = 'stock' | 'taken' | 'requests' | 'purchases' | 'scrap'
 
 const day = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '—'
 
 /**
- * Components: the stock each Revive Lab keeps, the requests for what it
- * does not have, what has been spent buying them, and what was scrapped.
+ * Components: the stock each Revive Lab keeps, what engineers have taken
+ * out of it, the requests for what it does not have, what has been spent
+ * buying them, and what was scrapped.
  *
- * Coordinators and managers see all four for their Revive Labs, and upload
- * the stock sheet. Purchase sees the requests that came to them.
+ * Coordinators and managers see all of it for their Revive Labs, upload the
+ * stock sheet, and approve what comes off it. Purchase sees the requests
+ * that came to them.
  */
 export default function Components() {
   const { me } = useAuth()
@@ -35,7 +40,7 @@ export default function Components() {
 
   const desk = !!me && (me.is_coordinator || me.is_manager || me.is_admin)
   const subs: Array<[Sub, string, typeof Boxes]> = [
-    ...(desk ? [['stock', 'Stock', Boxes] as [Sub, string, typeof Boxes]] : []),
+    ...(desk ? [['stock', 'Stock', Boxes], ['taken', 'Taken from stock', PackageMinus]] as Array<[Sub, string, typeof Boxes]> : []),
     ['requests', 'Requests', ShoppingCart],
     ...(desk ? [['purchases', 'Purchases', IndianRupee], ['scrap', 'Scrap', Trash2]] as Array<[Sub, string, typeof Boxes]> : []),
   ]
@@ -55,7 +60,7 @@ export default function Components() {
       <div>
         <h1 className="text-xl font-semibold text-ink-900">Components</h1>
         <p className="mt-0.5 text-sm text-ink-500">
-          {desk ? 'Stock, requests, what was spent, and what was scrapped.' : 'The purchase requests that came to you.'}
+          {desk ? 'Stock, what has come off it, requests, what was spent, and what was scrapped.' : 'The purchase requests that came to you.'}
         </p>
       </div>
 
@@ -76,6 +81,7 @@ export default function Components() {
       </div>
 
       {sub === 'stock' && <StockTab labs={labs} />}
+      {sub === 'taken' && <TakenTab />}
       {sub === 'requests' && <RequestsTab purchaseOnly={!desk} />}
       {sub === 'purchases' && <PurchasesTab labs={labs} />}
       {sub === 'scrap' && <ScrapTab />}
@@ -308,6 +314,115 @@ function StockTab({ labs }: { labs: Array<{ id: string; name: string }> }) {
           </>
         )}
       </div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * What engineers have taken from the stock, and what the coordinator said.
+ *
+ * The same approvals as on each ticket, in one place: a repair is waiting
+ * on every one of these, so what is open comes first and is approved from
+ * here without opening the ticket.
+ */
+function TakenTab() {
+  const { me } = useAuth()
+  const { data: rows, isLoading } = useStockUses()
+  const approve = useApproveUse()
+  const [show, setShow] = useState<'open' | 'all'>('open')
+  const [refusing, setRefusing] = useState<StockUseRow | null>(null)
+  const [notice, setNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
+
+  const shown = useMemo(
+    () => (rows ?? []).filter(u => show === 'all' || u.status === 'requested'),
+    [rows, show],
+  )
+  const waiting = (rows ?? []).filter(u => u.status === 'requested').length
+
+  const take = async (u: StockUseRow) => {
+    setNotice(null)
+    try {
+      await approve.mutateAsync({ id: u.id })
+      setNotice({ kind: 'success', text: `${u.qty} × ${u.part_no} off the stock for ${u.ticket_code}.` })
+    } catch (err) {
+      setNotice({ kind: 'error', text: err instanceof Error ? err.message : 'That did not go through.' })
+    }
+  }
+
+  if (isLoading) return <Spinner className="h-5 w-5 text-ink-400" />
+
+  return (
+    <div className="space-y-4">
+      {notice && <Alert kind={notice.kind}>{notice.text}</Alert>}
+      <div className="card overflow-hidden">
+        <div className="flex flex-wrap items-center gap-2 border-b border-ink-200 bg-ink-50 px-3 py-2">
+          <div className="flex gap-1">
+            {(['open', 'all'] as const).map(v => (
+              <button key={v} type="button" onClick={() => setShow(v)}
+                className={clsx('rounded-md px-3 py-1.5 text-sm font-medium', show === v ? 'bg-surface text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800')}>
+                {v === 'open' ? 'Waiting' : 'All'}
+                {v === 'open' && waiting > 0 && <span className="ml-1.5 tabular-nums text-orange-600">{waiting}</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {shown.length === 0 ? (
+          <div className="p-4">
+            <EmptyState icon={PackageMinus} title={show === 'open' ? 'Nothing waiting' : 'Nothing taken from stock yet'}>
+              An engineer repairing a spare takes what they need from this Revive Lab’s stock, and it comes off the
+              count once you approve it.
+            </EmptyState>
+          </div>
+        ) : (
+          <ul className="divide-y divide-ink-100">
+            {shown.map(u => {
+              const status = STOCK_USE_STATUS[u.status]
+              const desk = runsTrc(me, u.trc_id)
+              return (
+                <li key={u.id} className="px-4 py-3">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <Link to={`/tickets/${u.ticket_code}`} className="font-mono text-sm font-semibold text-ink-900">
+                      {u.ticket_code}
+                    </Link>
+                    <span className="min-w-0 flex-1 text-sm text-ink-800">
+                      <span className="tabular-nums">{u.qty} ×</span> {u.value ?? u.item ?? u.part_no}
+                      <span className="ml-1.5 font-mono text-xs text-ink-500">{u.part_no}</span>
+                      <span className="block text-xs text-ink-500">
+                        {u.facility} · {u.trc_name} · asked by {u.requested_by_name} {day(u.requested_at)}
+                        {u.status === 'requested' && <> · {u.in_stock} in stock</>}
+                      </span>
+                    </span>
+                    <span className={clsx('badge', TONE_CLASS[status.tone])}>{status.label}</span>
+                  </div>
+                  {u.decision_note && <p className="mt-1 text-sm text-ink-600">{u.decision_note}</p>}
+                  {u.status === 'requested' && desk && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button type="button" className="btn-primary !py-1.5 text-sm" disabled={approve.isPending}
+                        onClick={() => void take(u)}>
+                        {approve.isPending ? <Spinner className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4 text-green-400" />} Approve
+                      </button>
+                      <button type="button" className="btn-secondary !py-1.5 text-sm" onClick={() => { setNotice(null); setRefusing(u) }}>
+                        <X className="h-4 w-4 text-rose-600" /> Decline
+                      </button>
+                    </div>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
+
+      {refusing && (
+        <DeclineUseDialog
+          use={refusing}
+          onClose={() => setRefusing(null)}
+          onDone={text => { setRefusing(null); setNotice({ kind: 'success', text }) }}
+        />
+      )}
     </div>
   )
 }

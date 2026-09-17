@@ -417,6 +417,46 @@ export interface PartRequest {
   stocked_at: string | null
 }
 
+/** One component taken from stock, as the desk's own list shows it (rl_0018). */
+export interface StockUseRow {
+  id: string
+  ticket_id: string
+  ticket_code: string
+  ticket_status: TicketStatus
+  facility: string
+  trc_id: string
+  trc_name: string
+  component_id: string
+  part_no: string
+  value: string | null
+  item: string | null
+  package: string | null
+  /** How many of that part the Revive Lab has now. */
+  in_stock: number
+  qty: number
+  status: StockUseStatus
+  source: 'stock' | 'bought'
+  requested_by: string
+  requested_by_name: string | null
+  requested_at: string
+  decided_by_name: string | null
+  decided_at: string | null
+  decision_note: string | null
+}
+
+/**
+ * Everything engineers have taken from stock, newest first — the same
+ * approvals as on a ticket, gathered so the desk can work through them.
+ */
+export function useStockUses(status?: StockUseStatus) {
+  return useQuery({
+    queryKey: ['revive', 'stock-uses', status ?? 'all'],
+    queryFn: async () => unwrap<StockUseRow[]>(
+      await supabase.rpc('revive_stock_use_list', { p_status: status ?? null }),
+    ),
+  })
+}
+
 /** Component requests: one ticket's, or every one this person can see. */
 export function usePartRequests(ticketId?: string) {
   return useQuery({

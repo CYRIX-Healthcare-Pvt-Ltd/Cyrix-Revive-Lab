@@ -627,8 +627,18 @@ function DeclineDialog({ request: r, buyer, onClose, onDone }: {
   )
 }
 
-function DeclineUseDialog({ use: u, onClose, onDone }: {
-  use: ComponentUse
+/** Enough of a stock use to refuse it: the ticket's card and the desk's list share this. */
+export interface RefusableUse {
+  id: string
+  qty: number
+  part_no: string
+  value: string | null
+  item: string | null
+  in_stock: number
+}
+
+export function DeclineUseDialog({ use: u, onClose, onDone }: {
+  use: RefusableUse
   onClose: () => void
   onDone: (message: string) => void
 }) {
