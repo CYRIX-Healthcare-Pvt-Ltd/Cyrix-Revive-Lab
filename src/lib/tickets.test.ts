@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   ticketCode, parseTicketCode, actionsFor, runsTrc, waitingOnMe, cleanItems, itemsSummary,
-  partsWaitingOn, ticketTabs, serves, approversOf, orList, statusLook, canRaise,
+  partsWaitingOn, ticketTabs, serves, approversOf, orList, statusLook, canRaise, partActor,
   type Me, type TicketLike,
 } from './tickets'
 
@@ -167,11 +167,11 @@ describe('components and how a repair ends (rl_0013)', () => {
       parts: [
         { id: 'a', route: 'local', status: 'requested' },
         { id: 'b', route: 'purchase', status: 'accepted' },
-        { id: 'c', route: 'local', status: 'purchased' },
+        { id: 'c', route: 'local', status: 'sent' },
         { id: 'd', route: 'purchase', status: 'declined' },
       ],
     })
-    expect(partsWaitingOn(t, desk)).toBe(1)       // the local purchase to take on
+    expect(partsWaitingOn(t, desk)).toBe(1)       // the one asked for, to buy or pass on
     expect(partsWaitingOn(t, buyer)).toBe(1)      // the purchase being bought
     expect(partsWaitingOn(t, engineer)).toBe(1)   // the one to confirm
     expect(partsWaitingOn(t, me({ employee_id: 'field' }))).toBe(0)
@@ -318,5 +318,47 @@ describe('the receipt, and who raises tickets (rl_0015)', () => {
   it('gives every tab the colour of what it holds', () => {
     expect(ticketTabs(desk).map(x => x.tone)).toEqual(['slate', 'red', 'orange', 'green'])
     expect(ticketTabs(engineer).map(x => x.tone)).toEqual(['slate', 'indigo', 'sky', 'green'])
+  })
+})
+
+describe('components through the coordinator (rl_0016)', () => {
+  const desk = me({ is_coordinator: true, trc_ids: [REG] })
+  const engineer = me({ employee_id: 'eng', is_engineer: true, trc_ids: [REG] })
+  const buyer = me({ employee_id: 'buyer', is_purchase: true, trc_ids: [REG] })
+
+  const at = (status: string, route: 'local' | 'purchase' = 'local') =>
+    ({ route, status } as { route: 'local' | 'purchase'; status: Parameters<typeof partActor>[0]['status'] })
+
+  it('walks a request from the coordinator to whoever buys it and back', () => {
+    // Asked for: with the coordinator, whichever route.
+    expect(partActor(at('requested', 'purchase'), desk, REG, 'eng')).toBe(true)
+    expect(partActor(at('requested', 'purchase'), buyer, REG, 'eng')).toBe(false)
+    // Passed on: with Purchase.
+    expect(partActor(at('forwarded', 'purchase'), buyer, REG, 'eng')).toBe(true)
+    expect(partActor(at('forwarded', 'purchase'), desk, REG, 'eng')).toBe(false)
+    // Being bought: whoever holds it.
+    expect(partActor(at('accepted', 'local'), desk, REG, 'eng')).toBe(true)
+    expect(partActor(at('accepted', 'purchase'), buyer, REG, 'eng')).toBe(true)
+    // Bought: back to the coordinator, to write it into stock.
+    expect(partActor(at('bought', 'purchase'), desk, REG, 'eng')).toBe(true)
+    expect(partActor(at('bought', 'purchase'), buyer, REG, 'eng')).toBe(false)
+    // Sent: the engineer confirms it.
+    expect(partActor(at('sent', 'local'), engineer, REG, 'eng')).toBe(true)
+    expect(partActor(at('sent', 'local'), desk, REG, 'eng')).toBe(false)
+    // Finished with.
+    expect(partActor(at('received', 'local'), desk, REG, 'eng')).toBe(false)
+    expect(partActor(at('declined', 'local'), desk, REG, 'eng')).toBe(false)
+  })
+
+  it('counts stock waiting for the coordinator as theirs to do', () => {
+    const t = ticket({
+      status: 'parts_requested', engineer_id: 'eng',
+      stock: [{ id: 's1', status: 'requested' }, { id: 's2', status: 'approved' }],
+    })
+    expect(partsWaitingOn(t, desk)).toBe(1)
+    expect(waitingOnMe(t, desk)).toBe(true)
+    // Not the engineer's: they asked, and are waiting.
+    expect(partsWaitingOn(t, engineer)).toBe(0)
+    expect(partsWaitingOn(t, buyer)).toBe(0)
   })
 })

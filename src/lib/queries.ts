@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase, friendlyError } from './supabase'
 import type {
-  Approval, Closure, Outcome, PartRoute, PartStatus, PartSummary, Proposal, TicketItem, TicketStatus, TrcKind,
+  Approval, Closure, Outcome, PartRoute, PartStatus, PartSummary, Proposal, StockUseStatus, StockUseSummary,
+  TicketItem, TicketStatus, TrcKind,
 } from './tickets'
 import { uploadPartFile } from './partFiles'
 import { uploadStageFile } from './attachments'
@@ -79,6 +80,8 @@ export interface Ticket {
   expected_by: string | null
   /** Its component requests, just enough to know whose move each one is. */
   parts: PartSummary[]
+  /** Stock taken for it, and whether the coordinator has approved it (rl_0016). */
+  stock: StockUseSummary[]
   /** Not repairable: what the engineer proposed (rl_0014). */
   proposal: Proposal | null
   /** The state its Revive Lab serves; null for a Regional one. */
@@ -341,15 +344,26 @@ export function useComponents(trcId: string | null | undefined) {
   })
 }
 
+/** Stock an engineer took for a repair, with what the coordinator said (rl_0016). */
 export interface ComponentUse {
-  id: number
+  id: string
+  component_id: string
   part_no: string
   value: string | null
   item: string | null
   package: string | null
   qty: number
-  used_by_name: string | null
-  at: string
+  status: StockUseStatus
+  /** stock: taken off the shelf. bought: it came with a purchase the coordinator wrote up. */
+  source: 'stock' | 'bought'
+  /** How many of that part the Revive Lab has now. */
+  in_stock: number
+  requested_by: string
+  requested_by_name: string | null
+  requested_at: string
+  decided_by_name: string | null
+  decided_at: string | null
+  decision_note: string | null
 }
 
 /** What one ticket took from stock. */
@@ -392,6 +406,15 @@ export interface PartRequest {
   purchased_at: string | null
   received_by_name: string | null
   received_at: string | null
+  /** What the coordinator wrote it up as, once it was bought (rl_0016). */
+  component_id: string | null
+  part_no: string | null
+  value: string | null
+  item: string | null
+  package: string | null
+  bought_qty: number | null
+  stocked_by_name: string | null
+  stocked_at: string | null
 }
 
 /** Component requests: one ticket's, or every one this person can see. */
@@ -550,10 +573,30 @@ export const useCompleteRepair = () => useTicketMutation(
 export const useScrap = () => useTicketMutation(
   (a: { id: string; note?: string }) => rpc('revive_scrap', { p_ticket_id: a.id, p_note: a.note || null }))
 
-/** Taken from stock for this repair. */
+/** Asked for from stock; the coordinator approves it before the count comes off (rl_0016). */
 export const useUseComponent = () => useTicketMutation(
   (a: { ticketId: string; componentId: string; qty: number }) =>
-    rpc('revive_use_component', { p_ticket_id: a.ticketId, p_component_id: a.componentId, p_qty: a.qty }))
+    rpc('revive_use_component', { p_ticket_id: a.ticketId, p_component_id: a.componentId, p_qty: a.qty }) as Promise<string>)
+
+export const useApproveUse = () => useTicketMutation(
+  (a: { id: string; note?: string }) => rpc('revive_approve_use', { p_use_id: a.id, p_note: a.note || null }))
+
+export const useDeclineUse = () => useTicketMutation(
+  (a: { id: string; reason: string }) => rpc('revive_decline_use', { p_use_id: a.id, p_reason: a.reason }))
+
+export const useCancelUse = () => useTicketMutation(
+  (a: { id: string }) => rpc('revive_cancel_use', { p_use_id: a.id }))
+
+/** The part number this Revive Lab uses for that value and item, or the next free one. */
+export function usePartNo(trcId: string | undefined, value: string, item: string) {
+  const v = value.trim()
+  return useQuery({
+    enabled: !!trcId && v.length > 0,
+    queryKey: ['revive', 'part-no', trcId, v.toLowerCase(), item.trim().toLowerCase()],
+    queryFn: async () => unwrap<string>(
+      await supabase.rpc('revive_part_no_for', { p_trc_id: trcId, p_value: v, p_item: item.trim() })),
+  })
+}
 
 /** A stock sheet, uploaded: parts added or brought up to date, quantities set to its count. */
 export function useUploadStock() {
@@ -588,8 +631,25 @@ export const useRequestPart = () => useTicketMutation(
     return { id, photoFailed }
   })
 
-export const useAcceptPart = () => useTicketMutation(
-  (a: { id: string }) => rpc('revive_accept_part', { p_request_id: a.id }))
+/** Taken on by whoever buys it: the desk for a local purchase, Purchase for a purchase. */
+export const useTakePart = () => useTicketMutation(
+  (a: { id: string }) => rpc('revive_take_part', { p_request_id: a.id }))
+
+/** Passed to Purchase — it is not to be had locally. */
+export const useForwardPart = () => useTicketMutation(
+  (a: { id: string; note?: string }) => rpc('revive_forward_part', { p_request_id: a.id, p_note: a.note || null }))
+
+/** Kept at the Revive Lab after all: the coordinator buys it locally. */
+export const useMakeLocal = () => useTicketMutation(
+  (a: { id: string; note?: string }) => rpc('revive_make_local', { p_request_id: a.id, p_note: a.note || null }))
+
+/** What was bought, written into stock and sent to the engineer. */
+export const useStockPart = () => useTicketMutation(
+  (a: { id: string; value: string; item: string; package: string; partNo?: string | null; qty: number; useQty: number }) =>
+    rpc('revive_stock_part', {
+      p_request_id: a.id, p_value: a.value, p_item: a.item, p_package: a.package,
+      p_part_no: a.partNo || null, p_qty: a.qty, p_use_qty: a.useQty,
+    }))
 
 export const useDeclinePart = () => useTicketMutation(
   (a: { id: string; reason: string }) => rpc('revive_decline_part', { p_request_id: a.id, p_reason: a.reason }))

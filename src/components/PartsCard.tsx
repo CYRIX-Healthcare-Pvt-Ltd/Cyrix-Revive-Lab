@@ -2,14 +2,15 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
-  Boxes, CheckCircle2, ExternalLink, Hand, PackageCheck, Receipt, ScanText, ShoppingCart, Undo2, X,
+  Boxes, CheckCircle2, ExternalLink, Hand, PackageCheck, PackagePlus, Receipt, ScanText, Send, ShoppingCart, Undo2, X,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import {
-  useAcceptPart, useCancelPart, useComponentUses, useConfirmPart, useDeclinePart, usePartRequests, usePurchasePart,
-  type PartRequest, type Ticket,
+  useApproveUse, useCancelPart, useCancelUse, useComponentUses, useConfirmPart, useDeclinePart, useDeclineUse,
+  useForwardPart, useMakeLocal, usePartNo, usePartRequests, usePurchasePart, useStockPart, useTakePart,
+  type ComponentUse, type PartRequest, type Ticket,
 } from '@/lib/queries'
-import { handlesPart, PART_ROUTE_LABEL, PART_STATUS, TONE_CLASS } from '@/lib/tickets'
+import { buysFor, partActor, runsTrc, PART_ROUTE_LABEL, PART_STATUS, STOCK_USE_STATUS, TONE_CLASS } from '@/lib/tickets'
 import { signedLinks } from '@/lib/partFiles'
 import { readBillAmount } from '@/lib/billOcr'
 import { Alert, Spinner } from '@/components/ui'
@@ -27,14 +28,17 @@ export const rupees = (n: number) =>
 /** Bill pages are kept sharper than a photo of a fault: the print has to be readable. */
 const BILL_SIZE = { maxSide: 2000, targetBytes: 600 * 1024 }
 
+type Notice = { kind: 'success' | 'error'; text: string } | null
+
 /**
- * Components on a ticket: what came out of stock, and what was asked for.
+ * Components on a ticket: what came off the Revive Lab's stock, and what had
+ * to be bought.
  *
- * Each request shows its whole journey — asked, taken on, bought with the
- * bill, confirmed — so the field engineer reading the ticket can see what
- * the repair is waiting for. The buttons on a request belong to whoever
- * moves it next: the coordinator or Purchase to take it on and buy it, the
- * engineer to confirm it or cancel it.
+ * Stock waits for the coordinator before it comes off the count. A request
+ * shows its whole journey — asked, taken on or passed to Purchase, bought
+ * with the bill, written into stock, confirmed — so the field engineer
+ * reading the ticket can see what the repair is waiting for. The buttons on
+ * each belong to whoever moves it next (rl_0016).
  */
 export default function PartsCard({ ticket: t }: { ticket: Ticket }) {
   const { me } = useAuth()
@@ -50,12 +54,15 @@ export default function PartsCard({ ticket: t }: { ticket: Ticket }) {
   })
 
   const [billFor, setBillFor] = useState<PartRequest | null>(null)
+  const [stockFor, setStockFor] = useState<PartRequest | null>(null)
   const [declineFor, setDeclineFor] = useState<PartRequest | null>(null)
+  const [refuseUse, setRefuseUse] = useState<ComponentUse | null>(null)
   const [viewing, setViewing] = useState<{ images: string[]; index: number } | null>(null)
-  const [notice, setNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
+  const [notice, setNotice] = useState<Notice>(null)
 
   if ((uses ?? []).length === 0 && (requests ?? []).length === 0) return null
 
+  const desk = runsTrc(me, t.trc_id)
   const spent = (requests ?? []).filter(r => r.bill_amount !== null).reduce((a, r) => a + (r.bill_amount ?? 0), 0)
 
   return (
@@ -70,16 +77,17 @@ export default function PartsCard({ ticket: t }: { ticket: Ticket }) {
 
         {(uses ?? []).length > 0 && (
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-label text-ink-400">Used from stock</p>
-            <ul className="mt-1.5 divide-y divide-ink-100 rounded-lg border border-ink-200">
+            <p className="text-[11px] font-semibold uppercase tracking-label text-ink-400">From stock</p>
+            <ul className="mt-1.5 space-y-2">
               {uses!.map(u => (
-                <li key={u.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-3 py-2 text-sm">
-                  <span className="font-medium tabular-nums text-ink-900">{u.qty} ×</span>
-                  <span className="text-ink-900">{u.value ?? u.item ?? u.part_no}</span>
-                  <span className="font-mono text-xs text-ink-500">{u.part_no}</span>
-                  {(u.item || u.package) && <span className="text-xs text-ink-400">{[u.item, u.package].filter(Boolean).join(' · ')}</span>}
-                  <span className="ml-auto text-xs text-ink-400">{u.used_by_name} · {when(u.at)}</span>
-                </li>
+                <StockUseItem
+                  key={u.id}
+                  use={u}
+                  desk={desk}
+                  isAsker={u.requested_by === me?.employee_id}
+                  onDecline={() => { setNotice(null); setRefuseUse(u) }}
+                  onNotice={setNotice}
+                />
               ))}
             </ul>
           </div>
@@ -94,9 +102,12 @@ export default function PartsCard({ ticket: t }: { ticket: Ticket }) {
                   key={r.id}
                   r={r}
                   links={links ?? {}}
-                  canHandle={handlesPart(me, r.route, r.trc_id)}
+                  mine={partActor(r, me, r.trc_id, t.engineer_id)}
+                  desk={runsTrc(me, r.trc_id)}
+                  buyer={buysFor(me, r.trc_id)}
                   isEngineer={t.engineer_id === me?.employee_id}
                   onBill={() => { setNotice(null); setBillFor(r) }}
+                  onStock={() => { setNotice(null); setStockFor(r) }}
                   onDecline={() => { setNotice(null); setDeclineFor(r) }}
                   onView={(images, index) => setViewing({ images, index })}
                   onNotice={setNotice}
@@ -115,11 +126,26 @@ export default function PartsCard({ ticket: t }: { ticket: Ticket }) {
           onDone={text => { setBillFor(null); setNotice({ kind: 'success', text }) }}
         />
       )}
+      {stockFor && (
+        <StockDialog
+          request={stockFor}
+          onClose={() => setStockFor(null)}
+          onDone={text => { setStockFor(null); setNotice({ kind: 'success', text }) }}
+        />
+      )}
       {declineFor && (
         <DeclineDialog
           request={declineFor}
+          buyer={buysFor(me, declineFor.trc_id) && !runsTrc(me, declineFor.trc_id)}
           onClose={() => setDeclineFor(null)}
           onDone={text => { setDeclineFor(null); setNotice({ kind: 'success', text }) }}
+        />
+      )}
+      {refuseUse && (
+        <DeclineUseDialog
+          use={refuseUse}
+          onClose={() => setRefuseUse(null)}
+          onDone={text => { setRefuseUse(null); setNotice({ kind: 'success', text }) }}
         />
       )}
       <Lightbox
@@ -132,39 +158,117 @@ export default function PartsCard({ ticket: t }: { ticket: Ticket }) {
   )
 }
 
+/** A running of a mutation with the card's own message line. */
+const runner = (onNotice: (n: Notice) => void) => async (fn: () => Promise<unknown>, done: string) => {
+  onNotice(null)
+  try { await fn(); onNotice({ kind: 'success', text: done }) }
+  catch (err) { onNotice({ kind: 'error', text: err instanceof Error ? err.message : 'That did not go through.' }) }
+}
+
+function StockUseItem({ use: u, desk, isAsker, onDecline, onNotice }: {
+  use: ComponentUse
+  desk: boolean
+  isAsker: boolean
+  onDecline: () => void
+  onNotice: (n: Notice) => void
+}) {
+  const approve = useApproveUse()
+  const cancel = useCancelUse()
+  const run = runner(onNotice)
+  const status = STOCK_USE_STATUS[u.status]
+  const busy = approve.isPending || cancel.isPending
+  const waiting = u.status === 'requested'
+
+  return (
+    <li className="rounded-lg border border-ink-200 px-3 py-2">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
+        <span className="font-medium tabular-nums text-ink-900">{u.qty} ×</span>
+        <span className="text-ink-900">{u.value ?? u.item ?? u.part_no}</span>
+        <span className="font-mono text-xs text-ink-500">{u.part_no}</span>
+        {(u.item || u.package) && <span className="text-xs text-ink-400">{[u.item, u.package].filter(Boolean).join(' · ')}</span>}
+        <span className={clsx('badge', TONE_CLASS[status.tone])}>{status.label}</span>
+        {u.source === 'bought' && <span className="badge bg-ink-100 text-ink-600">From what was bought</span>}
+      </div>
+      <p className="mt-0.5 text-xs text-ink-500">
+        Asked by {u.requested_by_name} · {when(u.requested_at)}
+        {u.decided_at && (
+          <> · {u.status === 'approved' ? 'approved' : u.status === 'declined' ? 'not approved' : 'decided'} by {u.decided_by_name} · {when(u.decided_at)}</>
+        )}
+        {waiting && <> · {u.in_stock} in stock</>}
+      </p>
+      {u.decision_note && <p className="mt-1 text-sm text-ink-700">{u.decision_note}</p>}
+
+      {waiting && (desk || isAsker) && (
+        <div className="mt-2 flex flex-wrap gap-2 border-t border-ink-100 pt-2">
+          {desk && (
+            <>
+              <button type="button" className="btn-primary !py-1.5 text-sm" disabled={busy}
+                onClick={() => run(() => approve.mutateAsync({ id: u.id }), `${u.qty} × ${u.part_no} off the stock.`)}>
+                {approve.isPending ? <Spinner className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4 text-green-400" />} Approve
+              </button>
+              <button type="button" className="btn-secondary !py-1.5 text-sm" disabled={busy} onClick={onDecline}>
+                <X className="h-4 w-4 text-rose-600" /> Decline
+              </button>
+            </>
+          )}
+          {isAsker && !desk && (
+            <button type="button" className="btn-secondary !py-1.5 text-sm" disabled={busy}
+              onClick={() => run(() => cancel.mutateAsync({ id: u.id }), 'Taken back.')}>
+              <Undo2 className="h-4 w-4 text-slate-500" /> Take it back
+            </button>
+          )}
+        </div>
+      )}
+    </li>
+  )
+}
+
 function RequestItem({
-  r, links, canHandle, isEngineer, onBill, onDecline, onView, onNotice,
+  r, links, mine, desk, buyer, isEngineer, onBill, onStock, onDecline, onView, onNotice,
 }: {
   r: PartRequest
   links: Record<string, string>
-  canHandle: boolean
+  /** Whose move it is now. */
+  mine: boolean
+  desk: boolean
+  buyer: boolean
   isEngineer: boolean
   onBill: () => void
+  onStock: () => void
   onDecline: () => void
   onView: (images: string[], index: number) => void
-  onNotice: (n: { kind: 'success' | 'error'; text: string } | null) => void
+  onNotice: (n: Notice) => void
 }) {
-  const accept = useAcceptPart()
+  const take = useTakePart()
+  const forward = useForwardPart()
+  const makeLocal = useMakeLocal()
   const confirm = useConfirmPart()
   const cancel = useCancelPart()
+  const run = runner(onNotice)
   const status = PART_STATUS[r.status]
   const photo = r.photo_path ? links[r.photo_path] : undefined
   const bills = r.bill_paths.map(p => links[p]).filter(Boolean)
-  const busy = accept.isPending || confirm.isPending || cancel.isPending
-
-  const run = async (fn: () => Promise<unknown>, done: string) => {
-    onNotice(null)
-    try { await fn(); onNotice({ kind: 'success', text: done }) }
-    catch (err) { onNotice({ kind: 'error', text: err instanceof Error ? err.message : 'That did not go through.' }) }
-  }
+  const busy = take.isPending || forward.isPending || makeLocal.isPending || confirm.isPending || cancel.isPending
 
   const steps: Array<[ReactNode, string | null]> = [
     [<>Asked by {r.requested_by_name}</>, r.requested_at],
-    ...(r.accepted_at ? [[<>Taken on by {r.accepted_by_name}</>, r.accepted_at] as [ReactNode, string]] : []),
+    ...(r.accepted_at ? [[<>{r.accepted_by_name} is buying it</>, r.accepted_at] as [ReactNode, string]] : []),
     ...(r.declined_at ? [[<>Declined by {r.declined_by_name}{r.declined_reason ? <>: <span className="text-ink-700">{r.declined_reason}</span></> : null}</>, r.declined_at] as [ReactNode, string]] : []),
     ...(r.purchased_at ? [[<>Bought by {r.purchased_by_name}{r.bill_amount !== null ? <> for <span className="font-medium tabular-nums text-ink-800">{rupees(r.bill_amount)}</span></> : null}{r.vendor ? <> from {r.vendor}</> : null}{r.bill_no ? <> · bill {r.bill_no}</> : null}</>, r.purchased_at] as [ReactNode, string]] : []),
+    ...(r.stocked_at ? [[<>Into stock by {r.stocked_by_name} as <span className="font-mono text-ink-700">{r.part_no}</span>{r.bought_qty ? <> · {r.bought_qty} bought</> : null}</>, r.stocked_at] as [ReactNode, string]] : []),
     ...(r.received_at ? [[<>Confirmed by {r.received_by_name}</>, r.received_at] as [ReactNode, string]] : []),
   ]
+
+  // Whoever it is with now, and the ways out for the engineer who asked.
+  const canTake = mine && (r.status === 'requested' ? r.route === 'local' && desk : r.status === 'forwarded' && buyer)
+  const canForward = desk && (r.status === 'requested')
+  const canMakeLocal = desk && (r.status === 'forwarded' || (r.status === 'requested' && r.route === 'purchase'))
+  const canBill = mine && r.status === 'accepted'
+  const canStock = desk && r.status === 'bought'
+  const canDecline = (desk && ['requested', 'accepted'].includes(r.status)) || (buyer && ['forwarded', 'accepted'].includes(r.status))
+  const canConfirm = isEngineer && r.status === 'sent'
+  const canCancel = isEngineer && ['requested', 'forwarded', 'accepted'].includes(r.status)
+  const anyAction = canTake || canForward || canMakeLocal || canBill || canStock || canDecline || canConfirm || canCancel
 
   return (
     <li className="rounded-lg border border-ink-200 p-3">
@@ -202,32 +306,49 @@ function RequestItem({
       </div>
 
       {/* The next move, for whoever it belongs to. */}
-      {((canHandle && (r.status === 'requested' || r.status === 'accepted')) || (isEngineer && (r.status === 'purchased' || r.status === 'requested' || r.status === 'accepted'))) && (
+      {anyAction && (
         <div className="mt-3 flex flex-wrap gap-2 border-t border-ink-100 pt-3">
-          {canHandle && r.status === 'requested' && (
+          {canTake && (
             <button type="button" className="btn-primary !py-1.5 text-sm" disabled={busy}
-              onClick={() => run(() => accept.mutateAsync({ id: r.id }), `${PART_ROUTE_LABEL[r.route]} accepted. Attach the bill once it is bought.`)}>
-              {accept.isPending ? <Spinner className="h-4 w-4" /> : <Hand className="h-4 w-4 text-yellow-400" />}
-              Accept {r.route === 'local' ? 'local purchase' : 'purchase'}
+              onClick={() => run(() => take.mutateAsync({ id: r.id }), 'Taken on. Attach the bill once it is bought.')}>
+              {take.isPending ? <Spinner className="h-4 w-4" /> : <Hand className="h-4 w-4 text-yellow-400" />}
+              {r.route === 'local' ? 'Buy it locally' : 'Take it on'}
             </button>
           )}
-          {canHandle && r.status === 'accepted' && (
+          {canForward && (
+            <button type="button" className={clsx(r.route === 'purchase' ? 'btn-primary' : 'btn-secondary', '!py-1.5 text-sm')} disabled={busy}
+              onClick={() => run(() => forward.mutateAsync({ id: r.id }), 'Passed to Purchase. They buy it and it comes back to you for the stock entry.')}>
+              {forward.isPending ? <Spinner className="h-4 w-4" /> : <Send className="h-4 w-4 text-amber-500" />} Pass to Purchase
+            </button>
+          )}
+          {canMakeLocal && (
+            <button type="button" className={clsx(r.status === 'forwarded' ? 'btn-secondary' : 'btn-primary', '!py-1.5 text-sm')} disabled={busy}
+              onClick={() => run(() => makeLocal.mutateAsync({ id: r.id }), 'Kept here — buy it locally and attach the bill.')}>
+              {makeLocal.isPending ? <Spinner className="h-4 w-4" /> : <ShoppingCart className="h-4 w-4 text-orange-500" />} Buy it locally
+            </button>
+          )}
+          {canBill && (
             <button type="button" className="btn-primary !py-1.5 text-sm" disabled={busy} onClick={onBill}>
-              <Receipt className="h-4 w-4 text-cyan-400" /> Attach bill and send to engineer
+              <Receipt className="h-4 w-4 text-cyan-400" /> Attach the bill
             </button>
           )}
-          {canHandle && (r.status === 'requested' || r.status === 'accepted') && (
+          {canStock && (
+            <button type="button" className="btn-primary !py-1.5 text-sm" disabled={busy} onClick={onStock}>
+              <PackagePlus className="h-4 w-4 text-violet-400" /> Write into stock and send
+            </button>
+          )}
+          {canDecline && (
             <button type="button" className="btn-secondary !py-1.5 text-sm" disabled={busy} onClick={onDecline}>
-              <X className="h-4 w-4 text-rose-600" /> Decline
+              <X className="h-4 w-4 text-rose-600" /> {buyer && !desk ? 'Hand back' : 'Decline'}
             </button>
           )}
-          {isEngineer && r.status === 'purchased' && (
+          {canConfirm && (
             <button type="button" className="btn-primary !py-1.5 text-sm" disabled={busy}
-              onClick={() => run(() => confirm.mutateAsync({ id: r.id }), 'Purchase confirmed.')}>
-              {confirm.isPending ? <Spinner className="h-4 w-4" /> : <PackageCheck className="h-4 w-4 text-green-400" />} Confirm purchase
+              onClick={() => run(() => confirm.mutateAsync({ id: r.id }), 'Confirmed — carry on with the repair.')}>
+              {confirm.isPending ? <Spinner className="h-4 w-4" /> : <PackageCheck className="h-4 w-4 text-green-400" />} Confirm
             </button>
           )}
-          {isEngineer && (r.status === 'requested' || r.status === 'accepted') && (
+          {canCancel && (
             <button type="button" className="btn-secondary !py-1.5 text-sm" disabled={busy}
               onClick={() => { if (window.confirm(`Cancel the request for ${r.qty} × ${r.name}?`)) void run(() => cancel.mutateAsync({ id: r.id }), 'Request cancelled.') }}>
               <Undo2 className="h-4 w-4 text-slate-500" /> Cancel request
@@ -240,9 +361,9 @@ function RequestItem({
 }
 
 /**
- * Bought: the bill's pages, its amount, and send. The first page is read as
- * it is added and its total put in the amount box — a suggestion to check
- * against the photo, not a figure to trust.
+ * Bought: the bill's pages and its amount. The first page is read as it is
+ * added and its total put in the amount box — a suggestion to check against
+ * the photo, not a figure to trust.
  */
 function BillDialog({ ticket: t, request: r, onClose, onDone }: {
   ticket: Ticket
@@ -290,14 +411,14 @@ function BillDialog({ ticket: t, request: r, onClose, onDone }: {
         ticketId: t.id, id: r.id, amount: n, bills: pages.map(p => p.blob),
         billNo: billNo.trim(), vendor: vendor.trim(),
       })
-      onDone(`Sent to the engineer: ${r.qty} × ${r.name}, ${rupees(n)}. They confirm it and carry on.`)
+      onDone(`Bill attached: ${r.qty} × ${r.name}, ${rupees(n)}. The coordinator writes it into stock and sends it on.`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'That did not go through.')
     }
   }
 
   return (
-    <Dialog title="Attach bill and send to engineer" icon={<IconChip icon={Receipt} tone="cyan" />} onClose={onClose}>
+    <Dialog title="Attach the bill" icon={<IconChip icon={Receipt} tone="cyan" />} onClose={onClose}>
       <p className="text-sm text-ink-600">
         {r.qty} × {r.name} <span className="text-ink-400">· {PART_ROUTE_LABEL[r.route]} for {t.code}</span>
       </p>
@@ -341,7 +462,7 @@ function BillDialog({ ticket: t, request: r, onClose, onDone }: {
       {error && <Alert kind="error">{error}</Alert>}
       <div className="flex gap-2">
         <button type="button" className="btn-primary" onClick={send} disabled={purchase.isPending}>
-          {purchase.isPending ? <Spinner className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />} Send to engineer
+          {purchase.isPending ? <Spinner className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />} Save the bill
         </button>
         <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
       </div>
@@ -349,8 +470,124 @@ function BillDialog({ ticket: t, request: r, onClose, onDone }: {
   )
 }
 
-function DeclineDialog({ request: r, onClose, onDone }: {
+/**
+ * What was bought, written into the Revive Lab's stock and sent on.
+ *
+ * The part number comes from the stock itself: the one this Revive Lab
+ * already uses for that value and item, or the next free C number. What the
+ * engineer asked for goes to the repair; whatever was bought over and above
+ * stays on the shelf.
+ */
+function StockDialog({ request: r, onClose, onDone }: {
   request: PartRequest
+  onClose: () => void
+  onDone: (message: string) => void
+}) {
+  const stock = useStockPart()
+  const [value, setValue] = useState(r.name)
+  const [item, setItem] = useState('')
+  const [pack, setPack] = useState('')
+  const [partNo, setPartNo] = useState('')
+  const [touchedPartNo, setTouchedPartNo] = useState(false)
+  const [qty, setQty] = useState(String(r.qty))
+  const [useQty, setUseQty] = useState(String(r.qty))
+  const [error, setError] = useState<string | null>(null)
+  const suggestion = usePartNo(r.trc_id, value, item)
+
+  // The number follows the value and item until somebody types their own.
+  useEffect(() => {
+    if (!touchedPartNo && suggestion.data) setPartNo(suggestion.data)
+  }, [suggestion.data, touchedPartNo])
+
+  const bought = Number(qty)
+  const toRepair = Number(useQty)
+  const known = suggestion.data && suggestion.data === partNo && !touchedPartNo
+
+  const send = async () => {
+    setError(null)
+    if (value.trim().length < 1) { setError('Enter the value — what is printed on the part.'); return }
+    if (!Number.isInteger(bought) || bought < 1) { setError('Enter how many were bought.'); return }
+    if (!Number.isInteger(toRepair) || toRepair < 0 || toRepair > bought) { setError('The repair cannot take more than was bought.'); return }
+    try {
+      await stock.mutateAsync({
+        id: r.id, value: value.trim(), item: item.trim(), package: pack.trim(),
+        partNo: partNo.trim() || null, qty: bought, useQty: toRepair,
+      })
+      onDone(`${bought} into stock as ${partNo.trim() || 'a new part'}${toRepair ? `, ${toRepair} to this repair` : ''}. The engineer confirms it.`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'That did not go through.')
+    }
+  }
+
+  return (
+    <Dialog title="Write into stock and send" icon={<IconChip icon={PackagePlus} tone="violet" />} onClose={onClose} wide>
+      <p className="text-sm text-ink-600">
+        The engineer asked for <span className="font-medium text-ink-900">{r.qty} × {r.name}</span>
+        {r.vendor ? <> · bought from {r.vendor}</> : null}
+        {r.bill_amount !== null ? <> · {rupees(r.bill_amount)}</> : null}
+      </p>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="block">
+          <span className="label">Value <span className="text-cyrixRed-600">*</span></span>
+          <input className="input mt-1" value={value} onChange={e => setValue(e.target.value)} maxLength={160}
+            placeholder="e.g. IRF640, 10k 1%" />
+        </label>
+        <label className="block">
+          <span className="label">Item</span>
+          <input className="input mt-1" value={item} onChange={e => setItem(e.target.value)} maxLength={80}
+            placeholder="e.g. MOSFET, RESISTOR" />
+        </label>
+        <label className="block">
+          <span className="label">Type</span>
+          <input className="input mt-1" value={pack} onChange={e => setPack(e.target.value)} maxLength={40}
+            placeholder="e.g. TH, SMD" />
+        </label>
+        <label className="block">
+          <span className="label">Part number</span>
+          <input className="input mt-1 font-mono" value={partNo} maxLength={40}
+            onChange={e => { setPartNo(e.target.value); setTouchedPartNo(true) }} />
+          <span className="mt-1 block text-xs text-ink-500">
+            {suggestion.isFetching ? 'Looking it up…'
+              : known ? 'This Revive Lab’s number for that value and item — new ones are made up here.'
+                : 'Typed in by hand.'}
+          </span>
+        </label>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="block">
+          <span className="label">How many were bought <span className="text-cyrixRed-600">*</span></span>
+          <input className="input mt-1 tabular-nums" type="number" inputMode="numeric" min={1} step={1}
+            value={qty} onChange={e => setQty(e.target.value)} />
+        </label>
+        <label className="block">
+          <span className="label">To this repair</span>
+          <input className="input mt-1 tabular-nums" type="number" inputMode="numeric" min={0} step={1}
+            value={useQty} onChange={e => setUseQty(e.target.value)} />
+          <span className="mt-1 block text-xs text-ink-500">
+            {Number.isFinite(bought) && Number.isFinite(toRepair) && bought - toRepair > 0
+              ? `${bought - toRepair} stays in stock.`
+              : 'The rest stays in stock.'}
+          </span>
+        </label>
+      </div>
+
+      {error && <Alert kind="error">{error}</Alert>}
+      <div className="flex gap-2">
+        <button type="button" className="btn-primary" onClick={send} disabled={stock.isPending}>
+          {stock.isPending ? <Spinner className="h-4 w-4" /> : <Send className="h-4 w-4" />} Send to the engineer
+        </button>
+        <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
+      </div>
+    </Dialog>
+  )
+}
+
+function DeclineDialog({ request: r, buyer, onClose, onDone }: {
+  request: PartRequest
+  /** Purchase handing it back to the coordinator, rather than the coordinator refusing it. */
+  buyer: boolean
   onClose: () => void
   onDone: (message: string) => void
 }) {
@@ -363,19 +600,63 @@ function DeclineDialog({ request: r, onClose, onDone }: {
     if (reason.trim().length < 3) { setError('Say why it is not being bought.'); return }
     try {
       await decline.mutateAsync({ id: r.id, reason: reason.trim() })
-      onDone(`Declined. The engineer sees why and can ask another way.`)
+      onDone(buyer
+        ? 'Handed back to the coordinator, with your reason. They may still find it locally.'
+        : 'Declined. The engineer sees why and can ask another way.')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'That did not go through.')
     }
   }
 
   return (
-    <Dialog title="Decline request" icon={<IconChip icon={ShoppingCart} tone="rose" />} onClose={onClose}>
+    <Dialog title={buyer ? 'Hand back to the coordinator' : 'Decline request'} icon={<IconChip icon={ShoppingCart} tone="rose" />} onClose={onClose}>
       <p className="text-sm text-ink-600">{r.qty} × {r.name} · {PART_ROUTE_LABEL[r.route]}</p>
       <label className="block">
         <span className="label">Why <span className="text-cyrixRed-600">*</span></span>
         <textarea className="input mt-1" rows={3} value={reason} onChange={e => setReason(e.target.value)} maxLength={500}
-          placeholder="e.g. Not available locally — use the IRFP450 in stock" />
+          placeholder={buyer ? 'e.g. None of our suppliers stock it' : 'e.g. Not available locally — use the IRFP450 in stock'} />
+      </label>
+      {error && <Alert kind="error">{error}</Alert>}
+      <div className="flex gap-2">
+        <button type="button" className="btn-primary" onClick={send} disabled={decline.isPending}>
+          {decline.isPending && <Spinner className="h-4 w-4" />} {buyer ? 'Hand back' : 'Decline'}
+        </button>
+        <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
+      </div>
+    </Dialog>
+  )
+}
+
+function DeclineUseDialog({ use: u, onClose, onDone }: {
+  use: ComponentUse
+  onClose: () => void
+  onDone: (message: string) => void
+}) {
+  const decline = useDeclineUse()
+  const [reason, setReason] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  const send = async () => {
+    setError(null)
+    if (reason.trim().length < 3) { setError('Say why it is not approved.'); return }
+    try {
+      await decline.mutateAsync({ id: u.id, reason: reason.trim() })
+      onDone('Not approved. The engineer sees why.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'That did not go through.')
+    }
+  }
+
+  return (
+    <Dialog title="Not off the stock" icon={<IconChip icon={Boxes} tone="rose" />} onClose={onClose}>
+      <p className="text-sm text-ink-600">
+        {u.qty} × {u.value ?? u.item ?? u.part_no} <span className="font-mono text-xs text-ink-500">{u.part_no}</span>
+        <span className="text-ink-400"> · {u.in_stock} in stock</span>
+      </p>
+      <label className="block">
+        <span className="label">Why <span className="text-cyrixRed-600">*</span></span>
+        <textarea className="input mt-1" rows={3} value={reason} onChange={e => setReason(e.target.value)} maxLength={500}
+          placeholder="e.g. Those are for the Ernakulam job — use C-118 instead" />
       </label>
       {error && <Alert kind="error">{error}</Alert>}
       <div className="flex gap-2">

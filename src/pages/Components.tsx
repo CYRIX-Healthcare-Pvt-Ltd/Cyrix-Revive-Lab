@@ -9,7 +9,7 @@ import {
   useComponents, usePartRequests, useTickets, useTrcs, useUploadStock, type Component, type PartRequest,
 } from '@/lib/queries'
 import {
-  buysFor, itemsSummary, PART_ROUTE_LABEL, PART_STATUS, runsTrc, TONE_CLASS, type PartRoute,
+  buysFor, itemsSummary, partOpen, PART_ROUTE_LABEL, PART_STATUS, runsTrc, TONE_CLASS, type PartRoute,
 } from '@/lib/tickets'
 import { readStockGrid, stockDiff, type SheetRead, type StockDiff } from '@/lib/stockSheet'
 import { Alert, EmptyState, PageLoader, Spinner, StatTile } from '@/components/ui'
@@ -323,7 +323,7 @@ function RequestsTab({ purchaseOnly }: { purchaseOnly: boolean }) {
   const rows = useMemo(() => (requests ?? []).filter(r =>
     (!purchaseOnly || (r.route === 'purchase' && buysFor(me, r.trc_id)))
     && (!route || r.route === route)
-    && (show === 'all' || r.status === 'requested' || r.status === 'accepted' || r.status === 'purchased')), [requests, purchaseOnly, me, route, show])
+    && (show === 'all' || partOpen(r.status))), [requests, purchaseOnly, me, route, show])
 
   if (isLoading) return <Spinner className="h-5 w-5 text-ink-400" />
 

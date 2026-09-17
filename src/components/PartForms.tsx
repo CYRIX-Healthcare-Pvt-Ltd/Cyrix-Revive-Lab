@@ -71,7 +71,7 @@ export function UseComponentForm({ ticket: t, onDone, onError, onCancel }: {
     if (n > picked.qty) { onError(`Only ${picked.qty} in stock.`); return }
     try {
       await use.mutateAsync({ ticketId: t.id, componentId: picked.id, qty: n })
-      onDone(`Used ${n} × ${picked.value ?? picked.part_no} (${picked.part_no}). ${picked.qty - n} left in stock.`)
+      onDone(`${n} × ${picked.value ?? picked.part_no} (${picked.part_no}) asked for. The coordinator approves it and it comes off the count.`)
     } catch (err) {
       onError(err instanceof Error ? err.message : 'That did not go through.')
     }
@@ -130,9 +130,12 @@ export function UseComponentForm({ ticket: t, onDone, onError, onCancel }: {
         </>
       )}
 
+      <p className="text-xs text-ink-500">
+        The coordinator at {t.trc_name} approves what comes off the stock, and the repair waits until they do.
+      </p>
       <div className="flex gap-2">
         <button type="button" className="btn-primary" onClick={run} disabled={use.isPending || !picked}>
-          {use.isPending ? <Spinner className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />} Use from stock
+          {use.isPending ? <Spinner className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />} Take it from stock
         </button>
         <button type="button" className="btn-secondary" onClick={onCancel}>Cancel</button>
       </div>
@@ -175,7 +178,9 @@ export function RequestPartForm({ ticket: t, onDone, onError, onCancel }: {
         note: note.trim(), link: link.trim(), photo: photos[0]?.blob ?? null,
       })
       onDone(
-        route === 'local' ? 'Requested. The coordinator accepts and buys it.' : 'Requested. Purchase accepts and buys it.',
+        route === 'local'
+          ? 'Asked for. The coordinator buys it and writes it into stock.'
+          : 'Asked for. The coordinator passes it to Purchase, or buys it locally if they can.',
         res.photoFailed ? 'The request was sent, but its photo did not upload.' : undefined,
       )
     } catch (err) {
@@ -225,7 +230,9 @@ export function RequestPartForm({ ticket: t, onDone, onError, onCancel }: {
             >
               <span className="block text-sm font-medium text-ink-900">{PART_ROUTE_LABEL[r]}</span>
               <span className="block text-xs text-ink-500">
-                {r === 'local' ? `The coordinator at ${t.trc_name} buys it` : 'The Purchase team buys it'}
+                {r === 'local'
+                  ? `The coordinator at ${t.trc_name} buys it`
+                  : 'The coordinator passes it to the Purchase team'}
               </span>
             </button>
           ))}

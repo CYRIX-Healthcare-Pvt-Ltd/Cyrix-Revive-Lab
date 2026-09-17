@@ -377,12 +377,35 @@ export const PROPOSAL_LABEL: Record<Proposal, string> = {
 
 /** A component request, as the ticket list carries it: enough to know whose move it is. */
 export type PartRoute = 'local' | 'purchase'
-export type PartStatus = 'requested' | 'accepted' | 'declined' | 'purchased' | 'received' | 'cancelled'
+
+/**
+ * A component request's journey (rl_0016). Everything asked for reaches the
+ * coordinator first: they buy it locally, or pass it to Purchase. Whoever
+ * buys it attaches the bill; the coordinator then writes it into the Revive
+ * Lab's stock and sends it to the engineer, who confirms it.
+ */
+export type PartStatus =
+  | 'requested' | 'forwarded' | 'accepted' | 'bought' | 'sent' | 'received' | 'declined' | 'cancelled'
 
 export interface PartSummary {
   id: string
   route: PartRoute
   status: PartStatus
+}
+
+/** Stock an engineer has taken, and whether the coordinator has approved it (rl_0016). */
+export type StockUseStatus = 'requested' | 'approved' | 'declined' | 'cancelled'
+
+export interface StockUseSummary {
+  id: string
+  status: StockUseStatus
+}
+
+export const STOCK_USE_STATUS: Record<StockUseStatus, { label: string; tone: Tone }> = {
+  requested: { label: 'Waiting for the coordinator', tone: 'orange' },
+  approved: { label: 'Off the stock', tone: 'green' },
+  declined: { label: 'Not approved', tone: 'rose' },
+  cancelled: { label: 'Taken back', tone: 'slate' },
 }
 
 export const PART_ROUTE_LABEL: Record<PartRoute, string> = {
@@ -391,16 +414,19 @@ export const PART_ROUTE_LABEL: Record<PartRoute, string> = {
 }
 
 export const PART_STATUS: Record<PartStatus, { label: string; tone: Tone }> = {
-  requested: { label: 'Requested', tone: 'orange' },
+  requested: { label: 'With the coordinator', tone: 'orange' },
+  forwarded: { label: 'With Purchase', tone: 'amber' },
   accepted: { label: 'Being bought', tone: 'yellow' },
-  purchased: { label: 'Bought — engineer to confirm', tone: 'cyan' },
+  bought: { label: 'Bought — to go into stock', tone: 'violet' },
+  sent: { label: 'Sent — engineer to confirm', tone: 'cyan' },
   received: { label: 'Confirmed', tone: 'green' },
   declined: { label: 'Declined', tone: 'rose' },
   cancelled: { label: 'Cancelled', tone: 'slate' },
 }
 
-/** Still open: nobody has bought it yet. */
-export const partOpen = (s: PartStatus) => s === 'requested' || s === 'accepted'
+/** Still going: it has not reached the engineer, and nobody has given up on it. */
+export const partOpen = (s: PartStatus) =>
+  s === 'requested' || s === 'forwarded' || s === 'accepted' || s === 'bought'
 
 export interface TicketLike {
   status: TicketStatus
@@ -409,6 +435,7 @@ export interface TicketLike {
   stakeholder_id: string
   raised_by: string
   parts?: readonly PartSummary[] | null
+  stock?: readonly StockUseSummary[] | null
   closure?: Closure | null
   proposal?: Proposal | null
   approval?: Pick<Approval, 'kind' | 'status'> | null
@@ -424,9 +451,31 @@ export function buysFor(me: Me | null | undefined, trcId: string): boolean {
   return !!me && !!me.is_purchase && me.trc_ids.includes(trcId)
 }
 
-/** Who takes a request on: the desk for a local purchase, Purchase for a purchase. */
+/** Who buys a request: the desk for a local purchase, Purchase for a purchase. */
 export function handlesPart(me: Me | null | undefined, route: PartRoute, trcId: string): boolean {
   return route === 'local' ? runsTrc(me, trcId) : buysFor(me, trcId)
+}
+
+/**
+ * Whose move a component request is now (rl_0016). It starts and ends with
+ * the Revive Lab: the coordinator decides how it is bought and writes what
+ * came back into stock; Purchase buys what is passed to them; the engineer
+ * confirms it and carries on.
+ */
+export function partActor(
+  part: { route: PartRoute; status: PartStatus },
+  me: Me | null | undefined,
+  trcId: string,
+  engineerId?: string | null,
+): boolean {
+  switch (part.status) {
+    case 'requested': return runsTrc(me, trcId)
+    case 'forwarded': return buysFor(me, trcId)
+    case 'accepted': return handlesPart(me, part.route, trcId)
+    case 'bought': return runsTrc(me, trcId)
+    case 'sent': return !!me && !!engineerId && engineerId === me.employee_id
+    default: return false
+  }
 }
 
 export type Action =
@@ -490,13 +539,17 @@ export function actionsFor(t: TicketLike, me: Me | null | undefined): Action[] {
   return out
 }
 
-/** Component requests waiting on this person: to take on and buy, or to confirm. */
+/**
+ * Components waiting on this person: a request whose move is theirs, and
+ * stock an engineer has taken that the desk has not approved yet.
+ */
 export function partsWaitingOn(t: TicketLike, me: Me | null | undefined): number {
   if (!me) return 0
-  const mine = t.engineer_id === me.employee_id
-  return (t.parts ?? []).filter(p =>
-    (partOpen(p.status) && handlesPart(me, p.route, t.trc_id))
-    || (p.status === 'purchased' && mine)).length
+  const requests = (t.parts ?? []).filter(p => partActor(p, me, t.trc_id, t.engineer_id)).length
+  const stock = runsTrc(me, t.trc_id)
+    ? (t.stock ?? []).filter(u => u.status === 'requested').length
+    : 0
+  return requests + stock
 }
 
 const SIDE_STEPS: readonly Action[] = [
