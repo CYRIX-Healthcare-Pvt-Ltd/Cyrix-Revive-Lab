@@ -35,7 +35,8 @@ export default function Shell() {
     { to: '/tickets', label: 'Tickets', short: 'Tickets', icon: ListChecks, tone: 'amber', badge: mine },
     // A Revive Lab's own engineer repairs what arrives; they never send one in.
     ...(canRaise(me) ? [{ to: '/new', label: 'Raise ticket', short: 'Raise', icon: PackagePlus, tone: 'red' as Tone }] : []),
-    ...(me && (me.is_coordinator || me.is_manager || me.is_admin || me.is_purchase)
+    // The desk and the admins only: Purchase works from its tickets, a field engineer has no stock.
+    ...(me && (me.is_coordinator || me.is_manager || me.is_admin)
       ? [{ to: '/components', label: 'Components', short: 'Parts', icon: Boxes, tone: 'orange' as Tone }]
       : []),
     ...(me?.is_admin
