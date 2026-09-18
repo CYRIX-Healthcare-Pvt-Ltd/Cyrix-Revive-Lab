@@ -144,6 +144,13 @@ export const PARTS_STATUSES: readonly TicketStatus[] = ['parts_requested', 'part
 /** The engineer has it: repairing, or waiting on a component for the repair. */
 export const REPAIRING: readonly TicketStatus[] = ['in_repair', ...PARTS_STATUSES]
 
+/**
+ * Where the spare came from (rl_0020): a hospital, sent in by its field
+ * engineer, or a warehouse, whose defective stock the Revive Lab's desk
+ * raises on arrival and whose in-charge follows it.
+ */
+export type TicketSource = 'hospital' | 'warehouse'
+
 /** How a ticket ended: sent back, moved to scrap, or discarded before it went anywhere (rl_0014). */
 export type Closure = 'returned' | 'scrapped' | 'discarded'
 

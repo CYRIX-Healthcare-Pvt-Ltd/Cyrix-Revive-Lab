@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
-import { ArrowLeft, ArrowUpRight, ClipboardList, PackagePlus, Pencil, ShieldQuestion, Truck, UserRound, X } from 'lucide-react'
+import {
+  ArrowLeft, ArrowUpRight, ClipboardList, Hospital, PackagePlus, Pencil, ShieldQuestion, Truck, UserRound, Warehouse, X,
+} from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { useBemmpProjects, useMembers, useRaiseTicket, useTickets, useTrcs, type Person, type Trc } from '@/lib/queries'
-import { approversOf, cleanItems, orList, runsTrc, serves, stateLabel } from '@/lib/tickets'
+import {
+  useBemmpProjects, useMembers, useRaiseTicket, useTickets, useTrcs, useWarehouses, type Person, type Trc,
+} from '@/lib/queries'
+import { approversOf, cleanItems, orList, runsTrc, serves, stateLabel, type TicketSource } from '@/lib/tickets'
 import { STATES, districtsOf } from '@/lib/india'
 import { uploadAttachment, type Slot } from '@/lib/attachments'
 import { Alert, PageLoader, Spinner } from '@/components/ui'
@@ -33,9 +37,11 @@ import ItemsField, { newLine, type ItemLine } from '@/components/ItemsField'
  *
  * Who is asking decides which card it is, and nobody is asked. A field
  * engineer sending a spare in raises it for themselves. A Revive Lab's
- * coordinator or manager raises it at their Revive Lab, for a spare that
- * arrived there from wherever, and names the field engineer it belongs to —
- * the desk does not send spares in, so it is not offered the choice.
+ * coordinator or manager raises it at their own Revive Lab for that state,
+ * for a spare that arrived there, and names whose it is: the field engineer,
+ * or — for a warehouse's defective spare — the warehouse in-charge. A
+ * warehouse card names the warehouse from a fixed list, and has no district,
+ * BEMMP or ticket ID (rl_0020).
  */
 export default function NewTicket() {
   const { me, employee } = useAuth()
@@ -44,6 +50,7 @@ export default function NewTicket() {
   const { data: bemmp } = useBemmpProjects()
   const { data: tickets } = useTickets()
   const { data: members } = useMembers()
+  const { data: warehouses } = useWarehouses()
   const raise = useRaiseTicket()
 
   const active = useMemo(() => (trcs ?? []).filter(t => t.is_active), [trcs])
@@ -55,6 +62,9 @@ export default function NewTicket() {
   const [far, setFar] = useState<{ trcId: string; reason: string } | null>(null)
   const [asking, setAsking] = useState(false)
   const [holder, setHolder] = useState<Person | null>(null)
+  // The desk's own question: a hospital's spare, or a warehouse's (rl_0020).
+  const [source, setSource] = useState<TicketSource>('hospital')
+  const [warehouseId, setWarehouseId] = useState('')
   const [form, setForm] = useState({
     state: '', district: '', bemmpId: '', hospital: '', equipmentBarcode: '', equipmentName: '',
     equipmentMake: '', equipmentModel: '',
@@ -85,11 +95,18 @@ export default function NewTicket() {
   }, [employee, tickets])
 
   const state = form.state
+  const fromWarehouse = atLab && source === 'warehouse'
   const districts = districtsOf(state)
   const bemmpChoices = useMemo(() => (bemmp ?? []).filter(b => b.is_active && serves(b, state)), [bemmp, state])
+  // The state's own Revive Labs and the Regional ones — for the desk, only
+  // those of its own. A Kerala card at the Jodhpur Revive Lab was offered once.
   const labChoices = useMemo(
-    () => (atLab ? deskTrcs : state ? active.filter(t => serves(t, state)) : []),
+    () => (state ? (atLab ? deskTrcs : active).filter(t => serves(t, state)) : []),
     [atLab, deskTrcs, active, state],
+  )
+  const warehouseChoices = useMemo(
+    () => (warehouses ?? []).filter(w => w.is_active && serves(w, state)),
+    [warehouses, state],
   )
   const elsewhere = useMemo(() => (atLab || !state ? [] : active.filter(t => !serves(t, state))), [atLab, active, state])
   const farLab = far ? active.find(t => t.id === far.trcId) ?? null : null
@@ -97,11 +114,15 @@ export default function NewTicket() {
   // Pvt asks whether the spare is billed to the customer.
   const asksBilling = !!bemmpChoices.find(b => b.id === form.bemmpId)?.asks_billing
 
-  // One Revive Lab to choose from: it is the answer, not a question.
+  // One Revive Lab to choose from: it is the answer, not a question. The same for a warehouse.
   useEffect(() => {
     if (labChoices.length === 1) setTrcId(labChoices[0].id)
     else setTrcId(id => (labChoices.some(c => c.id === id) ? id : ''))
   }, [labChoices])
+  useEffect(() => {
+    if (warehouseChoices.length === 1) setWarehouseId(warehouseChoices[0].id)
+    else setWarehouseId(id => (warehouseChoices.some(w => w.id === id) ? id : ''))
+  }, [warehouseChoices])
 
   const set = (k: keyof typeof form) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
@@ -122,26 +143,34 @@ export default function NewTicket() {
     e.preventDefault()
     setError(null)
     if (!form.state) { setError('Choose the state.'); return }
-    if (!form.district) { setError('Choose the district.'); return }
-    if (!form.bemmpId) { setError('Choose the BEMMP.'); return }
+    if (!fromWarehouse && !form.district) { setError('Choose the district.'); return }
+    if (!fromWarehouse && !form.bemmpId) { setError('Choose the BEMMP.'); return }
     if (!far && !trcId) { setError('Choose the Revive Lab the spare is going to.'); return }
-    if (form.hospital.trim().length < 2) { setError('Enter the hospital name.'); return }
+    if (fromWarehouse && !warehouseId) { setError('Choose the warehouse.'); return }
+    if (!fromWarehouse && form.hospital.trim().length < 2) { setError('Enter the hospital name.'); return }
     const items = cleanItems(lines)
     if (items.length === 0) { setError('Enter the spare name.'); return }
     if (items.some(i => i.name.length < 2)) { setError('Enter the name of each spare and accessory.'); return }
     if (form.issue.trim().length < 3) { setError('Describe the issue identified.'); return }
     if (form.returnAddress.trim().length < 5) { setError('Enter the spare return address.'); return }
-    if (atLab && !holder) { setError('Name the field engineer this spare belongs to.'); return }
+    if (atLab && !holder) {
+      setError(fromWarehouse ? 'Name the warehouse in-charge this spare belongs to.' : 'Name the field engineer this spare belongs to.')
+      return
+    }
 
     let created: { id: string; code: string } | null = null
     try {
       setStage('raising')
       created = await raise.mutateAsync({
         ...form, items,
+        // A warehouse's card has none of these, whatever was typed before switching.
+        ...(fromWarehouse ? { district: '', bemmpId: '', hospital: '', sourceTicketNo: '' } : {}),
+        source: fromWarehouse ? 'warehouse' : 'hospital',
+        warehouseId: fromWarehouse ? warehouseId : null,
         trcId: far ? far.trcId : trcId,
         approvalReason: far ? far.reason : null,
         stakeholderId: atLab ? holder!.id : null,
-        billingSpare: asksBilling ? form.billingSpare === 'yes' : null,
+        billingSpare: !fromWarehouse && asksBilling ? form.billingSpare === 'yes' : null,
       })
     } catch (err) {
       setStage('idle')
@@ -197,8 +226,36 @@ export default function NewTicket() {
             <h2 className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
               <IconChip icon={UserRound} tone="red" /> Whose spare it is
             </h2>
+            {/* A warehouse sends its defective spares in through the desk (rl_0020). */}
             <div>
-              <span className="label">Field engineer it belongs to <Req /></span>
+              <span className="label">It comes from <Req /></span>
+              <div className="mt-1 grid gap-2 sm:grid-cols-2">
+                {(['hospital', 'warehouse'] as const).map(s => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setSource(s)}
+                    aria-pressed={source === s}
+                    className={clsx(
+                      'flex items-center gap-2.5 rounded-lg border px-3 py-2 text-left transition-colors',
+                      source === s ? 'border-sky-300 bg-sky-50' : 'border-ink-200 hover:border-ink-400',
+                    )}
+                  >
+                    {s === 'hospital'
+                      ? <Hospital className="h-4 w-4 shrink-0 text-sky-600" />
+                      : <Warehouse className="h-4 w-4 shrink-0 text-ink-600" />}
+                    <span>
+                      <span className="block text-sm font-medium text-ink-900">{s === 'hospital' ? 'A hospital' : 'A warehouse'}</span>
+                      <span className="block text-xs text-ink-500">
+                        {s === 'hospital' ? 'Sent in by a field engineer' : 'A defective spare from warehouse stock'}
+                      </span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <span className="label">{fromWarehouse ? 'Warehouse in-charge' : 'Field engineer it belongs to'} <Req /></span>
               <div className="mt-1"><PersonPicker value={holder} onChange={setHolder} /></div>
               <p className="mt-1 text-xs text-ink-500">They and their reporting manager follow this ticket as if they had raised it.</p>
             </div>
@@ -224,16 +281,18 @@ export default function NewTicket() {
                 {STATES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </label>
-            <label className="block">
-              <span className="label">District <Req /></span>
-              <select className="input mt-1" value={form.district} onChange={set('district')} disabled={!state}>
-                <option value="">{state ? 'Choose…' : 'Choose the state first'}</option>
-                {districts.map(d => <option key={d} value={d}>{d}</option>)}
-              </select>
-            </label>
+            {!fromWarehouse && (
+              <label className="block">
+                <span className="label">District <Req /></span>
+                <select className="input mt-1" value={form.district} onChange={set('district')} disabled={!state}>
+                  <option value="">{state ? 'Choose…' : 'Choose the state first'}</option>
+                  {districts.map(d => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </label>
+            )}
 
             {/* Billing spare is a question about the BEMMP, so it shares its place. */}
-            <div className={clsx('grid gap-3', asksBilling && 'grid-cols-2')}>
+            {!fromWarehouse && <div className={clsx('grid gap-3', asksBilling && 'grid-cols-2')}>
               <label className="block">
                 <span className="label">BEMMP <Req /></span>
                 <select
@@ -260,7 +319,7 @@ export default function NewTicket() {
                   </select>
                 </label>
               )}
-            </div>
+            </div>}
 
             <div>
               {far && farLab ? (
@@ -271,10 +330,15 @@ export default function NewTicket() {
               ) : (
                 <label className="block">
                   <span className="label">Revive Lab <Req /></span>
-                  <select className="input mt-1" value={trcId} onChange={e => setTrcId(e.target.value)} disabled={!atLab && !state}>
-                    <option value="">{atLab || state ? 'Choose…' : 'Choose the state first'}</option>
+                  <select className="input mt-1" value={trcId} onChange={e => setTrcId(e.target.value)} disabled={!state}>
+                    <option value="">{state ? 'Choose…' : 'Choose the state first'}</option>
                     <LabOptions labs={labChoices} first={state} />
                   </select>
+                  {atLab && state && labChoices.length === 0 && (
+                    <span className="mt-1 block text-xs text-cyrixRed-700">
+                      None of your Revive Labs is for {state}. Its spares go to {state}&rsquo;s own Revive Lab, or a Regional one.
+                    </span>
+                  )}
                 </label>
               )}
               {!far && elsewhere.length > 0 && (
@@ -286,7 +350,20 @@ export default function NewTicket() {
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Hospital name" value={form.hospital} onChange={set('hospital')} required />
+            {fromWarehouse ? (
+              <label className="block">
+                <span className="label">Warehouse <Req /></span>
+                <select className="input mt-1" value={warehouseId} onChange={e => setWarehouseId(e.target.value)} disabled={!state}>
+                  <option value="">{!state ? 'Choose the state first' : warehouseChoices.length ? 'Choose…' : 'No warehouse for this state'}</option>
+                  {warehouseChoices.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                </select>
+                {state && warehouseChoices.length === 0 && (
+                  <span className="mt-1 block text-xs text-ink-500">A Revive Lab admin adds warehouses under People &amp; Revive Labs.</span>
+                )}
+              </label>
+            ) : (
+              <Field label="Hospital name" value={form.hospital} onChange={set('hospital')} required />
+            )}
             <Field label="Equipment barcode" value={form.equipmentBarcode} onChange={set('equipmentBarcode')} mono />
             <Field label="Equipment name" value={form.equipmentName} onChange={set('equipmentName')} placeholder="e.g. Ventilator" />
             {/* Beside the equipment they describe (rl_0019). */}
@@ -298,7 +375,9 @@ export default function NewTicket() {
             <div className="sm:col-span-2">
               <ItemsField lines={lines} onChange={setLines} required machine={form.equipmentName} />
             </div>
-            <Field label="Ticket ID" value={form.sourceTicketNo} onChange={set('sourceTicketNo')} placeholder="The field service ticket" mono />
+            {!fromWarehouse && (
+              <Field label="Ticket ID" value={form.sourceTicketNo} onChange={set('sourceTicketNo')} placeholder="The field service ticket" mono />
+            )}
             <Field label="Contact number" type="tel" value={form.contactNumber} onChange={set('contactNumber')} placeholder="+91 …" />
           </div>
 

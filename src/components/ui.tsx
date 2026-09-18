@@ -8,7 +8,7 @@
  */
 import { useEffect, useRef, type ReactNode } from 'react'
 import clsx from 'clsx'
-import { AlertCircle, ArrowDown, ArrowUp, CheckCircle2, ChevronsUpDown, Info, Loader2 } from 'lucide-react'
+import { AlertCircle, ArrowDown, ArrowUp, CheckCircle2, ChevronsUpDown, Info, Loader2, Warehouse } from 'lucide-react'
 import { STATUS, TONE_CLASS, statusLook, type Closure, type Proposal, type TicketStatus } from '@/lib/tickets'
 
 export function Spinner({ className }: { className?: string }) {
@@ -170,6 +170,19 @@ export function SortHeader<K extends string>({
           : <ChevronsUpDown aria-hidden className="h-3 w-3 shrink-0 text-ink-300 group-hover:text-ink-500" />}
       </button>
     </th>
+  )
+}
+
+/**
+ * A spare from a warehouse rather than a hospital (rl_0020), marked wherever
+ * the ticket shows — dark on light and light on dark, so it never reads as
+ * one of the status colours.
+ */
+export function WarehouseChip({ className }: { className?: string }) {
+  return (
+    <span className={clsx('badge inline-flex items-center gap-1 whitespace-nowrap bg-ink-800 text-ink-50', className)}>
+      <Warehouse aria-hidden className="h-3 w-3" /> Warehouse
+    </span>
   )
 }
 

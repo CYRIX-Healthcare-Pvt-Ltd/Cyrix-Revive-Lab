@@ -8,7 +8,7 @@ import {
   STATUS, STATUS_ORDER, TONE_CLASS, TONE_DOT, TONE_TEXT, canRaise, itemsSummary, parseTicketCode, ticketTabs,
   type TabId,
 } from '@/lib/tickets'
-import { EmptyState, PageLoader, SortHeader, StatusBadge } from '@/components/ui'
+import { EmptyState, PageLoader, SortHeader, StatusBadge, WarehouseChip } from '@/components/ui'
 
 type SortKey = 'code' | 'raised' | 'status' | 'hospital' | 'spare' | 'trc' | 'field' | 'engineer' | 'age'
 
@@ -93,6 +93,9 @@ export default function Tickets() {
   const view = tab.id
   const trcId = params.get('lab') ?? ''
   const status = params.get('status') ?? ''
+  // A hospital's spares or a warehouse's (rl_0020); asked only once there are any from a warehouse.
+  const from = params.get('from') ?? ''
+  const anyWarehouse = useMemo(() => (tickets ?? []).some(t => t.source === 'warehouse'), [tickets])
   // The search box answers to every key at once; the address follows it,
   // and a link that clears the address clears the box.
   const urlQ = params.get('q') ?? ''
@@ -123,12 +126,14 @@ export default function Tickets() {
     let rows = (tickets ?? []).filter(tab.match)
     if (trcId) rows = rows.filter(t => t.trc_id === trcId)
     if (status) rows = rows.filter(t => t.status === status)
+    if (from) rows = rows.filter(t => (t.source ?? 'hospital') === from)
     if (needle) {
       rows = rows.filter(t =>
         (asNumber !== null && t.number === asNumber)
         || [t.code, t.source_ticket_no, t.facility, t.spare_name, t.equipment_name, t.equipment_make, t.equipment_model,
             t.equipment_barcode, t.district, t.state, t.bemmp_code,
             t.stakeholder_name, t.stakeholder_ecode, t.engineer_name, t.in_awb, t.out_awb,
+            t.source === 'warehouse' ? 'warehouse' : null,
             // Every spare and accessory, not just the first.
             ...(t.items ?? []).map(i => i.name)]
           .some(v => (v ?? '').toLowerCase().includes(needle)))
@@ -146,7 +151,7 @@ export default function Tickets() {
       // Level on this column: newest first.
       return Date.parse(b.created_at) - Date.parse(a.created_at)
     })
-  }, [tickets, tab, q, trcId, status, sortKey, asc])
+  }, [tickets, tab, q, trcId, status, from, sortKey, asc])
 
   // The phone's order, named; one set by a column heading on a wider
   // screen is kept rather than shown as something it is not.
@@ -210,6 +215,13 @@ export default function Tickets() {
               <option value="">Any status</option>
               {STATUS_ORDER.map(s => <option key={s} value={s}>{STATUS[s].short}</option>)}
             </select>
+            {(anyWarehouse || from) && (
+              <select className="input !py-1.5 sm:w-48" value={from} onChange={e => setParam('from', e.target.value || null)} aria-label="Filter by where it came from">
+                <option value="">Hospital or warehouse</option>
+                <option value="hospital">From hospitals</option>
+                <option value="warehouse">From warehouses</option>
+              </select>
+            )}
             <label className="relative min-w-0 flex-1 sm:w-56 sm:flex-none">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
               <input
@@ -244,7 +256,7 @@ export default function Tickets() {
                     <SortHeader label="Ticket" col="code" sortKey={sortKey} asc={asc} onSort={onSort} className={pinned} />
                     <SortHeader label="Raised" col="raised" sortKey={sortKey} asc={asc} onSort={onSort} />
                     <SortHeader label="Status" col="status" sortKey={sortKey} asc={asc} onSort={onSort} />
-                    <SortHeader label="Hospital" col="hospital" sortKey={sortKey} asc={asc} onSort={onSort} />
+                    <SortHeader label={anyWarehouse ? 'Hospital / Warehouse' : 'Hospital'} col="hospital" sortKey={sortKey} asc={asc} onSort={onSort} />
                     <SortHeader label="Spare" col="spare" sortKey={sortKey} asc={asc} onSort={onSort} />
                     <SortHeader label="Revive Lab" col="trc" sortKey={sortKey} asc={asc} onSort={onSort} />
                     <SortHeader label="Field engineer" col="field" sortKey={sortKey} asc={asc} onSort={onSort} />
@@ -275,7 +287,9 @@ export default function Tickets() {
                         <td className="px-4 py-3"><StatusBadge status={t.status} closure={t.closure} /></td>
                         <td className="px-4 py-3">
                           <p className="text-ink-900">{t.facility}</p>
-                          <p className="text-xs text-ink-500">{[t.district, t.bemmp_code].filter(Boolean).join(' · ')}</p>
+                          {t.source === 'warehouse'
+                            ? <WarehouseChip className="mt-0.5" />
+                            : <p className="text-xs text-ink-500">{[t.district, t.bemmp_code].filter(Boolean).join(' · ')}</p>}
                         </td>
                         <td className="px-4 py-3">
                           <p className="text-ink-900">{itemsSummary(t) ?? <span className="text-ink-300">—</span>}</p>
@@ -343,7 +357,10 @@ export default function Tickets() {
                         <StatusBadge status={t.status} closure={t.closure} />
                       </div>
                       <div className="flex items-baseline justify-between gap-3">
-                        <p className="min-w-0 text-sm text-ink-800">{t.facility}</p>
+                        <p className="min-w-0 text-sm text-ink-800">
+                          {t.facility}
+                          {t.source === 'warehouse' && <WarehouseChip className="ml-1.5 align-middle" />}
+                        </p>
                         <p className="shrink-0 text-xs text-ink-500">{raised.date}, {raised.time}</p>
                       </div>
                       {spare && <p className="text-xs text-ink-500">{spare}</p>}

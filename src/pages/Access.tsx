@@ -16,11 +16,12 @@
  * A Revive Lab and a BEMMP each belong to a state, or are Regional — every
  * state's. The route card offers a state's own and the Regional ones, and
  * the admins of a Regional Revive Lab approve anything else (rl_0014).
+ * Warehouses are a list of the same kind: in a state, or in any (rl_0020).
  */
 import { useMemo, useState } from 'react'
 import clsx from 'clsx'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Building2, Layers, Pencil, Plus, Search, Trash2, UserPlus, Users, X } from 'lucide-react'
+import { Building2, Layers, Pencil, Plus, Search, Trash2, UserPlus, Users, Warehouse, X } from 'lucide-react'
 import { supabase, friendlyError } from '@/lib/supabase'
 import { Alert, EmptyState, Spinner, StatTile } from '@/components/ui'
 
@@ -53,15 +54,18 @@ const UNCHOSEN = '__'
 const stateValue = (state: string | null | undefined) => (state === undefined ? UNCHOSEN : state ?? REGIONAL)
 const stateFrom = (value: string): string | null | undefined => (value === UNCHOSEN ? undefined : value || null)
 
-function StateSelect({ value, onChange, className }: {
+function StateSelect({ value, onChange, className, every = 'Regional — every state', ask = 'State or Regional…' }: {
   value: string | null | undefined
   onChange: (state: string | null | undefined) => void
   className?: string
+  /** What no state is called: Regional for a Revive Lab or a BEMMP, any state for a warehouse. */
+  every?: string
+  ask?: string
 }) {
   return (
     <select className={clsx('input', className)} value={stateValue(value)} onChange={e => onChange(stateFrom(e.target.value))}>
-      {value === undefined && <option value={UNCHOSEN}>State or Regional…</option>}
-      <option value={REGIONAL}>Regional — every state</option>
+      {value === undefined && <option value={UNCHOSEN}>{ask}</option>}
+      <option value={REGIONAL}>{every}</option>
       <optgroup label="One state">
         {STATES.map(x => <option key={x} value={x}>{x}</option>)}
       </optgroup>
@@ -333,6 +337,8 @@ export function ReviveLabAccess() {
 
       <BemmpTable canEdit={canEdit} />
 
+      <WarehouseTable canEdit={canEdit} />
+
       {me?.is_sw_admin && <DeleteTicket />}
     </div>
   )
@@ -473,6 +479,150 @@ function BemmpTable({ canEdit }: { canEdit: boolean }) {
             <StateSelect className="!py-1.5 w-56" value={addingState} onChange={setAddingState} />
             <button type="submit" className="btn-secondary !py-1.5" disabled={save.isPending || !adding.trim() || addingState === undefined}>
               {save.isPending ? <Spinner className="h-4 w-4" /> : <Plus className="h-4 w-4" />} Add BEMMP
+            </button>
+          </form>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The warehouses a defective spare can come from (rl_0020).
+ *
+ * A fixed list, like the BEMMPs, so one warehouse is not three spellings in
+ * every report. A Revive Lab's coordinator raises a ticket for what a
+ * warehouse sends in; the route card offers the warehouses in the state it
+ * names, and those in no particular state. One that closes is retired, and
+ * the tickets that named it still do.
+ */
+interface WarehouseRow { id: string; name: string; state: string | null; is_active: boolean; sort_order: number }
+
+function WarehouseTable({ canEdit }: { canEdit: boolean }) {
+  const qc = useQueryClient()
+  const { data: rows, isLoading } = useQuery({
+    queryKey: ['revive', 'warehouses'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('revive_warehouses')
+        .select('id, name, state, is_active, sort_order').order('sort_order').order('name')
+      if (error) throw new Error(friendlyError(error))
+      return data as WarehouseRow[]
+    },
+  })
+  const save = useMutation({
+    // No state leaves it as it is: retiring a warehouse does not move it.
+    mutationFn: (w: { id: string | null; name: string; active: boolean; state?: string | null }) =>
+      call('revive_save_warehouse', {
+        p_id: w.id, p_name: w.name, p_active: w.active,
+        p_state: w.state === undefined ? null : w.state ?? 'Any',
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['revive', 'warehouses'] }),
+  })
+  const [adding, setAdding] = useState('')
+  const [addingState, setAddingState] = useState<string | null | undefined>(undefined)
+  const [editing, setEditing] = useState<{ id: string; name: string; state: string | null | undefined } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const add = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError(null)
+    if (addingState === undefined) { setError('Choose its state, or any state.'); return }
+    try { await save.mutateAsync({ id: null, name: adding, active: true, state: addingState }); setAdding(''); setAddingState(undefined) }
+    catch (err) { setError(err instanceof Error ? err.message : 'Could not add that.') }
+  }
+  const toggle = async (w: WarehouseRow) => {
+    setError(null)
+    try { await save.mutateAsync({ id: w.id, name: w.name, active: !w.is_active }) }
+    catch (err) { setError(err instanceof Error ? err.message : 'Could not change that.') }
+  }
+  const saveEdit = async (w: WarehouseRow) => {
+    if (!editing) return
+    setError(null)
+    try { await save.mutateAsync({ id: w.id, name: editing.name, active: w.is_active, state: editing.state }); setEditing(null) }
+    catch (err) { setError(err instanceof Error ? err.message : 'Could not save that.') }
+  }
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="flex flex-wrap items-center gap-2 border-b border-ink-200 bg-ink-50 px-3 py-2">
+        <h3 className="flex items-center gap-2 px-1 text-sm font-semibold text-ink-800">
+          <Warehouse className="h-4 w-4 text-ink-400" /> Warehouses
+        </h3>
+        <span className="text-xs text-ink-400">· where a defective spare can come from, besides a hospital</span>
+      </div>
+      <div className="space-y-3 p-4">
+        {error && <Alert kind="error">{error}</Alert>}
+        {isLoading ? <Spinner className="h-4 w-4 text-ink-400" /> : (rows ?? []).length === 0 ? (
+          <p className="text-sm text-ink-500">
+            None yet. {canEdit ? 'Add each warehouse once;' : 'An admin adds each warehouse once;'} a coordinator then chooses it on the route card.
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {(rows ?? []).map(w => editing?.id === w.id ? (
+              <span key={w.id} className="inline-flex flex-wrap items-center gap-2 rounded-lg border border-ink-300 bg-ink-50 p-1.5">
+                <input
+                  autoFocus
+                  className="input !py-1 w-48"
+                  value={editing.name}
+                  onChange={e => setEditing({ ...editing, name: e.target.value })}
+                  maxLength={80}
+                  aria-label="Warehouse name"
+                />
+                <StateSelect className="!py-1 w-52" value={editing.state} every="Any state" ask="State, or any…"
+                  onChange={state => setEditing({ ...editing, state })} />
+                <button type="button" className="btn-primary !px-3 !py-1 text-xs" onClick={() => void saveEdit(w)}
+                  disabled={save.isPending || editing.name.trim().length < 2 || editing.state === undefined}>
+                  {save.isPending && <Spinner className="h-3.5 w-3.5" />} Save
+                </button>
+                <button type="button" className="btn-secondary !px-3 !py-1 text-xs" onClick={() => setEditing(null)}>Cancel</button>
+              </span>
+            ) : (
+              <span
+                key={w.id}
+                className={clsx(
+                  'inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm',
+                  w.is_active ? 'border-ink-200 text-ink-900' : 'border-ink-200 bg-ink-50 text-ink-400',
+                )}
+              >
+                <span className={clsx(!w.is_active && 'line-through')}>{w.name}</span>
+                <span className="text-xs text-ink-500">{w.state ?? 'Any state'}</span>
+                {canEdit && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => { setError(null); setEditing({ id: w.id, name: w.name, state: w.state }) }}
+                      className="text-xs font-medium text-ink-500 hover:text-ink-900"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void toggle(w)}
+                      disabled={save.isPending}
+                      className="text-xs font-medium text-ink-500 hover:text-ink-900"
+                      title={w.is_active ? 'Retire — tickets that name it keep it' : 'Bring back'}
+                    >
+                      {w.is_active ? 'Retire' : 'Restore'}
+                    </button>
+                  </>
+                )}
+              </span>
+            ))}
+          </div>
+        )}
+        {canEdit && (
+          <form onSubmit={add} className="flex flex-wrap items-center gap-2">
+            <input
+              className="input !py-1.5 w-56"
+              value={adding}
+              onChange={e => setAdding(e.target.value)}
+              placeholder="e.g. Kochi central warehouse"
+              maxLength={80}
+              aria-label="New warehouse name"
+            />
+            <StateSelect className="!py-1.5 w-56" value={addingState} onChange={setAddingState} every="Any state" ask="State, or any…" />
+            <button type="submit" className="btn-secondary !py-1.5" disabled={save.isPending || adding.trim().length < 2 || addingState === undefined}>
+              {save.isPending ? <Spinner className="h-4 w-4" /> : <Plus className="h-4 w-4" />} Add warehouse
             </button>
           </form>
         )}

@@ -23,7 +23,7 @@ import {
   type Action, type Approval, type Outcome, type Proposal, type TicketItem, type Tone,
 } from '@/lib/tickets'
 import { formatSpan, ticketTat, type Span } from '@/lib/tat'
-import { Alert, EmptyState, PageLoader, Spinner, StatusBadge } from '@/components/ui'
+import { Alert, EmptyState, PageLoader, Spinner, StatusBadge, WarehouseChip } from '@/components/ui'
 import IconChip from '@/components/IconChip'
 import AttachmentsCard from '@/components/TicketAttachments'
 import PartsCard from '@/components/PartsCard'
@@ -106,6 +106,7 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="font-mono text-2xl font-semibold text-ink-900">{t.code}</h1>
               <StatusBadge status={t.status} closure={t.closure} proposal={t.proposal} full />
+              {t.source === 'warehouse' && <WarehouseChip />}
             </div>
             <p className="mt-1 text-sm text-ink-600">
               {t.facility}{summary ? ` · ${summary}` : ''}
@@ -173,8 +174,9 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
           <Section title="Service route card" icon={ClipboardList} tone="sky">
             <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
               <Row label="State">{t.state}</Row>
-              <Row label="District">{t.district}</Row>
-              <Row label="BEMMP">{t.bemmp_code}</Row>
+              {/* A warehouse's spare has neither (rl_0020). */}
+              {t.source !== 'warehouse' && <Row label="District">{t.district}</Row>}
+              {t.source !== 'warehouse' && <Row label="BEMMP">{t.bemmp_code}</Row>}
               {t.billing_spare !== null && t.billing_spare !== undefined && (
                 <Row label="Billing spare">{t.billing_spare ? 'Yes' : 'No'}</Row>
               )}
@@ -182,7 +184,7 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
                 {t.trc_name}
                 <span className="text-xs text-ink-500"> · {stateLabel(t.trc_state)}</span>
               </Row>
-              <Row label="Hospital name">{t.facility}</Row>
+              <Row label={t.source === 'warehouse' ? 'Warehouse' : 'Hospital name'}>{t.facility}</Row>
               <Row label="Equipment barcode">{t.equipment_barcode && <span className="font-mono">{t.equipment_barcode}</span>}</Row>
               <Row label="Equipment name">{t.equipment_name}</Row>
               <Row label="Make">{t.equipment_make}</Row>
@@ -201,7 +203,9 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
                   </ul>
                 )}
               </Row>
-              <Row label="Ticket ID">{t.source_ticket_no && <span className="font-mono">{t.source_ticket_no}</span>}</Row>
+              {t.source !== 'warehouse' && (
+                <Row label="Ticket ID">{t.source_ticket_no && <span className="font-mono">{t.source_ticket_no}</span>}</Row>
+              )}
               <Row label="Raised on">{when(t.created_at)}</Row>
               {/* With their function, so the Revive Lab can see which part of
                   the business a spare is coming from without asking. */}
@@ -213,7 +217,7 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
               <Row label="Contact number">
                 {t.contact_number && <a href={'tel:' + t.contact_number} className="link-accent">{t.contact_number}</a>}
               </Row>
-              <Row label="Field engineer">
+              <Row label={t.source === 'warehouse' ? 'Warehouse in-charge' : 'Field engineer'}>
                 {t.stakeholder_name} <span className="text-xs text-ink-400">{t.stakeholder_ecode}</span>
                 {t.stakeholder_function && <span className="text-xs text-ink-500"> · {t.stakeholder_function}</span>}
               </Row>

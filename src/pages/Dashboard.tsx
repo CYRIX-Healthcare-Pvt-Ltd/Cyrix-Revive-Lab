@@ -8,7 +8,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useTickets, useTrcs, useVisibleEvents } from '@/lib/queries'
 import { REPAIRING, STATUS, STATUS_ORDER, TONE_FILL, canRaise, itemsSummary, ticketTabs, waitingOnMe } from '@/lib/tickets'
 import { asDays, formatSpan, ticketTat, type TatEvent } from '@/lib/tat'
-import { EmptyState, PageLoader, StatTile, StatusBadge } from '@/components/ui'
+import { EmptyState, PageLoader, StatTile, StatusBadge, WarehouseChip } from '@/components/ui'
 import IconChip from '@/components/IconChip'
 
 const TOOLTIP = { fontSize: 12, borderRadius: 8, border: '1px solid #d4d8e0' }
@@ -171,6 +171,7 @@ export default function Dashboard() {
                     <Link to={`/tickets/${t.code}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 hover:bg-ink-50">
                       <span className="font-mono text-sm font-semibold text-ink-900">{t.code}</span>
                       <StatusBadge status={t.status} closure={t.closure} />
+                      {t.source === 'warehouse' && <WarehouseChip />}
                       <span className="min-w-0 flex-1 truncate text-sm text-ink-600">
                         {t.facility}{itemsSummary(t) ? ` · ${itemsSummary(t)}` : ''}
                       </span>

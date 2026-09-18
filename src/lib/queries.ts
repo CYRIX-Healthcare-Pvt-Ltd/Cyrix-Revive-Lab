@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase, friendlyError } from './supabase'
 import type {
   Approval, Closure, Outcome, PartRoute, PartStatus, PartSummary, Proposal, StockUseStatus, StockUseSummary,
-  PartProgress, TicketItem, TicketStatus, TrcKind,
+  PartProgress, TicketItem, TicketSource, TicketStatus, TrcKind,
 } from './tickets'
 import { uploadPartFile } from './partFiles'
 import { uploadStageFile } from './attachments'
@@ -105,6 +105,9 @@ export interface Ticket {
   equipment_model: string | null
   /** The voice note the engineer closed the repair with, a minute at most. */
   done_voice: string | null
+  /** A hospital's spare, or a warehouse's; a warehouse one names it in facility (rl_0020). */
+  source: TicketSource
+  warehouse_id: string | null
 }
 
 export interface TrailEvent {
@@ -279,6 +282,29 @@ export interface BemmpProject {
 }
 
 /** The BEMMP programmes a ticket can belong to. Admins keep the list. */
+/** Where a defective spare can come from besides a hospital: a fixed list admins keep (rl_0020). */
+export interface Warehouse {
+  id: string
+  name: string
+  /** Null: any state's. */
+  state: string | null
+  is_active: boolean
+  sort_order: number
+}
+
+export function useWarehouses() {
+  return useQuery({
+    // Under ['revive', 'warehouses'], which People & Revive Labs refreshes when it changes the list.
+    queryKey: ['revive', 'warehouses', 'for-tickets'],
+    staleTime: 5 * 60_000,
+    queryFn: async () => unwrap<Warehouse[]>(
+      await supabase.from('revive_warehouses')
+        .select('id, name, state, is_active, sort_order')
+        .order('sort_order').order('name'),
+    ),
+  })
+}
+
 export function useBemmpProjects() {
   return useQuery({
     // Its own key: People & Revive Labs reads the same table without the
@@ -524,6 +550,9 @@ export interface RaiseInput {
   stakeholderId: string | null
   /** Why another state's Revive Lab: asked for, and approved before it is sent (rl_0014). */
   approvalReason: string | null
+  /** A warehouse's spare, raised by the desk: no BEMMP, district or ticket ID (rl_0020). */
+  source: TicketSource
+  warehouseId: string | null
 }
 
 export function useRaiseTicket() {
@@ -531,8 +560,8 @@ export function useRaiseTicket() {
     p_trc_id: a.trcId,
     p_hospital: a.hospital,
     p_state: a.state,
-    p_bemmp_id: a.bemmpId,
-    p_district: a.district,
+    p_bemmp_id: a.bemmpId || null,
+    p_district: a.district || null,
     p_source_ticket_no: a.sourceTicketNo,
     p_equipment_name: a.equipmentName,
     p_equipment_barcode: a.equipmentBarcode,
@@ -550,6 +579,8 @@ export function useRaiseTicket() {
     p_approval_reason: a.approvalReason,
     p_equipment_make: a.equipmentMake,
     p_equipment_model: a.equipmentModel,
+    p_source: a.source,
+    p_warehouse_id: a.warehouseId,
   }) as Promise<{ id: string; code: string; number: number; status: TicketStatus }>)
 }
 
