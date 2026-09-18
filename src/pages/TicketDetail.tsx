@@ -348,7 +348,7 @@ function ApprovalNote({ ticket: t, approval: a }: { ticket: Ticket; approval: Ap
         <look.icon className={clsx('mt-0.5 h-4 w-4 shrink-0', look.mark)} />
         <span>
           {t.status === 'awaiting_approval'
-            ? <>{a.kind === 'transfer' ? 'Asked to transfer it to ' : 'Asked for '}{to}</>
+            ? <>{a.kind === 'transfer' ? 'Transfer requested to ' : 'Requested for '}{to}</>
             : t.status === 'approved'
               ? <>Approved for {to}{a.to_trc_id !== a.asked_trc_id && <span className="font-normal"> instead of {a.asked_trc_name}</span>}</>
               : <>{a.to_trc_name} not approved</>}
@@ -356,7 +356,7 @@ function ApprovalNote({ ticket: t, approval: a }: { ticket: Ticket; approval: Ap
       </p>
       <div className="mt-1 space-y-1 pl-6">
         <p className="whitespace-pre-wrap text-sm text-ink-700">{a.reason}</p>
-        <p className="text-xs text-ink-500">Asked by {a.requested_by_name} · {when(a.requested_at)}</p>
+        <p className="text-xs text-ink-500">Requested by {a.requested_by_name} · {when(a.requested_at)}</p>
         {t.status === 'awaiting_approval' && approvers.length > 0 && (
           <p className="text-xs text-ink-500">Waiting on {orList(approvers)}</p>
         )}
@@ -517,7 +517,7 @@ const PART_STEP: Record<string, { title: string; icon: LucideIcon; tone: Tone }>
   declined: { title: 'Purchase declined', icon: X, tone: 'rose' },
   purchased: { title: 'Bought — bill attached', icon: Receipt, tone: 'violet' },
   stocked: { title: 'Added to stock and sent to the engineer', icon: PackagePlus, tone: 'cyan' },
-  stock_asked: { title: 'Asked to take from stock', icon: Boxes, tone: 'orange' },
+  stock_asked: { title: 'Requested from stock', icon: Boxes, tone: 'orange' },
   stock_used: { title: 'Taken from stock', icon: Boxes, tone: 'indigo' },
   stock_declined: { title: 'Stock not approved', icon: X, tone: 'rose' },
   stock_cancelled: { title: 'Stock request taken back', icon: Undo2, tone: 'slate' },
@@ -535,9 +535,9 @@ function stepLook(e: TrailEvent, earlier: TrailEvent[], proposal: Proposal | nul
   // Going to another Revive Lab (rl_0014). Checked before the component
   // steps: "declined" is theirs too, and only these come from waiting for approval.
   if (e.action === 'lab_requested') {
-    return { title: e.from_status === null ? 'Raised — for another state’s Revive Lab' : 'Asked for another state’s Revive Lab', tone, icon: ShieldQuestion }
+    return { title: e.from_status === null ? 'Raised — for another state’s Revive Lab' : 'Requested another state’s Revive Lab', tone, icon: ShieldQuestion }
   }
-  if (e.action === 'transfer_requested') return { title: 'Transfer asked for', tone, icon: ArrowRightLeft }
+  if (e.action === 'transfer_requested') return { title: 'Transfer requested', tone, icon: ArrowRightLeft }
   if (e.action === 'approved') return { title: 'Approved', tone, icon: BadgeCheck }
   if (e.action === 'declined' && e.from_status === 'awaiting_approval') {
     return { title: e.status === 'not_approved' ? 'Not approved' : 'Transfer not approved', tone: 'pink', icon: ShieldX }
@@ -1029,7 +1029,7 @@ function ActionForm({
           if (!toTrc) { onError('Choose the Revive Lab it is going to.'); return }
           if (note.trim().length < 5) { onError('Say why it is being transferred.'); return }
           await transfer.mutateAsync({ id: t.id, toTrcId: toTrc, reason: note })
-          onDone(`Transfer to ${labName(toTrc)} asked for. Once the Regional Revive Lab admins approve it, send it from here.`); break
+          onDone(`Transfer to ${labName(toTrc)} requested. Once the Regional Revive Lab admins approve it, send it from here.`); break
         case 'send':
           await send.mutateAsync({ id: t.id, courier, awb, on, note })
           onDone(sendingRaise

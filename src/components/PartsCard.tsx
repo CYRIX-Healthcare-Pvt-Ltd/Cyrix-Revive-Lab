@@ -218,7 +218,7 @@ function StockUseItem({ use: u, desk, isAsker, onDecline, onNotice }: {
         {u.source === 'bought' && <span className="badge bg-ink-100 text-ink-600">From what was bought</span>}
       </div>
       <p className="mt-0.5 text-xs text-ink-500">
-        Asked by {u.requested_by_name} · {when(u.requested_at)}
+        Requested by {u.requested_by_name} · {when(u.requested_at)}
         {u.decided_at && (
           <> · {u.status === 'approved' ? 'approved' : u.status === 'declined' ? 'not approved' : 'decided'} by {u.decided_by_name} · {when(u.decided_at)}</>
         )}
@@ -282,7 +282,7 @@ function RequestItem({
     || setProgress.isPending
 
   const steps: Array<[ReactNode, string | null]> = [
-    [<>Asked by {r.requested_by_name}</>, r.requested_at],
+    [<>Requested by {r.requested_by_name}</>, r.requested_at],
     ...(r.accepted_at ? [[<>{r.accepted_by_name} is buying it</>, r.accepted_at] as [ReactNode, string]] : []),
     ...(r.progress && r.progress_at ? [[<>{PART_PROGRESS[r.progress]}{r.progress_by_name ? <> · {r.progress_by_name}</> : null}</>, r.progress_at] as [ReactNode, string]] : []),
     ...(r.declined_at ? [[<>Declined by {r.declined_by_name}{r.declined_reason ? <>: <span className="text-ink-700">{r.declined_reason}</span></> : null}</>, r.declined_at] as [ReactNode, string]] : []),
@@ -587,7 +587,7 @@ function StockDialog({ request: r, onClose, onDone }: {
   return (
     <Dialog title={`Add to stock and send to ${asker(r)}`} icon={<IconChip icon={PackagePlus} tone="violet" />} onClose={onClose} wide>
       <p className="text-sm text-ink-600">
-        {asker(r)} asked for <span className="font-medium text-ink-900">{r.qty} × {r.name}</span>
+        {asker(r)} requested <span className="font-medium text-ink-900">{r.qty} × {r.name}</span>
         {r.po_number ? <> · {poLabel(r.po_number)}</> : null}
         {r.vendor ? <> · {r.po_number ? 'ordered' : 'bought'} from {r.vendor}</> : null}
         {r.bill_amount !== null ? <> · {rupees(r.bill_amount)}</> : null}
@@ -686,7 +686,7 @@ function OrderDialog({ ticket: t, request: r, onClose, onDone }: {
   return (
     <Dialog title="Enter the order" icon={<IconChip icon={ClipboardList} tone="violet" />} onClose={onClose}>
       <p className="text-sm text-ink-600">
-        {r.qty} × {r.name} <span className="text-ink-400">· for {t.code}, asked by {asker(r)}</span>
+        {r.qty} × {r.name} <span className="text-ink-400">· for {t.code}, requested by {asker(r)}</span>
       </p>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="block">

@@ -77,7 +77,7 @@ export function UseComponentForm({ ticket: t, onDone, onError, onCancel }: {
     if (n > picked.qty) { onError(`Only ${picked.qty} in stock.`); return }
     try {
       await use.mutateAsync({ ticketId: t.id, componentId: picked.id, qty: n })
-      onDone(`${n} × ${picked.value ?? picked.part_no} (${picked.part_no}) asked for. The coordinator approves it and it comes off the count.`)
+      onDone(`${n} × ${picked.value ?? picked.part_no} (${picked.part_no}) requested. The coordinator approves it and it comes off the count.`)
     } catch (err) {
       onError(err instanceof Error ? err.message : 'That did not go through.')
     }
@@ -187,8 +187,8 @@ export function RequestPartForm({ ticket: t, onDone, onError, onCancel }: {
       })
       onDone(
         route === 'local'
-          ? 'Asked for. The coordinator buys it and writes it into stock.'
-          : 'Asked for. The coordinator passes it to Purchase, or buys it locally if they can.',
+          ? 'Requested. The coordinator buys it and writes it into stock.'
+          : 'Requested. The coordinator passes it to Purchase, or buys it locally if they can.',
         res.photoFailed ? 'The request was sent, but its photo did not upload.' : undefined,
       )
     } catch (err) {

@@ -391,7 +391,7 @@ function TakenTab() {
                       <span className="tabular-nums">{u.qty} ×</span> {u.value ?? u.item ?? u.part_no}
                       <span className="ml-1.5 font-mono text-xs text-ink-500">{u.part_no}</span>
                       <span className="block text-xs text-ink-500">
-                        {u.facility} · {u.trc_name} · asked by {u.requested_by_name} {day(u.requested_at)}
+                        {u.facility} · {u.trc_name} · requested by {u.requested_by_name} {day(u.requested_at)}
                         {u.status === 'requested' && <> · {u.in_stock} in stock</>}
                       </span>
                     </span>
@@ -484,7 +484,7 @@ function RequestRow({ r }: { r: PartRequest }) {
         <span className="font-mono text-sm font-semibold text-ink-900">{r.ticket_code}</span>
         <span className="min-w-0 flex-1 text-sm text-ink-800">
           <span className="tabular-nums">{r.qty} ×</span> {r.name}
-          <span className="block text-xs text-ink-500">{r.facility} · {r.trc_name} · asked by {r.requested_by_name} {day(r.requested_at)}</span>
+          <span className="block text-xs text-ink-500">{r.facility} · {r.trc_name} · requested by {r.requested_by_name} {day(r.requested_at)}</span>
         </span>
         <span className="badge bg-ink-100 text-ink-600">{PART_ROUTE_LABEL[r.route]}</span>
         {r.progress && r.status === 'accepted' && (
