@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   ticketCode, parseTicketCode, actionsFor, runsTrc, waitingOnMe, cleanItems, itemsSummary,
-  partsWaitingOn, ticketTabs, serves, approversOf, orList, statusLook, canRaise, partActor,
+  partsWaitingOn, ticketTabs, serves, approversOf, orList, statusLook, canRaise, partActor, partStatusLook,
+  ITEM_KIND_LABEL, PART_PROGRESS, PART_STATUS, poLabel,
   type Me, type TicketLike,
 } from './tickets'
 
@@ -188,15 +189,17 @@ describe('components and how a repair ends (rl_0013)', () => {
     expect(labels(me({ employee_id: 'field' }))).toEqual(['All', 'Open', 'Closed'])
   })
 
-  it('shows Purchase only the tickets that came to them as a purchase', () => {
+  it('shows Purchase everything the database gives them, with what is still to buy apart', () => {
+    // The database shows Purchase only what came to them; All hides none of it —
+    // a ticket of their own was hidden once while the badge counted it (rl_0019).
     const [all, pending, closed] = ticketTabs(buyer)
     const bought = ticket({ status: 'closed', parts: [{ id: 'x', route: 'purchase', status: 'received' }] })
     const waiting = ticket({ status: 'parts_requested', parts: [{ id: 'y', route: 'purchase', status: 'requested' }] })
     const localOnly = ticket({ status: 'parts_requested', parts: [{ id: 'z', route: 'local', status: 'requested' }] })
-    const none = ticket({ status: 'in_repair' })
-    expect([bought, waiting, localOnly, none].map(all.match)).toEqual([true, true, false, false])
-    expect([bought, waiting, localOnly].map(pending.match)).toEqual([false, true, false])
-    expect([bought, waiting].map(closed.match)).toEqual([true, false])
+    const theirs = ticket({ status: 'in_transit_return' })
+    expect([bought, waiting, localOnly, theirs].map(all.match)).toEqual([true, true, true, true])
+    expect([bought, waiting, localOnly, theirs].map(pending.match)).toEqual([false, true, false, false])
+    expect([bought, waiting, theirs].map(closed.match)).toEqual([true, false, false])
   })
 
   it('counts a repair waiting on a component as in repair for the engineer, and as component pending for the desk', () => {
@@ -304,12 +307,13 @@ describe('the receipt, and who raises tickets (rl_0015)', () => {
     expect(actionsFor(back, engineer)).toEqual([])
   })
 
-  it('does not offer a Revive Lab engineer a ticket to raise', () => {
+  it('does not offer a Revive Lab engineer or Purchase a ticket to raise', () => {
     expect(canRaise(engineer)).toBe(false)
-    // A field engineer, and anybody else who sends spares in, still raises.
+    // Purchase buys for the Revive Lab; it does not send spares in (rl_0019).
+    expect(canRaise(me({ is_purchase: true, trc_ids: [REG] }))).toBe(false)
+    // A field engineer, and the desk, still raise.
     expect(canRaise(field)).toBe(true)
     expect(canRaise(desk)).toBe(true)
-    expect(canRaise(me({ is_purchase: true, trc_ids: [REG] }))).toBe(true)
     expect(canRaise(null)).toBe(true)
     // Somebody who is both keeps it: spares arrive at their desk.
     expect(canRaise(me({ employee_id: 'both', is_engineer: true, is_coordinator: true, trc_ids: [REG] }))).toBe(true)
@@ -360,5 +364,33 @@ describe('components through the coordinator (rl_0016)', () => {
     // Not the engineer's: they asked, and are waiting.
     expect(partsWaitingOn(t, engineer)).toBe(0)
     expect(partsWaitingOn(t, buyer)).toBe(0)
+  })
+})
+
+describe('make, model, a whole machine and the order (rl_0019)', () => {
+  it('names a whole machine as a line of its own', () => {
+    expect(ITEM_KIND_LABEL.full_machine).toBe('Full Machine')
+    expect(cleanItems([{ kind: 'full_machine', name: ' ECG machine ' }])).toEqual([{ kind: 'full_machine', name: 'ECG machine' }])
+  })
+
+  it('says when the order Purchase placed is due, while it waits with the coordinator', () => {
+    const ordered = partStatusLook({ route: 'purchase', status: 'bought', po_number: 'PO/42', edd: '2026-09-25' })
+    expect(ordered.label.startsWith('Ordered — due ')).toBe(true)
+    expect(ordered.label).toContain('2026')
+    // A local purchase with its bill reads as before, and so does an order with no PO yet.
+    expect(partStatusLook({ route: 'local', status: 'bought' })).toEqual(PART_STATUS.bought)
+    expect(partStatusLook({ route: 'purchase', status: 'forwarded', po_number: null })).toEqual(PART_STATUS.forwarded)
+  })
+
+  it('writes PO once', () => {
+    expect(poLabel('1042')).toBe('PO 1042')
+    expect(poLabel('PO/2026/0042')).toBe('PO/2026/0042')
+    expect(poLabel(' po-77 ')).toBe('po-77')
+    expect(poLabel('P.O. 55')).toBe('P.O. 55')
+    expect(poLabel('Pole-9')).toBe('PO Pole-9')
+  })
+
+  it('names where a local purchase stands', () => {
+    expect(PART_PROGRESS).toEqual({ enquiry_given: 'Enquiry given', order_placed: 'Order placed' })
   })
 })

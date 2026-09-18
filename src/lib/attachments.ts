@@ -24,7 +24,7 @@ export type Slot = 'image-1' | 'image-2' | 'video' | 'voice'
  */
 export type StageFile =
   | 'arrival-1' | 'arrival-2'
-  | 'done-1' | 'done-2' | 'done'
+  | 'done-1' | 'done-2' | 'done' | 'done-voice'
   | 'return-1' | 'return-2'
   | `voice-${number}`
 export type AttachmentKind = 'image' | 'video' | 'voice'

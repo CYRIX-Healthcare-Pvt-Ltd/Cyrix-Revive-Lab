@@ -126,7 +126,8 @@ export default function Tickets() {
     if (needle) {
       rows = rows.filter(t =>
         (asNumber !== null && t.number === asNumber)
-        || [t.code, t.source_ticket_no, t.facility, t.spare_name, t.equipment_name, t.equipment_barcode, t.district, t.state, t.bemmp_code,
+        || [t.code, t.source_ticket_no, t.facility, t.spare_name, t.equipment_name, t.equipment_make, t.equipment_model,
+            t.equipment_barcode, t.district, t.state, t.bemmp_code,
             t.stakeholder_name, t.stakeholder_ecode, t.engineer_name, t.in_awb, t.out_awb,
             // Every spare and accessory, not just the first.
             ...(t.items ?? []).map(i => i.name)]

@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase, friendlyError } from './supabase'
 import type {
   Approval, Closure, Outcome, PartRoute, PartStatus, PartSummary, Proposal, StockUseStatus, StockUseSummary,
-  TicketItem, TicketStatus, TrcKind,
+  PartProgress, TicketItem, TicketStatus, TrcKind,
 } from './tickets'
 import { uploadPartFile } from './partFiles'
 import { uploadStageFile } from './attachments'
@@ -100,6 +100,11 @@ export interface Ticket {
   /** What they said when they closed it: it works, or it does not. */
   final_working: boolean | null
   received_at: string | null
+  /** On the route card after the equipment name (rl_0019). */
+  equipment_make: string | null
+  equipment_model: string | null
+  /** The voice note the engineer closed the repair with, a minute at most. */
+  done_voice: string | null
 }
 
 export interface TrailEvent {
@@ -415,6 +420,14 @@ export interface PartRequest {
   bought_qty: number | null
   stocked_by_name: string | null
   stocked_at: string | null
+  /** Where the coordinator's local purchase stands (rl_0019). */
+  progress: PartProgress | null
+  progress_by_name: string | null
+  progress_at: string | null
+  /** The order Purchase placed: it waits with the coordinator until it arrives. */
+  po_number: string | null
+  po_date: string | null
+  edd: string | null
 }
 
 /** One component taken from stock, as the desk's own list shows it (rl_0018). */
@@ -497,6 +510,8 @@ export interface RaiseInput {
   district: string
   sourceTicketNo: string
   equipmentName: string
+  equipmentMake: string
+  equipmentModel: string
   equipmentBarcode: string
   /** At least one line with a name; blank lines are dropped before sending. */
   items: TicketItem[]
@@ -533,6 +548,8 @@ export function useRaiseTicket() {
     p_items: a.items,
     p_billing_spare: a.billingSpare,
     p_approval_reason: a.approvalReason,
+    p_equipment_make: a.equipmentMake,
+    p_equipment_model: a.equipmentModel,
   }) as Promise<{ id: string; code: string; number: number; status: TicketStatus }>)
 }
 
@@ -596,16 +613,21 @@ export const useReturnToDesk = () => useTicketMutation(
 
 /**
  * Closing the repair: repaired — with the spare photographed working, and a
- * short video if it is worth seeing — not repairable, with what should
- * become of it, or the customer denied service.
+ * short video and a voice note if they help — not repairable, with what
+ * should become of it, or the customer denied service.
  */
 export const useCompleteRepair = () => useTicketMutation(
-  async (a: { id: string; note?: string; outcome: Outcome; proposal?: Proposal | null; photos?: Blob[]; video?: Blob | null }) => {
-    const photos = a.outcome === 'repaired' ? await uploadStage(a.id, 'done', a.photos) : []
-    const video = a.outcome === 'repaired' && a.video ? await uploadStageFile(a.id, 'done', a.video) : null
+  async (a: {
+    id: string; note?: string; outcome: Outcome; proposal?: Proposal | null
+    photos?: Blob[]; video?: Blob | null; voice?: Blob | null
+  }) => {
+    const repaired = a.outcome === 'repaired'
+    const photos = repaired ? await uploadStage(a.id, 'done', a.photos) : []
+    const video = repaired && a.video ? await uploadStageFile(a.id, 'done', a.video) : null
+    const voice = repaired && a.voice ? await uploadStageFile(a.id, 'done-voice', a.voice) : null
     return rpc('revive_complete_repair', {
       p_ticket_id: a.id, p_note: a.note || null, p_outcome: a.outcome, p_proposal: a.proposal ?? null,
-      p_photos: photos, p_video: video,
+      p_photos: photos, p_video: video, p_voice: voice,
     })
   })
 
@@ -678,6 +700,22 @@ export const useTakePart = () => useTicketMutation(
 /** Passed to Purchase — it is not to be had locally. */
 export const useForwardPart = () => useTicketMutation(
   (a: { id: string; note?: string }) => rpc('revive_forward_part', { p_request_id: a.id, p_note: a.note || null }))
+
+/** Where the coordinator's local purchase stands: blank, Enquiry given or Order placed (rl_0019). */
+export const useSetPartProgress = () => useTicketMutation(
+  (a: { id: string; progress: PartProgress | null }) =>
+    rpc('revive_set_part_progress', { p_request_id: a.id, p_progress: a.progress }))
+
+/**
+ * Purchase places the order: PO number, PO date, when it should arrive and
+ * from whom. It then waits with the coordinator, who adds it to stock when
+ * it comes (rl_0019).
+ */
+export const useOrderPart = () => useTicketMutation(
+  (a: { id: string; poNumber: string; poDate: string; edd: string; vendor: string }) =>
+    rpc('revive_order_part', {
+      p_request_id: a.id, p_po_number: a.poNumber, p_po_date: a.poDate, p_edd: a.edd, p_vendor: a.vendor,
+    }))
 
 /** Kept at the Revive Lab after all: the coordinator buys it locally. */
 export const useMakeLocal = () => useTicketMutation(

@@ -90,7 +90,7 @@ export function MediaCapture({ photos, video, voice }: {
     bitrates: { audioBitsPerSecond: VOICE_BITS_PER_SECOND },
     onDone: blob => voice?.onChange(blob),
   })
-  const chosenVideo = useVideoFromGallery({ onDone: blob => video?.onChange(blob) })
+  const chosenVideo = useVideoFromGallery({ seconds: videoSeconds, onDone: blob => video?.onChange(blob) })
   // A note about a chosen video belongs to that video, and goes with it.
   const hasVideo = !!video?.value
   const clearChosenNote = chosenVideo.clearNote
@@ -202,16 +202,16 @@ export function MediaCapture({ photos, video, voice }: {
           progress={chosenVideo.of > 0 ? chosenVideo.done / chosenVideo.of : 0}
           onClick={chosenVideo.cancel}
         />
-      ) : recorderTile(videoRec, video.value, MAX_VIDEO_SECONDS, {
+      ) : recorderTile(videoRec, video.value, videoSeconds, {
         icon: <Video className="h-5 w-5 text-violet-500" />,
         title: 'Video',
-        hint: `up to ${MAX_VIDEO_SECONDS} s`,
-        label: `Record a video, up to ${MAX_VIDEO_SECONDS} seconds`,
+        hint: `up to ${videoSeconds} s`,
+        label: `Record a video, up to ${videoSeconds} seconds`,
         disabled: busy,
         alt: {
           icon: <Images className="h-4 w-4 text-violet-500" />,
           label: PHONE ? 'Gallery' : 'Choose file',
-          aria: `Choose a video, the first ${MAX_VIDEO_SECONDS} seconds are kept`,
+          aria: `Choose a video, the first ${videoSeconds} seconds are kept`,
           onClick: chosenVideo.choose,
         },
       }),
@@ -222,7 +222,7 @@ export function MediaCapture({ photos, video, voice }: {
               <video ref={viewfinder} autoPlay muted playsInline className="aspect-video w-full object-cover" />
               <div className="absolute inset-x-2 bottom-2 flex items-center justify-between gap-2">
                 <span className="rounded bg-black/60 px-1.5 py-0.5 font-mono text-xs tabular-nums text-white">
-                  {clock(videoRec.seconds)} / {clock(MAX_VIDEO_SECONDS)}
+                  {clock(videoRec.seconds)} / {clock(videoSeconds)}
                 </span>
                 <button
                   type="button"
@@ -614,14 +614,14 @@ function useRecorder({
  * moment a browser lets sound start — and kept for the file that follows.
  * The count along the tile moves four times a second, not every frame.
  */
-function useVideoFromGallery({ onDone }: { onDone: (blob: Blob) => void }) {
+function useVideoFromGallery({ seconds, onDone }: { seconds: number; onDone: (blob: Blob) => void }) {
   const input = useRef<HTMLInputElement>(null)
   const audio = useRef<AudioContext | null>(null)
   const abort = useRef<AbortController | null>(null)
   const mounted = useRef(true)
   const [preparing, setPreparing] = useState(false)
   const [done, setDone] = useState(0)
-  const [of, setOf] = useState(MAX_VIDEO_SECONDS)
+  const [of, setOf] = useState(seconds)
   const [error, setError] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
 
@@ -659,13 +659,14 @@ function useVideoFromGallery({ onDone }: { onDone: (blob: Blob) => void }) {
     if (!mime) { setError('This browser cannot prepare a video in a format that can be sent.'); return }
     const control = new AbortController()
     abort.current = control
-    setError(null); setNote(null); setDone(0); setOf(MAX_VIDEO_SECONDS); setPreparing(true)
+    setError(null); setNote(null); setDone(0); setOf(seconds); setPreparing(true)
     let shown = 0
     try {
       const made = await shrinkVideo(file, {
         mime,
         audio: audio.current,
         signal: control.signal,
+        maxSeconds: seconds,
         onProgress: (d, o) => {
           const now = performance.now()
           if (!mounted.current || now - shown < 250) return
@@ -679,7 +680,7 @@ function useVideoFromGallery({ onDone }: { onDone: (blob: Blob) => void }) {
         return
       }
       if (made.trimmed) {
-        setNote(`It was ${clock(made.original)} long, so the first ${MAX_VIDEO_SECONDS} seconds are kept. Trim it in the gallery first if the fault shows later.`)
+        setNote(`It was ${clock(made.original)} long, so the first ${seconds} seconds are kept. Trim it in the gallery first if what matters comes later.`)
       }
       onDone(made.blob)
     } catch (err) {

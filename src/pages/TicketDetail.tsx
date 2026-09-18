@@ -31,7 +31,7 @@ import { RequestPartForm, UseComponentForm } from '@/components/PartForms'
 import Dialog from '@/components/Dialog'
 import LabOptions from '@/components/LabOptions'
 import PhotoPick, { type PickedPhoto } from '@/components/PhotoPick'
-import { MediaCapture } from '@/components/Attachments'
+import { MediaCapture, revealLength, type PendingPhoto } from '@/components/Attachments'
 import Lightbox from '@/components/Lightbox'
 import { removeVideoOf } from '@/lib/attachments'
 import { signedLinks } from '@/lib/partFiles'
@@ -185,6 +185,8 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
               <Row label="Hospital name">{t.facility}</Row>
               <Row label="Equipment barcode">{t.equipment_barcode && <span className="font-mono">{t.equipment_barcode}</span>}</Row>
               <Row label="Equipment name">{t.equipment_name}</Row>
+              <Row label="Make">{t.equipment_make}</Row>
+              <Row label="Model">{t.equipment_model}</Row>
               <Row label="Spares and accessories">
                 {items.length > 0 && (
                   <ul className="space-y-1">
@@ -373,7 +375,10 @@ function ApprovalNote({ ticket: t, approval: a }: { ticket: Ticket; approval: Ap
  * photos, which say what was wrong rather than what was done.
  */
 function StageMedia({ ticket: t }: { ticket: Ticket }) {
-  const paths = [...t.arrival_photos, ...t.done_photos, ...t.return_photos, ...(t.done_video ? [t.done_video] : [])]
+  const paths = [
+    ...t.arrival_photos, ...t.done_photos, ...t.return_photos,
+    ...(t.done_video ? [t.done_video] : []), ...(t.done_voice ? [t.done_voice] : []),
+  ]
   const { data: links } = useQuery({
     enabled: paths.length > 0,
     queryKey: ['revive', 'stage-media', t.id, paths.join(',')],
@@ -413,7 +418,7 @@ function StageMedia({ ticket: t }: { ticket: Ticket }) {
   )
 
   return (
-    <Section title="Photographs along the way" icon={Camera} tone="sky">
+    <Section title={t.done_video || t.done_voice ? 'Photographs and recordings along the way' : 'Photographs along the way'} icon={Camera} tone="sky">
       <div className="space-y-4">
         {group('On arrival', 'bg-amber-100 text-amber-900', t.arrival_photos, t.arrival_damaged)}
         {group('Repaired', 'bg-lime-100 text-lime-900', t.done_photos, false)}
@@ -421,6 +426,12 @@ function StageMedia({ ticket: t }: { ticket: Ticket }) {
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-label text-ink-400">The repair, running</p>
             <video src={links[t.done_video]} controls playsInline className="mt-1.5 max-h-72 w-full rounded-lg border border-ink-200 bg-shade" />
+          </div>
+        )}
+        {t.done_voice && links?.[t.done_voice] && (
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-label text-ink-400">The engineer, on the repair</p>
+            <audio src={links[t.done_voice]} controls onLoadedMetadata={revealLength} className="mt-1.5 h-10 w-full" />
           </div>
         )}
         {group('Back with the field engineer', 'bg-amber-100 text-amber-900', t.return_photos, t.return_damaged)}
@@ -492,11 +503,26 @@ const PART_STEP: Record<string, { title: string; icon: LucideIcon; tone: Tone }>
   used: { title: 'Used from stock', icon: Boxes, tone: 'indigo' },
   requested: { title: 'Component requested', icon: ShoppingCart, tone: 'orange' },
   accepted: { title: 'Purchase accepted', icon: Hand, tone: 'yellow' },
+  forwarded: { title: 'Passed to Purchase', icon: Send, tone: 'amber' },
+  made_local: { title: 'To be bought locally', icon: ShoppingCart, tone: 'yellow' },
+  handed_back: { title: 'Handed back by Purchase', icon: Undo2, tone: 'orange' },
+  enquiry_given: { title: 'Local purchase — enquiry given', icon: ShoppingCart, tone: 'yellow' },
+  order_placed: { title: 'Local purchase — order placed', icon: ShoppingCart, tone: 'yellow' },
+  progress_cleared: { title: 'Local purchase — status cleared', icon: ShoppingCart, tone: 'slate' },
+  ordered: { title: 'Ordered by Purchase', icon: Receipt, tone: 'violet' },
   declined: { title: 'Purchase declined', icon: X, tone: 'rose' },
-  purchased: { title: 'Bought — sent to the engineer', icon: Receipt, tone: 'cyan' },
+  purchased: { title: 'Bought — bill attached', icon: Receipt, tone: 'violet' },
+  stocked: { title: 'Added to stock and sent to the engineer', icon: PackagePlus, tone: 'cyan' },
+  stock_asked: { title: 'Asked to take from stock', icon: Boxes, tone: 'orange' },
+  stock_used: { title: 'Taken from stock', icon: Boxes, tone: 'indigo' },
+  stock_declined: { title: 'Stock not approved', icon: X, tone: 'rose' },
+  stock_cancelled: { title: 'Stock request taken back', icon: Undo2, tone: 'slate' },
   confirmed: { title: 'Purchase confirmed', icon: PackageCheck, tone: 'green' },
   cancelled: { title: 'Component request cancelled', icon: Undo2, tone: 'slate' },
 }
+
+/** The steps after which the repair carries on, when nothing else is waiting. */
+const RESUMES = ['confirmed', 'declined', 'cancelled', 'stock_used', 'stock_declined', 'stock_cancelled']
 
 function stepLook(e: TrailEvent, earlier: TrailEvent[], proposal: Proposal | null): { title: ReactNode; tone: Tone; icon: LucideIcon } {
   const tone = STATUS[e.status]?.tone ?? 'sky'
@@ -523,7 +549,7 @@ function stepLook(e: TrailEvent, earlier: TrailEvent[], proposal: Proposal | nul
   if (e.action && PART_STEP[e.action] && (e.kind === 'component' || e.kind === 'status')) {
     const step = PART_STEP[e.action]
     // The last purchase confirmed puts the repair back in the engineer's hands.
-    if (e.kind === 'status' && e.status === 'in_repair' && (e.action === 'confirmed' || e.action === 'declined' || e.action === 'cancelled')) {
+    if (e.kind === 'status' && e.status === 'in_repair' && RESUMES.includes(e.action)) {
       return { title: `${step.title} — repair resumed`, tone, icon: step.icon }
     }
     return { title: step.title, tone: e.kind === 'status' ? tone : step.tone, icon: step.icon }
@@ -914,6 +940,8 @@ function ActionForm({
   const [photos, setPhotos] = useState<PickedPhoto[]>([])
   const [video, setVideo] = useState<Blob | null>(null)
   const [voice, setVoice] = useState<Blob | null>(null)
+  // The repaired spare's photographs, taken the way the route card's are.
+  const [shots, setShots] = useState<PendingPhoto[]>([])
   const [damaged, setDamaged] = useState(false)
   const [working, setWorking] = useState<'' | 'yes' | 'no'>('')
   const [engineerId, setEngineerId] = useState(reassign ? '' : t.engineer_id ?? '')
@@ -962,12 +990,13 @@ function ActionForm({
         case 'complete':
           if (outcome === 'not_repairable' && !proposal) { onError('Say what should become of it: scrap, or back to the field engineer.'); return }
           if (note.trim().length < 3) { onError(outcome === 'repaired' ? 'Say what action was taken on it.' : 'Say why.'); return }
-          if (outcome === 'repaired' && blobs.length === 0) { onError('Photograph the repaired spare — one photo at least.'); return }
+          if (outcome === 'repaired' && shots.length === 0) { onError('Photograph the repaired spare — one photo at least.'); return }
           await complete.mutateAsync({
             id: t.id, note, outcome,
             proposal: outcome === 'not_repairable' ? proposal : null,
-            photos: outcome === 'repaired' ? blobs : [],
+            photos: outcome === 'repaired' ? shots.map(p => p.blob) : [],
             video: outcome === 'repaired' ? video : null,
+            voice: outcome === 'repaired' ? voice : null,
           })
           onDone(outcome === 'repaired' ? 'Repair closed. It is with the coordinator for dispatch.'
             : outcome === 'not_repairable'
@@ -1164,20 +1193,21 @@ function ActionForm({
         </div>
       )}
 
-      {/* A repaired spare is shown working: a photograph, and a clip if it helps. */}
+      {/* A repaired spare is shown working: photographs, a clip and a word
+          about it — the same three tiles as on the route card. */}
       {action === 'complete' && outcome === 'repaired' && (
-        <div className="space-y-2">
-          <div>
-            <span className="label">The repaired spare <span className="text-cyrixRed-600">*</span></span>
-            <div className="mt-1">
-              <PhotoPick photos={photos} onChange={setPhotos} max={2} noun="photo" />
-            </div>
-          </div>
-          <div>
-            <span className="label">A short video of it working</span>
-            <div className="mt-1">
-              <MediaCapture video={{ value: video, onChange: setVideo, seconds: 20 }} />
-            </div>
+        <div className="rounded-lg border border-lime-200 bg-lime-50/60 p-3">
+          <p className="text-sm font-medium text-ink-900">The repaired spare</p>
+          <p className="mt-0.5 text-xs text-ink-600">
+            A photo of it working is needed <span className="text-cyrixRed-600">*</span> — two at most. A video of up to
+            20 seconds and a voice note of up to a minute, if they help.
+          </p>
+          <div className="mt-2.5">
+            <MediaCapture
+              photos={{ value: shots, onChange: setShots, max: 2 }}
+              video={{ value: video, onChange: setVideo, seconds: 20 }}
+              voice={{ value: voice, onChange: setVoice }}
+            />
           </div>
         </div>
       )}

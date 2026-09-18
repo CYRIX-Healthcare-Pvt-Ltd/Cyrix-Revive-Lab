@@ -15,16 +15,19 @@ export const newLine = (kind: ItemKind): ItemLine => ({ key: nextKey++, kind, na
  *
  * The card had one line, Spare name. What comes in from a machine is often
  * more than the board that failed — its cable, its probe — so each line says
- * which it is. The first starts as a spare; a line added starts as an
- * accessory, which is what usually travels with one; either can be switched.
- * A line left blank is simply not sent.
+ * which it is; and sometimes it is the whole machine (rl_0019). The first
+ * starts as a spare; a line added starts as an accessory, which is what
+ * usually travels with one; any can be switched. A line left blank is simply
+ * not sent.
  */
 export default function ItemsField({
-  lines, onChange, required,
+  lines, onChange, required, machine,
 }: {
   lines: ItemLine[]
   onChange: (next: ItemLine[]) => void
   required?: boolean
+  /** The equipment name on the card: what a Full Machine line is, unless told otherwise. */
+  machine?: string
 }) {
   // The line just added gets the cursor, so adding one is add-and-type.
   const inputs = useRef(new Map<number, HTMLInputElement>())
@@ -37,6 +40,11 @@ export default function ItemsField({
 
   const change = (key: number, patch: Partial<TicketItem>) =>
     onChange(lines.map(l => (l.key === key ? { ...l, ...patch } : l)))
+  // Switched to Full Machine with nothing typed: it is the equipment itself.
+  const changeKind = (l: ItemLine, kind: ItemKind) =>
+    change(l.key, kind === 'full_machine' && !l.name.trim() && machine?.trim() ? { kind, name: machine.trim() } : { kind })
+  const placeholder = (kind: ItemKind) =>
+    kind === 'spare' ? 'e.g. SMPS board' : kind === 'accessory' ? 'e.g. Power cable' : machine?.trim() || 'e.g. ECG machine'
   const add = () => {
     const line = newLine('accessory')
     focusNext.current = line.key
@@ -53,20 +61,21 @@ export default function ItemsField({
         {lines.map((l, i) => (
           <li key={l.key} className="flex gap-2">
             <select
-              className="input w-[7.5rem] shrink-0"
+              className="input w-[8.75rem] shrink-0"
               value={l.kind}
-              onChange={e => change(l.key, { kind: e.target.value as ItemKind })}
-              aria-label={`Line ${i + 1}: spare or accessory`}
+              onChange={e => changeKind(l, e.target.value as ItemKind)}
+              aria-label={`Line ${i + 1}: spare, accessory or full machine`}
             >
               <option value="spare">{ITEM_KIND_LABEL.spare}</option>
               <option value="accessory">{ITEM_KIND_LABEL.accessory}</option>
+              <option value="full_machine">{ITEM_KIND_LABEL.full_machine}</option>
             </select>
             <input
               ref={el => { if (el) inputs.current.set(l.key, el); else inputs.current.delete(l.key) }}
               className="input min-w-0 flex-1"
               value={l.name}
               onChange={e => change(l.key, { name: e.target.value })}
-              placeholder={l.kind === 'spare' ? 'e.g. SMPS board' : 'e.g. Power cable'}
+              placeholder={placeholder(l.kind)}
               maxLength={120}
               aria-label={`Line ${i + 1}: ${ITEM_KIND_LABEL[l.kind].toLowerCase()} name`}
             />

@@ -57,6 +57,7 @@ export default function NewTicket() {
   const [holder, setHolder] = useState<Person | null>(null)
   const [form, setForm] = useState({
     state: '', district: '', bemmpId: '', hospital: '', equipmentBarcode: '', equipmentName: '',
+    equipmentMake: '', equipmentModel: '',
     sourceTicketNo: '', contactNumber: '', issue: '',
     returnAddress: '', inCourier: '', inAwb: '', inDispatchedOn: '',
     billingSpare: 'no' as 'yes' | 'no',
@@ -288,8 +289,15 @@ export default function NewTicket() {
             <Field label="Hospital name" value={form.hospital} onChange={set('hospital')} required />
             <Field label="Equipment barcode" value={form.equipmentBarcode} onChange={set('equipmentBarcode')} mono />
             <Field label="Equipment name" value={form.equipmentName} onChange={set('equipmentName')} placeholder="e.g. Ventilator" />
-            {/* In Spare name's place on the card, grown into a list. */}
-            <ItemsField lines={lines} onChange={setLines} required />
+            {/* Beside the equipment they describe (rl_0019). */}
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Make" value={form.equipmentMake} onChange={set('equipmentMake')} placeholder="e.g. Philips" maxLength={80} />
+              <Field label="Model" value={form.equipmentModel} onChange={set('equipmentModel')} placeholder="e.g. V60" maxLength={80} />
+            </div>
+            {/* In Spare name's place on the card, grown into a list — the whole width, so a line has room. */}
+            <div className="sm:col-span-2">
+              <ItemsField lines={lines} onChange={setLines} required machine={form.equipmentName} />
+            </div>
             <Field label="Ticket ID" value={form.sourceTicketNo} onChange={set('sourceTicketNo')} placeholder="The field service ticket" mono />
             <Field label="Contact number" type="tel" value={form.contactNumber} onChange={set('contactNumber')} placeholder="+91 …" />
           </div>
@@ -461,7 +469,7 @@ function Req() {
 }
 
 function Field({
-  label, value, onChange, placeholder, type = 'text', required, mono,
+  label, value, onChange, placeholder, type = 'text', required, mono, maxLength,
 }: {
   label: string
   value: string
@@ -470,11 +478,13 @@ function Field({
   type?: string
   required?: boolean
   mono?: boolean
+  maxLength?: number
 }) {
   return (
     <label className="block">
       <span className="label">{label}{required && <> <Req /></>}</span>
-      <input className={clsx('input mt-1', mono && 'font-mono')} type={type} value={value} onChange={onChange} placeholder={placeholder} />
+      <input className={clsx('input mt-1', mono && 'font-mono')} type={type} value={value} onChange={onChange}
+        placeholder={placeholder} maxLength={maxLength} />
     </label>
   )
 }

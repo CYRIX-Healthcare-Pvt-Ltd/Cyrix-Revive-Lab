@@ -10,6 +10,12 @@ if (!url || !anonKey) {
   )
 }
 
+/**
+ * Where the session is kept — the same key in every module on app.cyrix.in,
+ * so signing in or out in one tab shows up here as a change to it.
+ */
+export const SESSION_KEY = `sb-${new URL(url).hostname.split('.')[0]}-auth-token`
+
 export const supabase = createClient(url, anonKey, {
   auth: {
     persistSession: true,
@@ -51,6 +57,11 @@ export function friendlyError(err: unknown): string {
   }
   if (msg.includes('duplicate key') && msg.includes('idx_revision_one_open')) {
     return 'A revision request for this KPI has already been raised and is still being reviewed.'
+  }
+  // Signed out in another tab, or the session ran out: the call went out
+  // as nobody, and nothing of Revive Lab answers nobody (rl_0019).
+  if (/permission denied for function|JWT expired|invalid JWT/i.test(msg)) {
+    return 'You are no longer signed in. Sign in again on the Cyrix portal, then try once more.'
   }
   if (msg.includes('row-level security') || msg.includes('Not permitted')) {
     return 'You do not have access to this.'

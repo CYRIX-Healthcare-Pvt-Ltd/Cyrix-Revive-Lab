@@ -424,6 +424,29 @@ export const PART_STATUS: Record<PartStatus, { label: string; tone: Tone }> = {
   cancelled: { label: 'Cancelled', tone: 'slate' },
 }
 
+/** Where the coordinator's local purchase stands, while it is being bought (rl_0019). */
+export type PartProgress = 'enquiry_given' | 'order_placed'
+
+export const PART_PROGRESS: Record<PartProgress, string> = {
+  enquiry_given: 'Enquiry given',
+  order_placed: 'Order placed',
+}
+
+/**
+ * A request's status as it reads: Purchase's order says when it is due,
+ * since it waits with the coordinator until it arrives (rl_0019).
+ */
+export function partStatusLook(r: { route: PartRoute; status: PartStatus; po_number?: string | null; edd?: string | null }): { label: string; tone: Tone } {
+  if (r.status === 'bought' && r.route === 'purchase' && r.po_number) {
+    const due = r.edd ? new Date(r.edd.slice(0, 10) + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : null
+    return { label: due ? `Ordered — due ${due}` : 'Ordered', tone: 'violet' }
+  }
+  return PART_STATUS[r.status]
+}
+
+/** "PO 1042", but "PO/2026/42" as it is — a number that says PO already is not told twice. */
+export const poLabel = (po: string) => (/^p.?s?o(?![a-z])/i.test(po.trim()) ? po.trim() : `PO ${po.trim()}`)
+
 /** Still going: it has not reached the engineer, and nobody has given up on it. */
 export const partOpen = (s: PartStatus) =>
   s === 'requested' || s === 'forwarded' || s === 'accepted' || s === 'bought'
@@ -574,16 +597,14 @@ export interface TicketTab {
   match: (t: TicketLike) => boolean
 }
 
-const hasPurchase = (t: TicketLike) => (t.parts ?? []).some(p => p.route === 'purchase')
-
 /**
  * The tabs on the ticket list, by what the person does.
  *
  * The desk sorts what has no engineer yet and what is waiting on a
  * component. An engineer follows repairs and assignments. Purchase sees
- * only tickets that came to them as a purchase request — nothing else is
- * theirs to act on. Anybody else, a field engineer, sees theirs open and
- * closed.
+ * what came to them as a purchase request (the database shows them nothing
+ * else), with what is still to be bought apart. Anybody else, a field
+ * engineer, sees theirs open and closed.
  */
 export function ticketTabs(me: Me | null | undefined): TicketTab[] {
   const closed = (t: TicketLike) => t.status === 'closed'
@@ -606,10 +627,13 @@ export function ticketTabs(me: Me | null | undefined): TicketTab[] {
     ]
   }
   if (me?.is_purchase) {
+    // All is everything they can see: the purchase requests that came to
+    // them, and anything else of theirs — a ticket once raised under the
+    // same code was hidden here while the badge counted it.
     return [
-      { id: 'all', label: 'All', tone: 'slate', match: hasPurchase },
+      { id: 'all', label: 'All', tone: 'slate', match: () => true },
       { id: 'parts', label: 'Component pending', tone: 'orange', match: t => (t.parts ?? []).some(p => p.route === 'purchase' && partOpen(p.status)) },
-      { id: 'closed', label: 'Closed', tone: 'green', match: t => hasPurchase(t) && closed(t) },
+      { id: 'closed', label: 'Closed', tone: 'green', match: closed },
     ]
   }
   return [
@@ -621,13 +645,14 @@ export function ticketTabs(me: Me | null | undefined): TicketTab[] {
 
 /**
  * Who raises tickets: whoever sends spares in. A Revive Lab's own engineer
- * repairs what arrives and never sends one, so they are not offered it —
- * unless they also run a desk, where spares arrive and cards are written
- * for them (rl_0015).
+ * repairs what arrives and Purchase buys for it; neither sends one, so
+ * neither is offered it — unless they also run a desk, where spares arrive
+ * and cards are written for them (rl_0015, rl_0019; the database refuses
+ * them too).
  */
 export function canRaise(me: Me | null | undefined): boolean {
   if (!me) return true
-  return !me.is_engineer || me.is_coordinator || me.is_manager || me.is_admin
+  return !(me.is_engineer || me.is_purchase) || me.is_coordinator || me.is_manager || me.is_admin
 }
 
 /* ------------------------------------------------------------------ */
@@ -644,11 +669,11 @@ export const OUTCOME_LABEL: Record<Outcome, string> = {
 /* ------------------------------------------------------------------ */
 
 /**
- * What was sent in: a spare, or an accessory from the same machine — the
- * power cable, the probe. A ticket carries at least one and at most ten
- * (rl_0011), in the order they were entered.
+ * What was sent in: a spare, an accessory from the same machine — the
+ * power cable, the probe — or the whole machine (rl_0019). A ticket carries
+ * at least one and at most ten (rl_0011), in the order they were entered.
  */
-export type ItemKind = 'spare' | 'accessory'
+export type ItemKind = 'spare' | 'accessory' | 'full_machine'
 
 export interface TicketItem {
   kind: ItemKind
@@ -658,6 +683,7 @@ export interface TicketItem {
 export const ITEM_KIND_LABEL: Record<ItemKind, string> = {
   spare: 'Spare',
   accessory: 'Accessory',
+  full_machine: 'Full Machine',
 }
 
 export const MAX_ITEMS = 10

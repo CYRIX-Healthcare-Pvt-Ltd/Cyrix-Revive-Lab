@@ -11,7 +11,7 @@ import {
   type Component, type PartRequest, type StockUseRow,
 } from '@/lib/queries'
 import {
-  buysFor, itemsSummary, partOpen, PART_ROUTE_LABEL, PART_STATUS, runsTrc, STOCK_USE_STATUS, TONE_CLASS,
+  buysFor, itemsSummary, partOpen, partStatusLook, poLabel, PART_PROGRESS, PART_ROUTE_LABEL, runsTrc, STOCK_USE_STATUS, TONE_CLASS,
   type PartRoute,
 } from '@/lib/tickets'
 import { readStockGrid, stockDiff, type SheetRead, type StockDiff } from '@/lib/stockSheet'
@@ -477,7 +477,7 @@ function RequestsTab({ purchaseOnly }: { purchaseOnly: boolean }) {
 }
 
 function RequestRow({ r }: { r: PartRequest }) {
-  const status = PART_STATUS[r.status]
+  const status = partStatusLook(r)
   return (
     <li>
       <Link to={`/tickets/${r.ticket_code}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 hover:bg-ink-50">
@@ -487,7 +487,11 @@ function RequestRow({ r }: { r: PartRequest }) {
           <span className="block text-xs text-ink-500">{r.facility} · {r.trc_name} · asked by {r.requested_by_name} {day(r.requested_at)}</span>
         </span>
         <span className="badge bg-ink-100 text-ink-600">{PART_ROUTE_LABEL[r.route]}</span>
+        {r.progress && r.status === 'accepted' && (
+          <span className="badge bg-yellow-50 text-yellow-900 ring-1 ring-inset ring-yellow-200">{PART_PROGRESS[r.progress]}</span>
+        )}
         <span className={clsx('badge', TONE_CLASS[status.tone])}>{status.label}</span>
+        {r.po_number && <span className="font-mono text-xs text-ink-500">{poLabel(r.po_number)}</span>}
         {r.bill_amount !== null && <span className="text-sm font-medium tabular-nums text-ink-900">{rupees(r.bill_amount)}</span>}
       </Link>
     </li>

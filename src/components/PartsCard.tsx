@@ -2,15 +2,20 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
-  Boxes, CheckCircle2, ExternalLink, Hand, PackageCheck, PackagePlus, Receipt, ScanText, Send, ShoppingCart, Undo2, X,
+  Boxes, CheckCircle2, ClipboardList, ExternalLink, Hand, PackageCheck, PackagePlus, Receipt, ScanText, Send, ShoppingCart,
+  Undo2, X,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import {
   useApproveUse, useCancelPart, useCancelUse, useComponentUses, useConfirmPart, useDeclinePart, useDeclineUse,
-  useForwardPart, useMakeLocal, usePartNo, usePartRequests, usePurchasePart, useStockPart, useTakePart,
+  useForwardPart, useMakeLocal, useOrderPart, usePartNo, usePartRequests, usePurchasePart, useSetPartProgress, useStockPart,
+  useTakePart,
   type ComponentUse, type PartRequest, type Ticket,
 } from '@/lib/queries'
-import { buysFor, partActor, runsTrc, PART_ROUTE_LABEL, PART_STATUS, STOCK_USE_STATUS, TONE_CLASS } from '@/lib/tickets'
+import {
+  buysFor, partActor, partStatusLook, poLabel, runsTrc, PART_PROGRESS, PART_ROUTE_LABEL, STOCK_USE_STATUS, TONE_CLASS,
+  type PartProgress,
+} from '@/lib/tickets'
 import { signedLinks } from '@/lib/partFiles'
 import { readBillAmount } from '@/lib/billOcr'
 import { Alert, Spinner } from '@/components/ui'
@@ -21,6 +26,19 @@ import PhotoPick, { type PickedPhoto } from '@/components/PhotoPick'
 
 const when = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : ''
+
+/** A date without a time — a PO's, a delivery's — read as that day wherever the reader is. */
+const onDay = (d: string | null) =>
+  d ? new Date(d.slice(0, 10) + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : ''
+
+/** Today, as a date field holds it. */
+const today = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/** Who a request goes back to: the engineer who asked for it. */
+const asker = (r: PartRequest) => r.requested_by_name ?? 'the engineer'
 
 export const rupees = (n: number) =>
   `₹${n.toLocaleString('en-IN', { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 })}`
@@ -36,7 +54,7 @@ type Notice = { kind: 'success' | 'error'; text: string } | null
  *
  * Stock waits for the coordinator before it comes off the count. A request
  * shows its whole journey — asked, taken on or passed to Purchase, bought
- * with the bill, written into stock, confirmed — so the field engineer
+ * with a bill or ordered with a PO, added to stock, confirmed — so the field engineer
  * reading the ticket can see what the repair is waiting for. The buttons on
  * each belong to whoever moves it next (rl_0016).
  */
@@ -54,6 +72,7 @@ export default function PartsCard({ ticket: t }: { ticket: Ticket }) {
   })
 
   const [billFor, setBillFor] = useState<PartRequest | null>(null)
+  const [orderFor, setOrderFor] = useState<PartRequest | null>(null)
   const [stockFor, setStockFor] = useState<PartRequest | null>(null)
   const [declineFor, setDeclineFor] = useState<PartRequest | null>(null)
   const [refuseUse, setRefuseUse] = useState<ComponentUse | null>(null)
@@ -107,6 +126,7 @@ export default function PartsCard({ ticket: t }: { ticket: Ticket }) {
                   buyer={buysFor(me, r.trc_id)}
                   isEngineer={t.engineer_id === me?.employee_id}
                   onBill={() => { setNotice(null); setBillFor(r) }}
+                  onOrder={() => { setNotice(null); setOrderFor(r) }}
                   onStock={() => { setNotice(null); setStockFor(r) }}
                   onDecline={() => { setNotice(null); setDeclineFor(r) }}
                   onView={(images, index) => setViewing({ images, index })}
@@ -124,6 +144,14 @@ export default function PartsCard({ ticket: t }: { ticket: Ticket }) {
           request={billFor}
           onClose={() => setBillFor(null)}
           onDone={text => { setBillFor(null); setNotice({ kind: 'success', text }) }}
+        />
+      )}
+      {orderFor && (
+        <OrderDialog
+          ticket={t}
+          request={orderFor}
+          onClose={() => setOrderFor(null)}
+          onDone={text => { setOrderFor(null); setNotice({ kind: 'success', text }) }}
         />
       )}
       {stockFor && (
@@ -224,7 +252,7 @@ function StockUseItem({ use: u, desk, isAsker, onDecline, onNotice }: {
 }
 
 function RequestItem({
-  r, links, mine, desk, buyer, isEngineer, onBill, onStock, onDecline, onView, onNotice,
+  r, links, mine, desk, buyer, isEngineer, onBill, onOrder, onStock, onDecline, onView, onNotice,
 }: {
   r: PartRequest
   links: Record<string, string>
@@ -234,6 +262,7 @@ function RequestItem({
   buyer: boolean
   isEngineer: boolean
   onBill: () => void
+  onOrder: () => void
   onStock: () => void
   onDecline: () => void
   onView: (images: string[], index: number) => void
@@ -244,31 +273,39 @@ function RequestItem({
   const makeLocal = useMakeLocal()
   const confirm = useConfirmPart()
   const cancel = useCancelPart()
+  const setProgress = useSetPartProgress()
   const run = runner(onNotice)
-  const status = PART_STATUS[r.status]
+  const status = partStatusLook(r)
   const photo = r.photo_path ? links[r.photo_path] : undefined
   const bills = r.bill_paths.map(p => links[p]).filter(Boolean)
   const busy = take.isPending || forward.isPending || makeLocal.isPending || confirm.isPending || cancel.isPending
+    || setProgress.isPending
 
   const steps: Array<[ReactNode, string | null]> = [
     [<>Asked by {r.requested_by_name}</>, r.requested_at],
     ...(r.accepted_at ? [[<>{r.accepted_by_name} is buying it</>, r.accepted_at] as [ReactNode, string]] : []),
+    ...(r.progress && r.progress_at ? [[<>{PART_PROGRESS[r.progress]}{r.progress_by_name ? <> · {r.progress_by_name}</> : null}</>, r.progress_at] as [ReactNode, string]] : []),
     ...(r.declined_at ? [[<>Declined by {r.declined_by_name}{r.declined_reason ? <>: <span className="text-ink-700">{r.declined_reason}</span></> : null}</>, r.declined_at] as [ReactNode, string]] : []),
-    ...(r.purchased_at ? [[<>Bought by {r.purchased_by_name}{r.bill_amount !== null ? <> for <span className="font-medium tabular-nums text-ink-800">{rupees(r.bill_amount)}</span></> : null}{r.vendor ? <> from {r.vendor}</> : null}{r.bill_no ? <> · bill {r.bill_no}</> : null}</>, r.purchased_at] as [ReactNode, string]] : []),
+    ...(r.purchased_at && r.po_number ? [[<>Ordered by {r.purchased_by_name} · <span className="font-mono text-ink-700">{poLabel(r.po_number)}</span>{r.po_date ? <> of {onDay(r.po_date)}</> : null}{r.vendor ? <> from {r.vendor}</> : null}{r.edd ? <> · due <span className="font-medium text-ink-800">{onDay(r.edd)}</span></> : null}</>, r.purchased_at] as [ReactNode, string]] : []),
+    ...(r.purchased_at && !r.po_number ? [[<>Bought by {r.purchased_by_name}{r.bill_amount !== null ? <> for <span className="font-medium tabular-nums text-ink-800">{rupees(r.bill_amount)}</span></> : null}{r.vendor ? <> from {r.vendor}</> : null}{r.bill_no ? <> · bill {r.bill_no}</> : null}</>, r.purchased_at] as [ReactNode, string]] : []),
     ...(r.stocked_at ? [[<>Into stock by {r.stocked_by_name} as <span className="font-mono text-ink-700">{r.part_no}</span>{r.bought_qty ? <> · {r.bought_qty} bought</> : null}</>, r.stocked_at] as [ReactNode, string]] : []),
     ...(r.received_at ? [[<>Confirmed by {r.received_by_name}</>, r.received_at] as [ReactNode, string]] : []),
   ]
 
   // Whoever it is with now, and the ways out for the engineer who asked.
-  const canTake = mine && (r.status === 'requested' ? r.route === 'local' && desk : r.status === 'forwarded' && buyer)
+  // The coordinator takes a local purchase on; Purchase goes straight to the order (rl_0019).
+  const canTake = desk && r.status === 'requested' && r.route === 'local'
   const canForward = desk && (r.status === 'requested')
   const canMakeLocal = desk && (r.status === 'forwarded' || (r.status === 'requested' && r.route === 'purchase'))
-  const canBill = mine && r.status === 'accepted'
+  const canOrder = buyer && r.route === 'purchase' && (r.status === 'forwarded' || r.status === 'accepted')
+  const canBill = mine && r.status === 'accepted' && r.route === 'local'
+  const canProgress = desk && r.status === 'accepted' && r.route === 'local'
   const canStock = desk && r.status === 'bought'
   const canDecline = (desk && ['requested', 'accepted'].includes(r.status)) || (buyer && ['forwarded', 'accepted'].includes(r.status))
   const canConfirm = isEngineer && r.status === 'sent'
   const canCancel = isEngineer && ['requested', 'forwarded', 'accepted'].includes(r.status)
-  const anyAction = canTake || canForward || canMakeLocal || canBill || canStock || canDecline || canConfirm || canCancel
+  const anyAction = canTake || canForward || canMakeLocal || canOrder || canBill || canProgress || canStock || canDecline
+    || canConfirm || canCancel
 
   return (
     <li className="rounded-lg border border-ink-200 p-3">
@@ -282,6 +319,9 @@ function RequestItem({
           <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium text-ink-900">
             <span className="tabular-nums">{r.qty} ×</span> {r.name}
             <span className={clsx('badge', TONE_CLASS[status.tone])}>{status.label}</span>
+            {r.progress && r.status === 'accepted' && !canProgress && (
+              <span className="badge bg-yellow-50 text-yellow-900 ring-1 ring-inset ring-yellow-200">{PART_PROGRESS[r.progress]}</span>
+            )}
             <span className="badge bg-ink-100 text-ink-600">{PART_ROUTE_LABEL[r.route]}</span>
           </p>
           {r.note && <p className="mt-1 text-sm text-ink-600">{r.note}</p>}
@@ -310,10 +350,35 @@ function RequestItem({
         <div className="mt-3 flex flex-wrap gap-2 border-t border-ink-100 pt-3">
           {canTake && (
             <button type="button" className="btn-primary !py-1.5 text-sm" disabled={busy}
-              onClick={() => run(() => take.mutateAsync({ id: r.id }), 'Taken on. Attach the bill once it is bought.')}>
+              onClick={() => run(() => take.mutateAsync({ id: r.id }), 'Taken on. Mark where it stands as you go, and attach the bill once it is bought.')}>
               {take.isPending ? <Spinner className="h-4 w-4" /> : <Hand className="h-4 w-4 text-yellow-400" />}
-              {r.route === 'local' ? 'Buy it locally' : 'Take it on'}
+              Buy it locally
             </button>
+          )}
+          {canOrder && (
+            <button type="button" className="btn-primary !py-1.5 text-sm" disabled={busy} onClick={onOrder}>
+              <ClipboardList className="h-4 w-4 text-violet-300" /> Enter the order
+            </button>
+          )}
+          {canProgress && (
+            <label className="inline-flex items-center gap-2 text-sm">
+              <span className="text-ink-500">Status</span>
+              <select
+                className="input !w-auto !py-1.5 text-sm"
+                value={r.progress ?? ''}
+                disabled={busy}
+                aria-label="Where this local purchase stands"
+                onChange={e => {
+                  const next = (e.target.value || null) as PartProgress | null
+                  void run(() => setProgress.mutateAsync({ id: r.id, progress: next }),
+                    next ? `Marked ${PART_PROGRESS[next].toLowerCase()}.` : 'Status cleared.')
+                }}
+              >
+                <option value="">—</option>
+                <option value="enquiry_given">{PART_PROGRESS.enquiry_given}</option>
+                <option value="order_placed">{PART_PROGRESS.order_placed}</option>
+              </select>
+            </label>
           )}
           {canForward && (
             <button type="button" className={clsx(r.route === 'purchase' ? 'btn-primary' : 'btn-secondary', '!py-1.5 text-sm')} disabled={busy}
@@ -334,7 +399,7 @@ function RequestItem({
           )}
           {canStock && (
             <button type="button" className="btn-primary !py-1.5 text-sm" disabled={busy} onClick={onStock}>
-              <PackagePlus className="h-4 w-4 text-violet-400" /> Write into stock and send
+              <PackagePlus className="h-4 w-4 text-violet-400" /> Add to stock and send to {asker(r)}
             </button>
           )}
           {canDecline && (
@@ -411,7 +476,7 @@ function BillDialog({ ticket: t, request: r, onClose, onDone }: {
         ticketId: t.id, id: r.id, amount: n, bills: pages.map(p => p.blob),
         billNo: billNo.trim(), vendor: vendor.trim(),
       })
-      onDone(`Bill attached: ${r.qty} × ${r.name}, ${rupees(n)}. The coordinator writes it into stock and sends it on.`)
+      onDone(`Bill saved: ${r.qty} × ${r.name}, ${rupees(n)}. Now add it to stock and send it to ${asker(r)}.`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'That did not go through.')
     }
@@ -513,17 +578,18 @@ function StockDialog({ request: r, onClose, onDone }: {
         id: r.id, value: value.trim(), item: item.trim(), package: pack.trim(),
         partNo: partNo.trim() || null, qty: bought, useQty: toRepair,
       })
-      onDone(`${bought} into stock as ${partNo.trim() || 'a new part'}${toRepair ? `, ${toRepair} to this repair` : ''}. The engineer confirms it.`)
+      onDone(`${bought} into stock as ${partNo.trim() || 'a new part'}${toRepair ? `, ${toRepair} sent to ${asker(r)}` : ''}. They confirm it and carry on.`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'That did not go through.')
     }
   }
 
   return (
-    <Dialog title="Write into stock and send" icon={<IconChip icon={PackagePlus} tone="violet" />} onClose={onClose} wide>
+    <Dialog title={`Add to stock and send to ${asker(r)}`} icon={<IconChip icon={PackagePlus} tone="violet" />} onClose={onClose} wide>
       <p className="text-sm text-ink-600">
-        The engineer asked for <span className="font-medium text-ink-900">{r.qty} × {r.name}</span>
-        {r.vendor ? <> · bought from {r.vendor}</> : null}
+        {asker(r)} asked for <span className="font-medium text-ink-900">{r.qty} × {r.name}</span>
+        {r.po_number ? <> · {poLabel(r.po_number)}</> : null}
+        {r.vendor ? <> · {r.po_number ? 'ordered' : 'bought'} from {r.vendor}</> : null}
         {r.bill_amount !== null ? <> · {rupees(r.bill_amount)}</> : null}
       </p>
 
@@ -576,7 +642,74 @@ function StockDialog({ request: r, onClose, onDone }: {
       {error && <Alert kind="error">{error}</Alert>}
       <div className="flex gap-2">
         <button type="button" className="btn-primary" onClick={send} disabled={stock.isPending}>
-          {stock.isPending ? <Spinner className="h-4 w-4" /> : <Send className="h-4 w-4" />} Send to the engineer
+          {stock.isPending ? <Spinner className="h-4 w-4" /> : <Send className="h-4 w-4" />} Add to stock and send
+        </button>
+        <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
+      </div>
+    </Dialog>
+  )
+}
+
+/**
+ * Purchase's order: the PO number and date, when it should arrive, and
+ * from whom. It then waits with the coordinator, who adds it to stock and
+ * sends it to the engineer when it comes (rl_0019).
+ */
+function OrderDialog({ ticket: t, request: r, onClose, onDone }: {
+  ticket: Ticket
+  request: PartRequest
+  onClose: () => void
+  onDone: (message: string) => void
+}) {
+  const order = useOrderPart()
+  const [poNumber, setPoNumber] = useState('')
+  const [poDate, setPoDate] = useState(today())
+  const [edd, setEdd] = useState('')
+  const [vendor, setVendor] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  const send = async () => {
+    setError(null)
+    if (!poNumber.trim()) { setError('Enter the PO number.'); return }
+    if (!poDate) { setError('Enter the PO date.'); return }
+    if (!edd) { setError('Enter the expected delivery date.'); return }
+    if (edd < poDate) { setError('The expected delivery date cannot be before the PO date.'); return }
+    if (vendor.trim().length < 2) { setError('Enter the vendor’s name.'); return }
+    try {
+      await order.mutateAsync({ id: r.id, poNumber: poNumber.trim(), poDate, edd, vendor: vendor.trim() })
+      onDone(`Ordered: ${poLabel(poNumber)}, due ${onDay(edd)}. It is with the coordinator, who adds it to stock and sends it to ${asker(r)} when it arrives.`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'That did not go through.')
+    }
+  }
+
+  return (
+    <Dialog title="Enter the order" icon={<IconChip icon={ClipboardList} tone="violet" />} onClose={onClose}>
+      <p className="text-sm text-ink-600">
+        {r.qty} × {r.name} <span className="text-ink-400">· for {t.code}, asked by {asker(r)}</span>
+      </p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="block">
+          <span className="label">PO number <span className="text-cyrixRed-600">*</span></span>
+          <input className="input mt-1 font-mono" value={poNumber} onChange={e => setPoNumber(e.target.value)} maxLength={60} />
+        </label>
+        <label className="block">
+          <span className="label">PO date <span className="text-cyrixRed-600">*</span></span>
+          <input className="input mt-1" type="date" value={poDate} max={today()} onChange={e => setPoDate(e.target.value)} />
+        </label>
+        <label className="block">
+          <span className="label">Expected delivery (EDD) <span className="text-cyrixRed-600">*</span></span>
+          <input className="input mt-1" type="date" value={edd} min={poDate || undefined} onChange={e => setEdd(e.target.value)} />
+        </label>
+        <label className="block">
+          <span className="label">Vendor name <span className="text-cyrixRed-600">*</span></span>
+          <input className="input mt-1" value={vendor} onChange={e => setVendor(e.target.value)} maxLength={120} placeholder="Supplier" />
+        </label>
+      </div>
+      {error && <Alert kind="error">{error}</Alert>}
+      <div className="flex gap-2">
+        <button type="button" className="btn-primary" onClick={send} disabled={order.isPending}>
+          {order.isPending ? <Spinner className="h-4 w-4" /> : <Send className="h-4 w-4" />} Send to the coordinator
         </button>
         <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
       </div>

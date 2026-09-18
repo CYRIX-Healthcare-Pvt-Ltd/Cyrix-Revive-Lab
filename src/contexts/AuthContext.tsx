@@ -3,7 +3,7 @@ import {
 } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { Session } from '@supabase/supabase-js'
-import { supabase } from '@/lib/supabase'
+import { supabase, SESSION_KEY } from '@/lib/supabase'
 import type { Me } from '@/lib/tickets'
 
 /**
@@ -119,6 +119,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })
     return () => { alive = false; sub.subscription.unsubscribe() }
   }, [load, qc])
+
+  /*
+    Somebody else, or nobody, in another tab. Every module on app.cyrix.in
+    keeps its session under one key, and a sign-in in one of them does not
+    always reach this app as an event — its screen stayed on the person who
+    left, and what it sent went out as whoever was there now. A save refused
+    as "only an admin can" was that. A change of person reloads the page,
+    which then starts from whoever is signed in; a token refresh (the same
+    person) changes nothing.
+  */
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== SESSION_KEY && e.key !== null) return
+      let now: string | null = null
+      try {
+        const raw = e.key === null ? null : e.newValue
+        now = raw ? (JSON.parse(raw)?.user?.id ?? null) : null
+      } catch { now = null }
+      if (now !== signedInAs.current) window.location.reload()
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
 
   const signOut = useCallback(async () => {
     await supabase.auth.signOut()

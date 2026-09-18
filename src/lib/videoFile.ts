@@ -20,6 +20,8 @@ import { withDuration } from './webm'
  */
 export async function shrinkVideo(file: Blob, opts: {
   mime: string
+  /** Kept from the start; a repair's clip is shorter than a fault's (rl_0019). */
+  maxSeconds?: number
   audio: AudioContext | null
   onProgress: (done: number, of: number) => void
   signal: AbortSignal
@@ -69,7 +71,7 @@ export async function shrinkVideo(file: Blob, opts: {
       })
     }
     const original = v.duration
-    const keep = keptSeconds(original)
+    const keep = keptSeconds(original, opts.maxSeconds)
     const { width, height } = fitVideo(v.videoWidth, v.videoHeight)
     if (!width || !height) throw new Error('That file has no picture in it.')
 
@@ -142,7 +144,7 @@ export async function shrinkVideo(file: Blob, opts: {
     const blob = await withDuration(raw, elapsed)
     return {
       blob,
-      seconds: Math.min(elapsed / 1000, MAX_VIDEO_SECONDS),
+      seconds: Math.min(elapsed / 1000, opts.maxSeconds ?? MAX_VIDEO_SECONDS),
       trimmed: keep.trimmed,
       original: Number.isFinite(original) ? original : 0,
     }

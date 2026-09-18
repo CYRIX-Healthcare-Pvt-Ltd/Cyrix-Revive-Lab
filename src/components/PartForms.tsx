@@ -145,8 +145,8 @@ export function UseComponentForm({ ticket: t, onDone, onError, onCancel }: {
 
 /**
  * Asking for a component that is not in stock: what it is, how many, a
- * photo or a link to a picture of it, and who buys it — the coordinator as
- * a local purchase, or Purchase.
+ * photo of it (required, rl_0019) and a link if there is one, and who buys
+ * it — the coordinator as a local purchase, or Purchase.
  */
 export function RequestPartForm({ ticket: t, onDone, onError, onCancel }: {
   ticket: Ticket
@@ -172,6 +172,8 @@ export function RequestPartForm({ ticket: t, onDone, onError, onCancel }: {
     if (!Number.isInteger(n) || n < 1) { onError('Enter how many are needed.'); return }
     if (!route) { onError('Choose local purchase or purchase.'); return }
     if (link.trim() && !/^https?:\/\//i.test(link.trim())) { onError('The link should start with http:// or https://'); return }
+    // Whoever buys it needs to see it (rl_0019).
+    if (photos.length === 0) { onError('Add a photo of the component.'); return }
     try {
       const res = await request.mutateAsync({
         ticketId: t.id, route, name: name.trim(), qty: n,
@@ -240,8 +242,9 @@ export function RequestPartForm({ ticket: t, onDone, onError, onCancel }: {
       </div>
 
       <div>
-        <span className="label">Photo</span>
+        <span className="label">Photo <span className="text-cyrixRed-600">*</span></span>
         <div className="mt-1"><PhotoPick photos={photos} onChange={setPhotos} max={1} noun="photo" /></div>
+        <p className="mt-1 text-xs text-ink-500">The part itself, or its marking on the board — whoever buys it goes by this.</p>
       </div>
 
       <label className="block">
