@@ -8,7 +8,7 @@
  */
 import { useEffect, useRef, type ReactNode } from 'react'
 import clsx from 'clsx'
-import { AlertCircle, ArrowDown, ArrowUp, CheckCircle2, Info, Loader2 } from 'lucide-react'
+import { AlertCircle, ArrowDown, ArrowUp, CheckCircle2, ChevronsUpDown, Info, Loader2 } from 'lucide-react'
 import { STATUS, TONE_CLASS, statusLook, type Closure, type Proposal, type TicketStatus } from '@/lib/tickets'
 
 export function Spinner({ className }: { className?: string }) {
@@ -135,9 +135,9 @@ export function StatTile({
   )
 }
 
-/** A column heading that sorts its table — KPI's, unchanged. */
+/** A column heading that sorts its table — KPI’s, with its mark always showing. */
 export function SortHeader<K extends string>({
-  label, col, align = 'left', sortKey, asc, onSort,
+  label, col, align = 'left', sortKey, asc, onSort, className,
 }: {
   label: string
   col: K
@@ -145,26 +145,29 @@ export function SortHeader<K extends string>({
   sortKey: K | null
   asc: boolean
   onSort: (key: K) => void
+  className?: string
 }) {
   const active = sortKey === col
   return (
     <th
-      className={clsx('px-4 py-2.5 font-medium', align === 'right' && 'text-right')}
+      className={clsx('px-4 py-2.5 font-medium', align === 'right' && 'text-right', className)}
       aria-sort={active ? (asc ? 'ascending' : 'descending') : 'none'}
     >
       <button
         type="button"
         onClick={() => onSort(col)}
         className={clsx(
-          'inline-flex items-center gap-1 uppercase tracking-wide hover:text-ink-900',
+          'group inline-flex items-center gap-1 whitespace-nowrap uppercase tracking-wide hover:text-ink-900',
           active ? 'text-ink-900' : 'text-ink-500',
         )}
         aria-label={`Sort by ${label}`}
       >
         {label}
-        {active && (asc
-          ? <ArrowUp className="h-3 w-3" />
-          : <ArrowDown className="h-3 w-3" />)}
+        {/* Unlike KPI's copy, a heading that sorts says so before it is
+            clicked: asked "how to sort?", the answer should be on screen. */}
+        {active
+          ? (asc ? <ArrowUp className="h-3 w-3 shrink-0" /> : <ArrowDown className="h-3 w-3 shrink-0" />)
+          : <ChevronsUpDown aria-hidden className="h-3 w-3 shrink-0 text-ink-300 group-hover:text-ink-500" />}
       </button>
     </th>
   )

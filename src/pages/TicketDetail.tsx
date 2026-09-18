@@ -64,9 +64,11 @@ export default function TicketDetail() {
   return <TicketView ticket={ticket} />
 }
 
+/** Back to the list as it was left — its tab, filters and order ride along from it. */
 function BackLink() {
+  const list = (useLocation().state as { list?: string } | null)?.list ?? ''
   return (
-    <Link to="/tickets" className="inline-flex items-center gap-1.5 text-sm text-ink-600 hover:text-ink-900">
+    <Link to={'/tickets' + list} className="inline-flex items-center gap-1.5 text-sm text-ink-600 hover:text-ink-900">
       <ArrowLeft className="h-4 w-4" /> All tickets
     </Link>
   )
@@ -198,6 +200,7 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
                 )}
               </Row>
               <Row label="Ticket ID">{t.source_ticket_no && <span className="font-mono">{t.source_ticket_no}</span>}</Row>
+              <Row label="Raised on">{when(t.created_at)}</Row>
               {/* With their function, so the Revive Lab can see which part of
                   the business a spare is coming from without asking. */}
               <Row label="Sent by">
