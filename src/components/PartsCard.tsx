@@ -688,7 +688,8 @@ function OrderDialog({ ticket: t, request: r, onClose, onDone }: {
       <p className="text-sm text-ink-600">
         {r.qty} × {r.name} <span className="text-ink-400">· for {t.code}, requested by {asker(r)}</span>
       </p>
-      <div className="grid gap-3 sm:grid-cols-2">
+      {/* Inputs level with each other when a label runs to two lines. */}
+      <div className="grid items-end gap-3 sm:grid-cols-2">
         <label className="block">
           <span className="label">PO number <span className="text-cyrixRed-600">*</span></span>
           <input className="input mt-1 font-mono" value={poNumber} onChange={e => setPoNumber(e.target.value)} maxLength={60} />

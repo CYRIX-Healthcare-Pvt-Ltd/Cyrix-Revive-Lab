@@ -572,6 +572,8 @@ function stepLook(e: TrailEvent, earlier: TrailEvent[], proposal: Proposal | nul
     const n = earlier.filter(x => x.kind === 'observation').length + 1
     return { title: `Observation ${n}`, tone, icon: ScanSearch }
   }
+  // A warehouse keeps it as stock: received back closes it (rl_0023).
+  if (e.action === 'received_stock') return { title: 'Received back into warehouse stock — closed', tone, icon: PackageCheck }
   if (e.action === 'damaged') return { title: e.status === 'accepted' ? 'Accepted — damaged in transit' : 'Received back — damaged in transit', tone: 'amber', icon: TriangleAlert }
   if (e.action === 'working' || e.action === 'not_working') {
     return { title: e.action === 'working' ? 'Closed — fitted and working' : 'Closed — fitted, not working', tone, icon: CircleCheck }
@@ -1015,7 +1017,9 @@ function ActionForm({
           if (damaged && blobs.length === 0) { onError('Photograph the damage — it is the only proof there will be.'); return }
           await received.mutateAsync({ id: t.id, note, damaged, photos: blobs })
           void removeVideoOf(t.id)
-          onDone(`${t.code} is back with you. Close it once it is fitted.`); break
+          onDone(t.source === 'warehouse'
+            ? `${t.code} is back at the warehouse — the ticket is closed.`
+            : `${t.code} is back with you. Close it once it is fitted.`); break
         case 'close_ticket':
           if (!working) { onError('Say whether it works.'); return }
           if (note.trim().length < 2) { onError('Give the final status.'); return }
