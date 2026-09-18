@@ -187,8 +187,8 @@ export function RequestPartForm({ ticket: t, onDone, onError, onCancel }: {
       })
       onDone(
         route === 'local'
-          ? 'Requested. The coordinator buys it and writes it into stock.'
-          : 'Requested. The coordinator passes it to Purchase, or buys it locally if they can.',
+          ? 'Requested. The coordinator purchases it and adds it to stock.'
+          : 'Requested. The coordinator passes it to Purchase, or purchases it locally if they can.',
         res.photoFailed ? 'The request was sent, but its photo did not upload.' : undefined,
       )
     } catch (err) {
@@ -223,7 +223,7 @@ export function RequestPartForm({ ticket: t, onDone, onError, onCancel }: {
       )}
 
       <div>
-        <span className="label">Bought by <span className="text-cyrixRed-600">*</span></span>
+        <span className="label">Purchased by <span className="text-cyrixRed-600">*</span></span>
         <div className="mt-1 grid gap-2 sm:grid-cols-2">
           {(['local', 'purchase'] as const).map(r => (
             <button
@@ -241,7 +241,7 @@ export function RequestPartForm({ ticket: t, onDone, onError, onCancel }: {
                 <span className="block text-sm font-medium text-ink-900">{PART_ROUTE_LABEL[r]}</span>
                 <span className="block text-xs text-ink-500">
                   {r === 'local'
-                    ? `The coordinator at ${t.trc_name} buys it`
+                    ? `The coordinator at ${t.trc_name} purchases it`
                     : 'The coordinator passes it to the Purchase team'}
                 </span>
               </span>
@@ -253,7 +253,7 @@ export function RequestPartForm({ ticket: t, onDone, onError, onCancel }: {
       <div>
         <span className="label">Photo <span className="text-cyrixRed-600">*</span></span>
         <div className="mt-1"><PhotoPick photos={photos} onChange={setPhotos} max={1} noun="photo" /></div>
-        <p className="mt-1 text-xs text-ink-500">The part itself, or its marking on the board — whoever buys it goes by this.</p>
+        <p className="mt-1 text-xs text-ink-500">The part itself, or its marking on the board — whoever purchases it goes by this.</p>
       </div>
 
       <label className="block">

@@ -239,7 +239,7 @@ export default function Tickets() {
           <div className="p-4">
             <EmptyState icon={Inbox} title={view === 'parts' ? 'No component is pending' : 'No tickets here'}>
               {view === 'parts'
-                ? 'When a repair is waiting on a component — requested, being bought, or ready — it shows up here.'
+                ? 'When a repair is waiting on a component — requested, being purchased, or ready — it shows up here.'
                 : 'Try another tab, or clear the filters.'}
             </EmptyState>
           </div>

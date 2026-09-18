@@ -454,7 +454,7 @@ function RequestsTab({ purchaseOnly }: { purchaseOnly: boolean }) {
           ))}
         </div>
         {!purchaseOnly && (
-          <select className="input !py-1.5 sm:w-44" value={route} onChange={e => setRoute(e.target.value as PartRoute | '')} aria-label="Bought by">
+          <select className="input !py-1.5 sm:w-44" value={route} onChange={e => setRoute(e.target.value as PartRoute | '')} aria-label="Purchased by">
             <option value="">Local purchase and purchase</option>
             <option value="local">Local purchase</option>
             <option value="purchase">Purchase</option>
@@ -535,7 +535,7 @@ function PurchasesTab({ labs }: { labs: Array<{ id: string; name: string }> }) {
       day(r.purchased_at), r.ticket_code, r.trc_name, PART_ROUTE_LABEL[r.route], r.name, r.qty,
       r.vendor ?? '', r.bill_no ?? '', r.bill_amount ?? 0, r.purchased_by_name ?? '',
     ])
-    const ws = XLSX.utils.aoa_to_sheet([['Bought on', 'Ticket', 'Revive Lab', 'Bought as', 'Component', 'Qty', 'From', 'Bill no', 'Amount (₹)', 'Bought by'], ...rows])
+    const ws = XLSX.utils.aoa_to_sheet([['Purchased on', 'Ticket', 'Revive Lab', 'Purchased as', 'Component', 'Qty', 'From', 'Bill no', 'Amount (₹)', 'Purchased by'], ...rows])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Purchases')
     XLSX.writeFile(wb, `Component purchases - ${new Date().toISOString().slice(0, 10)}.xlsx`)
@@ -574,14 +574,14 @@ function PurchasesTab({ labs }: { labs: Array<{ id: string; name: string }> }) {
       <div className="card overflow-hidden">
         {bought.length === 0 ? (
           <div className="p-4">
-            <EmptyState icon={Receipt} title="Nothing bought in this period">Bills attached to component requests add up here.</EmptyState>
+            <EmptyState icon={Receipt} title="Nothing purchased in this period">Bills attached to component requests add up here.</EmptyState>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-ink-200 text-left text-xs font-semibold uppercase tracking-wide text-ink-500">
-                  <th className="px-4 py-2 font-medium">Bought</th>
+                  <th className="px-4 py-2 font-medium">Purchased</th>
                   <th className="px-4 py-2 font-medium">Ticket</th>
                   <th className="px-4 py-2 font-medium">Component</th>
                   <th className="hidden px-4 py-2 font-medium md:table-cell">From</th>

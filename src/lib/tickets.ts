@@ -101,7 +101,7 @@ export const STATUS: Record<TicketStatus, StatusMeta> = {
   },
   parts_ordered: {
     label: 'Purchasing a component', short: 'Purchasing', tone: 'yellow', order: 4.4,
-    waitingOn: 'the component to be bought and sent to the engineer',
+    waitingOn: 'the component to be purchased and sent to the engineer',
   },
   parts_ready: {
     label: 'Component ready — the engineer to confirm', short: 'Component ready', tone: 'cyan', order: 4.6,
@@ -423,8 +423,8 @@ export const PART_ROUTE_LABEL: Record<PartRoute, string> = {
 export const PART_STATUS: Record<PartStatus, { label: string; tone: Tone }> = {
   requested: { label: 'With the coordinator', tone: 'orange' },
   forwarded: { label: 'With Purchase', tone: 'amber' },
-  accepted: { label: 'Being bought', tone: 'yellow' },
-  bought: { label: 'Bought — to go into stock', tone: 'violet' },
+  accepted: { label: 'Being purchased', tone: 'yellow' },
+  bought: { label: 'Purchased — to go into stock', tone: 'violet' },
   sent: { label: 'Sent — engineer to confirm', tone: 'cyan' },
   received: { label: 'Confirmed', tone: 'green' },
   declined: { label: 'Declined', tone: 'rose' },

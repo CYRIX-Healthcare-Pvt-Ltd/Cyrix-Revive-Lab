@@ -89,7 +89,7 @@ export default function PartsCard({ ticket: t }: { ticket: Ticket }) {
       <div className="flex flex-wrap items-center gap-2.5 border-b border-ink-200 bg-ink-50 px-4 py-2">
         <IconChip icon={Boxes} tone="orange" />
         <h3 className="text-sm font-semibold text-ink-800">Components</h3>
-        {spent > 0 && <span className="ml-auto text-xs text-ink-500">Bought for this ticket: <span className="font-medium tabular-nums text-ink-800">{rupees(spent)}</span></span>}
+        {spent > 0 && <span className="ml-auto text-xs text-ink-500">Purchased for this ticket: <span className="font-medium tabular-nums text-ink-800">{rupees(spent)}</span></span>}
       </div>
       <div className="space-y-4 p-4">
         {notice && <Alert kind={notice.kind}>{notice.text}</Alert>}
@@ -215,7 +215,7 @@ function StockUseItem({ use: u, desk, isAsker, onDecline, onNotice }: {
         <span className="font-mono text-xs text-ink-500">{u.part_no}</span>
         {(u.item || u.package) && <span className="text-xs text-ink-400">{[u.item, u.package].filter(Boolean).join(' · ')}</span>}
         <span className={clsx('badge', TONE_CLASS[status.tone])}>{status.label}</span>
-        {u.source === 'bought' && <span className="badge bg-ink-100 text-ink-600">From what was bought</span>}
+        {u.source === 'bought' && <span className="badge bg-ink-100 text-ink-600">From what was purchased</span>}
       </div>
       <p className="mt-0.5 text-xs text-ink-500">
         Requested by {u.requested_by_name} · {when(u.requested_at)}
@@ -283,12 +283,12 @@ function RequestItem({
 
   const steps: Array<[ReactNode, string | null]> = [
     [<>Requested by {r.requested_by_name}</>, r.requested_at],
-    ...(r.accepted_at ? [[<>{r.accepted_by_name} is buying it</>, r.accepted_at] as [ReactNode, string]] : []),
+    ...(r.accepted_at ? [[<>{r.accepted_by_name} is purchasing it</>, r.accepted_at] as [ReactNode, string]] : []),
     ...(r.progress && r.progress_at ? [[<>{PART_PROGRESS[r.progress]}{r.progress_by_name ? <> · {r.progress_by_name}</> : null}</>, r.progress_at] as [ReactNode, string]] : []),
     ...(r.declined_at ? [[<>Declined by {r.declined_by_name}{r.declined_reason ? <>: <span className="text-ink-700">{r.declined_reason}</span></> : null}</>, r.declined_at] as [ReactNode, string]] : []),
     ...(r.purchased_at && r.po_number ? [[<>Ordered by {r.purchased_by_name} · <span className="font-mono text-ink-700">{poLabel(r.po_number)}</span>{r.po_date ? <> of {onDay(r.po_date)}</> : null}{r.vendor ? <> from {r.vendor}</> : null}{r.edd ? <> · due <span className="font-medium text-ink-800">{onDay(r.edd)}</span></> : null}</>, r.purchased_at] as [ReactNode, string]] : []),
-    ...(r.purchased_at && !r.po_number ? [[<>Bought by {r.purchased_by_name}{r.bill_amount !== null ? <> for <span className="font-medium tabular-nums text-ink-800">{rupees(r.bill_amount)}</span></> : null}{r.vendor ? <> from {r.vendor}</> : null}{r.bill_no ? <> · bill {r.bill_no}</> : null}</>, r.purchased_at] as [ReactNode, string]] : []),
-    ...(r.stocked_at ? [[<>Into stock by {r.stocked_by_name} as <span className="font-mono text-ink-700">{r.part_no}</span>{r.bought_qty ? <> · {r.bought_qty} bought</> : null}</>, r.stocked_at] as [ReactNode, string]] : []),
+    ...(r.purchased_at && !r.po_number ? [[<>Purchased by {r.purchased_by_name}{r.bill_amount !== null ? <> for <span className="font-medium tabular-nums text-ink-800">{rupees(r.bill_amount)}</span></> : null}{r.vendor ? <> from {r.vendor}</> : null}{r.bill_no ? <> · bill {r.bill_no}</> : null}</>, r.purchased_at] as [ReactNode, string]] : []),
+    ...(r.stocked_at ? [[<>Into stock by {r.stocked_by_name} as <span className="font-mono text-ink-700">{r.part_no}</span>{r.bought_qty ? <> · {r.bought_qty} purchased</> : null}</>, r.stocked_at] as [ReactNode, string]] : []),
     ...(r.received_at ? [[<>Confirmed by {r.received_by_name}</>, r.received_at] as [ReactNode, string]] : []),
   ]
 
@@ -350,9 +350,9 @@ function RequestItem({
         <div className="mt-3 flex flex-wrap gap-2 border-t border-ink-100 pt-3">
           {canTake && (
             <button type="button" className="btn-primary !py-1.5 text-sm" disabled={busy}
-              onClick={() => run(() => take.mutateAsync({ id: r.id }), 'Taken on. Mark where it stands as you go, and attach the bill once it is bought.')}>
+              onClick={() => run(() => take.mutateAsync({ id: r.id }), 'Taken on. Mark where it stands as you go, and attach the bill once it is purchased.')}>
               {take.isPending ? <Spinner className="h-4 w-4" /> : <Hand className="h-4 w-4 text-yellow-400" />}
-              Buy it locally
+              Purchase locally
             </button>
           )}
           {canOrder && (
@@ -382,14 +382,14 @@ function RequestItem({
           )}
           {canForward && (
             <button type="button" className={clsx(r.route === 'purchase' ? 'btn-primary' : 'btn-secondary', '!py-1.5 text-sm')} disabled={busy}
-              onClick={() => run(() => forward.mutateAsync({ id: r.id }), 'Passed to Purchase. They buy it and it comes back to you for the stock entry.')}>
+              onClick={() => run(() => forward.mutateAsync({ id: r.id }), 'Passed to Purchase. They purchase it and it comes back to you for the stock entry.')}>
               {forward.isPending ? <Spinner className="h-4 w-4" /> : <Send className="h-4 w-4 text-amber-500" />} Pass to Purchase
             </button>
           )}
           {canMakeLocal && (
             <button type="button" className={clsx(r.status === 'forwarded' ? 'btn-secondary' : 'btn-primary', '!py-1.5 text-sm')} disabled={busy}
-              onClick={() => run(() => makeLocal.mutateAsync({ id: r.id }), 'Kept here — buy it locally and attach the bill.')}>
-              {makeLocal.isPending ? <Spinner className="h-4 w-4" /> : <ShoppingCart className="h-4 w-4 text-orange-500" />} Buy it locally
+              onClick={() => run(() => makeLocal.mutateAsync({ id: r.id }), 'Kept here — purchase it locally and attach the bill.')}>
+              {makeLocal.isPending ? <Spinner className="h-4 w-4" /> : <ShoppingCart className="h-4 w-4 text-orange-500" />} Purchase locally
             </button>
           )}
           {canBill && (
@@ -520,7 +520,7 @@ function BillDialog({ ticket: t, request: r, onClose, onDone }: {
         </label>
       </div>
       <label className="block">
-        <span className="label">Bought from</span>
+        <span className="label">Purchased from</span>
         <input className="input mt-1" value={vendor} onChange={e => setVendor(e.target.value)} maxLength={120} placeholder="Shop or supplier" />
       </label>
 
@@ -571,8 +571,8 @@ function StockDialog({ request: r, onClose, onDone }: {
   const send = async () => {
     setError(null)
     if (value.trim().length < 1) { setError('Enter the value — what is printed on the part.'); return }
-    if (!Number.isInteger(bought) || bought < 1) { setError('Enter how many were bought.'); return }
-    if (!Number.isInteger(toRepair) || toRepair < 0 || toRepair > bought) { setError('The repair cannot take more than was bought.'); return }
+    if (!Number.isInteger(bought) || bought < 1) { setError('Enter how many were purchased.'); return }
+    if (!Number.isInteger(toRepair) || toRepair < 0 || toRepair > bought) { setError('The repair cannot take more than was purchased.'); return }
     try {
       await stock.mutateAsync({
         id: r.id, value: value.trim(), item: item.trim(), package: pack.trim(),
@@ -589,7 +589,7 @@ function StockDialog({ request: r, onClose, onDone }: {
       <p className="text-sm text-ink-600">
         {asker(r)} requested <span className="font-medium text-ink-900">{r.qty} × {r.name}</span>
         {r.po_number ? <> · {poLabel(r.po_number)}</> : null}
-        {r.vendor ? <> · {r.po_number ? 'ordered' : 'bought'} from {r.vendor}</> : null}
+        {r.vendor ? <> · {r.po_number ? 'ordered' : 'purchased'} from {r.vendor}</> : null}
         {r.bill_amount !== null ? <> · {rupees(r.bill_amount)}</> : null}
       </p>
 
@@ -623,7 +623,7 @@ function StockDialog({ request: r, onClose, onDone }: {
 
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="block">
-          <span className="label">How many were bought <span className="text-cyrixRed-600">*</span></span>
+          <span className="label">How many were purchased <span className="text-cyrixRed-600">*</span></span>
           <input className="input mt-1 tabular-nums" type="number" inputMode="numeric" min={1} step={1}
             value={qty} onChange={e => setQty(e.target.value)} />
         </label>
@@ -730,7 +730,7 @@ function DeclineDialog({ request: r, buyer, onClose, onDone }: {
 
   const send = async () => {
     setError(null)
-    if (reason.trim().length < 3) { setError('Say why it is not being bought.'); return }
+    if (reason.trim().length < 3) { setError('Say why it is not being purchased.'); return }
     try {
       await decline.mutateAsync({ id: r.id, reason: reason.trim() })
       onDone(buyer
