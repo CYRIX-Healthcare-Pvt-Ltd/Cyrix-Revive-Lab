@@ -238,12 +238,12 @@ export default function NewTicket() {
                     aria-pressed={source === s}
                     className={clsx(
                       'flex items-center gap-2.5 rounded-lg border px-3 py-2 text-left transition-colors',
-                      source === s ? 'border-sky-300 bg-sky-50' : 'border-ink-200 hover:border-ink-400',
+                      source === s ? SOURCE_LOOK[s].on : SOURCE_LOOK[s].off,
                     )}
                   >
                     {s === 'hospital'
-                      ? <Hospital className="h-4 w-4 shrink-0 text-sky-600" />
-                      : <Warehouse className="h-4 w-4 shrink-0 text-ink-600" />}
+                      ? <Hospital className={clsx('h-4 w-4 shrink-0', SOURCE_LOOK.hospital.icon)} />
+                      : <Warehouse className={clsx('h-4 w-4 shrink-0', SOURCE_LOOK.warehouse.icon)} />}
                     <span>
                       <span className="block text-sm font-medium text-ink-900">{s === 'hospital' ? 'A hospital' : 'A warehouse'}</span>
                       <span className="block text-xs text-ink-500">
@@ -541,6 +541,12 @@ function AskAnotherState({ state, labs, approvers, initial, onClose, onChoose }:
       </div>
     </Dialog>
   )
+}
+
+/** Each choice in its own colour, chosen or not, so which is which reads at a glance. */
+const SOURCE_LOOK: Record<TicketSource, { on: string; off: string; icon: string }> = {
+  hospital: { on: 'border-sky-300 bg-sky-50 ring-1 ring-sky-300', off: 'border-ink-200 hover:border-sky-300 hover:bg-sky-50/50', icon: 'text-sky-600' },
+  warehouse: { on: 'border-amber-300 bg-amber-50 ring-1 ring-amber-300', off: 'border-ink-200 hover:border-amber-300 hover:bg-amber-50/50', icon: 'text-amber-600' },
 }
 
 function Req() {

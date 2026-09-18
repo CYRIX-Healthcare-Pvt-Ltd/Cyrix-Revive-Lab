@@ -1,10 +1,16 @@
 import { useMemo, useState } from 'react'
 import clsx from 'clsx'
-import { Boxes, CheckCircle2, Search, ShoppingCart } from 'lucide-react'
+import { Boxes, CheckCircle2, ClipboardList, Search, ShoppingCart, Store } from 'lucide-react'
 import { useComponents, useRequestPart, useUseComponent, type Component, type Ticket } from '@/lib/queries'
 import { PART_ROUTE_LABEL, type PartRoute } from '@/lib/tickets'
 import { Spinner } from '@/components/ui'
 import PhotoPick, { type PickedPhoto } from '@/components/PhotoPick'
+
+/** Local purchase and Purchase, each in its own colour, chosen or not. */
+const ROUTE_LOOK: Record<PartRoute, { on: string; off: string; icon: string; Icon: typeof Store }> = {
+  local: { on: 'border-orange-300 bg-orange-50 ring-1 ring-orange-300', off: 'border-ink-200 hover:border-orange-300 hover:bg-orange-50/50', icon: 'text-orange-600', Icon: Store },
+  purchase: { on: 'border-violet-300 bg-violet-50 ring-1 ring-violet-300', off: 'border-ink-200 hover:border-violet-300 hover:bg-violet-50/50', icon: 'text-violet-600', Icon: ClipboardList },
+}
 
 /** Parts whose number, value, item or package holds every word typed, best matches first. */
 export function searchStock(stock: readonly Component[], query: string, limit = 30): Component[] {
@@ -226,15 +232,18 @@ export function RequestPartForm({ ticket: t, onDone, onError, onCancel }: {
               onClick={() => setRoute(r)}
               aria-pressed={route === r}
               className={clsx(
-                'rounded-lg border px-3 py-2 text-left transition-colors',
-                route === r ? 'border-orange-300 bg-orange-50' : 'border-ink-200 hover:border-ink-400',
+                'flex items-center gap-2.5 rounded-lg border px-3 py-2 text-left transition-colors',
+                route === r ? ROUTE_LOOK[r].on : ROUTE_LOOK[r].off,
               )}
             >
-              <span className="block text-sm font-medium text-ink-900">{PART_ROUTE_LABEL[r]}</span>
-              <span className="block text-xs text-ink-500">
-                {r === 'local'
-                  ? `The coordinator at ${t.trc_name} buys it`
-                  : 'The coordinator passes it to the Purchase team'}
+              {(() => { const Icon = ROUTE_LOOK[r].Icon; return <Icon className={clsx('h-4 w-4 shrink-0', ROUTE_LOOK[r].icon)} /> })()}
+              <span>
+                <span className="block text-sm font-medium text-ink-900">{PART_ROUTE_LABEL[r]}</span>
+                <span className="block text-xs text-ink-500">
+                  {r === 'local'
+                    ? `The coordinator at ${t.trc_name} buys it`
+                    : 'The coordinator passes it to the Purchase team'}
+                </span>
               </span>
             </button>
           ))}
