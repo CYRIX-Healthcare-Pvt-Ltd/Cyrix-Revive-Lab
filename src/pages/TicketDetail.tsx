@@ -422,7 +422,7 @@ function StageMedia({ ticket: t }: { ticket: Ticket }) {
   )
 
   return (
-    <Section title={t.done_video || t.done_voice ? 'Photographs and recordings along the way' : 'Photographs along the way'} icon={Camera} tone="sky">
+    <Section title={t.done_video || t.done_voice ? 'Arrival, repair and return — photos and recordings' : 'Arrival, repair and return photos'} icon={Camera} tone="sky">
       <div className="space-y-4">
         {group('On arrival', 'bg-amber-100 text-amber-900', t.arrival_photos, t.arrival_damaged)}
         {group('Repaired', 'bg-lime-100 text-lime-900', t.done_photos, false)}
