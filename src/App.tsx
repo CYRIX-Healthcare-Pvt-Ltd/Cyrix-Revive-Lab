@@ -16,6 +16,7 @@ const NewTicket    = lazyRoute(() => import('@/pages/NewTicket'))
 const TicketDetail = lazyRoute(() => import('@/pages/TicketDetail'))
 const Access       = lazyRoute(() => import('@/pages/Access'))
 const Components   = lazyRoute(() => import('@/pages/Components'))
+const Team         = lazyRoute(() => import('@/pages/Team'))
 
 export default function App() {
   const { session, loading, hasAccess, me } = useAuth()
@@ -34,6 +35,8 @@ export default function App() {
         <Route element={<Shell />}>
           <Route index element={<Dashboard />} />
           <Route path="tickets" element={<Tickets />} />
+          {/* Anybody may open it; somebody nobody reports to is told so (rl_0029). */}
+          <Route path="team" element={<Team />} />
           <Route path="tickets/:code" element={<TicketDetail />} />
           <Route path="new" element={canRaise(me) ? <NewTicket /> : <Navigate to="/" replace />} />
           <Route path="access" element={me?.is_admin ? <Access /> : <Navigate to="/" replace />} />

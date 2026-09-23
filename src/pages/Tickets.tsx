@@ -3,7 +3,8 @@ import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-do
 import clsx from 'clsx'
 import { ArrowDownUp, Download, Inbox, PackagePlus, Search } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { useTickets, type Ticket } from '@/lib/queries'
+import { useMyTeam, useTickets, type Ticket } from '@/lib/queries'
+import { branchOf, indexTeam, ownerOfTicket } from '@/lib/team'
 import {
   STATUS, STATUS_ORDER, TONE_CLASS, TONE_DOT, TONE_TEXT, canRaise, itemsSummary, parseTicketCode, statusGroups, ticketTabs,
   type TabId, type TicketStatus, type Tone,
@@ -13,17 +14,17 @@ import { ticketFileName, ticketWorkbook } from '@/lib/ticketSheet'
 import { ClassTag } from '@/components/Classification'
 import { clockTime, dayDate } from '@/lib/when'
 
-type SortKey = 'code' | 'raised' | 'status' | 'category' | 'hospital' | 'spare' | 'trc' | 'field' | 'engineer' | 'age'
+type SortKey = 'code' | 'raised' | 'status' | 'category' | 'hospital' | 'spare' | 'trc' | 'field' | 'team' | 'engineer' | 'age'
 
 const COLUMN: Record<SortKey, string> = {
   code: 'Ticket', raised: 'Raised', status: 'Status', category: 'Category', hospital: 'Hospital', spare: 'Spare',
-  trc: 'Revive Lab', field: 'Field engineer', engineer: 'Revive Lab engineer', age: 'Age',
+  trc: 'Revive Lab', field: 'Field engineer', team: 'Team of', engineer: 'Revive Lab engineer', age: 'Age',
 }
 
 /** A column's first click: dates newest first, ages longest first, words A to Z. */
 const FIRST_ASC: Record<SortKey, boolean> = {
   code: false, raised: false, age: false,
-  status: true, category: true, hospital: true, spare: true, trc: true, field: true, engineer: true,
+  status: true, category: true, hospital: true, spare: true, trc: true, field: true, team: true, engineer: true,
 }
 
 /** On a phone there are no column headings to click, so the orders are named. */
@@ -63,7 +64,7 @@ function raisedOn(iso: string): { date: string; time: string } {
 /** A filter's choice, and how many tickets it would show. */
 interface Facet { value: string; label: string; n: number }
 
-function sortValue(key: SortKey, t: Ticket): string | number | null {
+function sortValue(key: SortKey, t: Ticket, team: string | null): string | number | null {
   switch (key) {
     case 'code': return t.number
     case 'raised': return Date.parse(t.created_at)
@@ -74,6 +75,7 @@ function sortValue(key: SortKey, t: Ticket): string | number | null {
     case 'spare': return itemsSummary(t)
     case 'trc': return t.trc_name
     case 'field': return t.stakeholder_name
+    case 'team': return team
     case 'engineer': return t.engineer_name
     case 'age': return ageMs(t)
   }
@@ -82,11 +84,31 @@ function sortValue(key: SortKey, t: Ticket): string | number | null {
 const text = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true })
 
 export default function Tickets() {
-  const { me } = useAuth()
+  const { me, employee } = useAuth()
   const navigate = useNavigate()
   const { search } = useLocation()
   const [params, setParams] = useSearchParams()
   const { data: tickets, isLoading } = useTickets()
+
+  /*
+    Which of this person's teams each ticket is from — the report of theirs it
+    sits under, at any depth (rl_0029). Only for somebody with a team, and the
+    column and filter only once the list holds one of their team's tickets.
+  */
+  const { data: myTeam } = useMyTeam()
+  const teamOf = useMemo(() => {
+    const ix = indexTeam(myTeam)
+    const viewer = employee?.id ?? ''
+    return (t: Ticket): { id: string; name: string } | null => {
+      const owner = ownerOfTicket(ix, t)
+      const b = owner ? branchOf(ix, owner, viewer) : null
+      const p = b ? ix.byId.get(b) : null
+      return p ? { id: p.id, name: p.name } : null
+    }
+  }, [myTeam, employee?.id])
+  const showTeam = useMemo(() => (tickets ?? []).some(t => teamOf(t)), [tickets, teamOf])
+  // The desk follows its engineers; anybody arriving by a link that names one gets the filter too.
+  const desk = !!me && (me.is_coordinator || me.is_manager || me.is_admin)
 
   // Everything that shapes the list lives in the address, so coming back
   // from a ticket finds it as it was left.
@@ -106,6 +128,9 @@ export default function Tickets() {
   // The category and the criticality the Revive Lab gave it (rl_0024); 'none' is not classified yet.
   const cat = params.get('cat') ?? ''
   const crit = params.get('crit') ?? ''
+  // The report of this person's a ticket's field engineer is under ('none': not their team's), and the Revive Lab engineer.
+  const team = params.get('team') ?? ''
+  const eng = params.get('eng') ?? ''
   const anyWarehouse = useMemo(() => (tickets ?? []).some(t => t.source === 'warehouse'), [tickets])
   // The search box answers to every key at once; the address follows it,
   // and a link that clears the address clears the box.
@@ -157,9 +182,11 @@ export default function Tickets() {
     data, and the dropdowns connected"). A choice that no longer matches
     anything stays offered, at nought, so it can be seen and cleared.
   */
-  type Filter = 'lab' | 'status' | 'from' | 'cat' | 'crit'
+  type Filter = 'lab' | 'status' | 'from' | 'cat' | 'crit' | 'team' | 'eng'
   const passes = (t: Ticket, skip: Filter | null = null) =>
     (skip === 'lab' || !trcId || t.trc_id === trcId)
+    && (skip === 'team' || !team || (teamOf(t)?.id ?? 'none') === team)
+    && (skip === 'eng' || !eng || (t.engineer_id ?? 'none') === eng)
     && (skip === 'status' || !status || t.status === status)
     && (skip === 'from' || !from || (t.source ?? 'hospital') === from)
     && (skip === 'cat' || !cat || (t.spare_category ?? 'none') === cat)
@@ -183,6 +210,10 @@ export default function Tickets() {
     const sources = tally('from', t => t.source ?? 'hospital', t => (t.source === 'warehouse' ? 'From warehouses' : 'From hospitals'))
     const cats = tally('cat', t => t.spare_category ?? 'none', t => (t.spare_category ? `Category ${t.spare_category}` : 'No category yet'))
     const crits = tally('crit', t => t.criticality ?? 'none', t => (t.criticality === 'critical' ? 'Critical' : t.criticality === 'non_critical' ? 'Non-critical' : 'Not said yet'))
+    const byLabel = (m: Map<string, Facet>) => [...m.values()]
+      .sort((a, b) => (a.value === 'none' ? 1 : b.value === 'none' ? -1 : text.compare(a.label, b.label)))
+    const teams = byLabel(tally('team', t => teamOf(t)?.id ?? 'none', t => teamOf(t)?.name ?? 'Not from your team'))
+    const engineers = byLabel(tally('eng', t => t.engineer_id ?? 'none', t => t.engineer_name ?? 'No engineer yet'))
     const keep = (list: Facet[], value: string, label: string) =>
       value && !list.some(f => f.value === value) ? [...list, { value, label, n: 0 }] : list
     return {
@@ -194,15 +225,17 @@ export default function Tickets() {
         cat === 'none' ? 'No category yet' : `Category ${cat}`),
       crits: keep(['critical', 'non_critical', 'none'].filter(s => crits.has(s)).map(s => crits.get(s)!), crit,
         crit === 'critical' ? 'Critical' : crit === 'non_critical' ? 'Non-critical' : 'Not said yet'),
+      teams: keep(teams, team, 'That team'),
+      engineers: keep(engineers, eng, 'That engineer'),
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searched, trcId, status, from, cat, crit])
+  }, [searched, trcId, status, from, cat, crit, team, eng, teamOf])
 
   const shown = useMemo(() => {
     const rows = searched.filter(t => passes(t))
     const dir = asc ? 1 : -1
     return [...rows].sort((a, b) => {
-      const x = sortValue(sortKey, a), y = sortValue(sortKey, b)
+      const x = sortValue(sortKey, a, teamOf(a)?.name ?? null), y = sortValue(sortKey, b, teamOf(b)?.name ?? null)
       // Nobody yet (no engineer, no spare named) goes last whichever way it runs.
       if (x === null || y === null) {
         if (x !== y) return x === null ? 1 : -1
@@ -214,7 +247,7 @@ export default function Tickets() {
       return Date.parse(b.created_at) - Date.parse(a.created_at)
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searched, trcId, status, from, cat, crit, sortKey, asc])
+  }, [searched, trcId, status, from, cat, crit, team, eng, sortKey, asc, teamOf])
 
   // What waits on this person, in groups by where each spare stands — the
   // same groups as the dashboard's card. Every other tab is one list.
@@ -240,7 +273,10 @@ export default function Tickets() {
     try {
       const XLSX = await import('xlsx')
       // In the page's own order: Waiting on you is in its groups.
-      XLSX.writeFile(ticketWorkbook(XLSX, groups.flatMap(g => g.rows)), ticketFileName(tab.label))
+      XLSX.writeFile(
+        ticketWorkbook(XLSX, groups.flatMap(g => g.rows), Date.now(), showTeam ? t => teamOf(t)?.name ?? null : undefined),
+        ticketFileName(tab.label),
+      )
     } finally {
       setSaving(false)
     }
@@ -313,6 +349,18 @@ export default function Tickets() {
               <option value="">Any criticality</option>
               {facets.crits.map(f => <option key={f.value} value={f.value}>{f.label} ({f.n})</option>)}
             </select>
+            {(showTeam || team) && (
+              <select className="input !py-1.5 sm:w-44" value={team} onChange={e => setParam('team', e.target.value || null)} aria-label="Filter by your team">
+                <option value="">All your teams</option>
+                {facets.teams.map(f => <option key={f.value} value={f.value}>{f.label} ({f.n})</option>)}
+              </select>
+            )}
+            {(desk || eng) && (
+              <select className="input !py-1.5 sm:w-48" value={eng} onChange={e => setParam('eng', e.target.value || null)} aria-label="Filter by Revive Lab engineer">
+                <option value="">Any Revive Lab engineer</option>
+                {facets.engineers.map(f => <option key={f.value} value={f.value}>{f.label} ({f.n})</option>)}
+              </select>
+            )}
             <label className="relative min-w-0 flex-1 sm:w-56 sm:flex-none">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
               <input
@@ -369,6 +417,7 @@ export default function Tickets() {
                     <SortHeader label="Spare" col="spare" sortKey={sortKey} asc={asc} onSort={onSort} />
                     <SortHeader label="Revive Lab" col="trc" sortKey={sortKey} asc={asc} onSort={onSort} />
                     <SortHeader label="Field engineer" col="field" sortKey={sortKey} asc={asc} onSort={onSort} />
+                    {showTeam && <SortHeader label="Team of" col="team" sortKey={sortKey} asc={asc} onSort={onSort} />}
                     <SortHeader label="Revive Lab engineer" col="engineer" sortKey={sortKey} asc={asc} onSort={onSort} />
                     <SortHeader label="Age" col="age" align="right" sortKey={sortKey} asc={asc} onSort={onSort} />
                   </tr>
@@ -378,7 +427,7 @@ export default function Tickets() {
                   <Fragment key={g.key}>
                   {grouped && (
                     <tr className="bg-ink-50/70">
-                      <td colSpan={10} className="px-4 py-1.5">
+                      <td colSpan={showTeam ? 11 : 10} className="px-4 py-1.5">
                         <span className="sticky left-4 inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-label">
                           <span aria-hidden className={clsx('h-2 w-2 rounded-full', TONE_DOT[g.tone])} />
                           <span className={TONE_TEXT[g.tone]}>{g.label}</span>
@@ -438,6 +487,11 @@ export default function Tickets() {
                             {[t.stakeholder_ecode, t.stakeholder_function].filter(Boolean).join(' · ')}
                           </p>
                         </td>
+                        {showTeam && (
+                          <td className="px-4 py-3">
+                            {teamOf(t) ? <p className="text-ink-700">{teamOf(t)!.name}</p> : <span className="text-ink-300">—</span>}
+                          </td>
+                        )}
                         <td className="px-4 py-3">
                           {t.engineer_name
                             ? <><p className="text-ink-700">{t.engineer_name}</p><p className="text-xs text-ink-500">{t.engineer_ecode}</p></>
@@ -512,7 +566,7 @@ export default function Tickets() {
                       </div>
                       {spare && <p className="text-xs text-ink-500">{spare}</p>}
                       <p className="text-xs text-ink-500">
-                        {t.trc_name} · {t.stakeholder_name} · {age(t)}
+                        {t.trc_name} · {t.stakeholder_name}{teamOf(t) ? ` (team of ${teamOf(t)!.name})` : ''} · {age(t)}
                       </p>
                       <ClassTag ticket={t} className="flex" />
                     </Link>

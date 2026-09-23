@@ -119,3 +119,17 @@ describe('the file’s name', () => {
     expect(ticketFileName('Waiting on you', new Date(2026, 8, 23, 18, 0))).toBe('Revive Lab tickets - Waiting on you - 2026-09-23.xlsx')
   })
 })
+
+describe('a manager’s list (rl_0029)', () => {
+  it('carries the team after the field engineer, only when asked to', () => {
+    const t = ticket()
+    const NOW = Date.parse('2026-09-23T06:30:00Z')
+    const plain = ticketSheet([t], NOW)
+    expect(plain.headings).not.toContain('Team of')
+    const withTeam = ticketSheet([t], NOW, () => 'Abijith A')
+    const at = withTeam.headings.indexOf('Team of')
+    expect(withTeam.headings[at - 1]).toBe('Field engineer / in-charge')
+    expect(withTeam.rows[0][at]).toBe('Abijith A')
+    expect(withTeam.headings.length).toBe(plain.headings.length + 1)
+  })
+})

@@ -1,9 +1,11 @@
+import { useMemo } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import clsx from 'clsx'
-import { Boxes, LayoutDashboard, ListChecks, PackagePlus, ShieldCheck, Grid2x2, LogOut } from 'lucide-react'
+import { Boxes, LayoutDashboard, ListChecks, PackagePlus, ShieldCheck, Grid2x2, LogOut, Users } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { useTickets } from '@/lib/queries'
+import { useMyTeam, useTickets } from '@/lib/queries'
 import { TONE_TEXT, canRaise, waitingOnMe, type Tone } from '@/lib/tickets'
+import { indexTeam, ownerOfTicket } from '@/lib/team'
 import { Logo } from '@/components/Logo'
 import ThemeToggle from '@/components/ThemeToggle'
 import Avatar from '@/components/Avatar'
@@ -21,6 +23,23 @@ export default function Shell() {
   const { employee, me, signOut } = useAuth()
   const { data: tickets } = useTickets()
   const mine = (tickets ?? []).filter(t => waitingOnMe(t, me)).length
+  /*
+    My team is for the field side: a manager whose people send spares in
+    (rl_0029). A Revive Lab's own manager, coordinator or engineer has a team
+    too, but it is the Revive Lab's staff, who send nothing — their numbers are
+    the Revive Lab's engineers, on the dashboard (the user, 23 Sep: "why trc
+    manager need team tab? for them it should be their trc engineer data").
+    So: anybody with people under them and no Revive Lab role, or anybody
+    whose people have in fact sent a spare.
+  */
+  const { data: team } = useMyTeam()
+  const hasTeam = useMemo(() => {
+    if (!(team?.people ?? []).some(p => p.active)) return false
+    const labRole = !!me && (me.is_engineer || me.is_coordinator || me.is_manager || me.is_admin || me.is_purchase)
+    if (!labRole) return true
+    const ix = indexTeam(team)
+    return (tickets ?? []).some(t => ownerOfTicket(ix, t))
+  }, [team, tickets, me])
 
   /*
     Two names per tab. The header has room for the whole one; the bar at
@@ -33,6 +52,7 @@ export default function Shell() {
   }> = [
     { to: '/', label: 'Dashboard', short: 'Home', icon: LayoutDashboard, tone: 'indigo', end: true },
     { to: '/tickets', label: 'Tickets', short: 'Tickets', icon: ListChecks, tone: 'amber', badge: mine },
+    ...(hasTeam ? [{ to: '/team', label: 'My team', short: 'Team', icon: Users, tone: 'violet' as Tone }] : []),
     // A Revive Lab's own engineer repairs what arrives; they never send one in.
     ...(canRaise(me) ? [{ to: '/new', label: 'Raise ticket', short: 'Raise', icon: PackagePlus, tone: 'red' as Tone }] : []),
     ...(me && (me.is_coordinator || me.is_manager || me.is_admin || me.is_purchase)

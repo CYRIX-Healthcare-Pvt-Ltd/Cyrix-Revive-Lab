@@ -132,11 +132,25 @@ export const TICKET_COLUMNS: readonly Column[] = [
   { heading: 'Return address', width: 40, kind: 'text', value: t => t.return_address },
 ]
 
+/**
+ * The columns, with "Team of" after the field engineer when the list shows a
+ * manager which of their teams each ticket is from (rl_0029).
+ */
+function columnsFor(teamOf?: (t: Ticket) => string | null): readonly Column[] {
+  if (!teamOf) return TICKET_COLUMNS
+  const at = TICKET_COLUMNS.findIndex(c => c.heading === 'Field engineer / in-charge') + 1
+  const team: Column = { heading: 'Team of', width: 22, kind: 'text', value: t => teamOf(t) }
+  return [...TICKET_COLUMNS.slice(0, at), team, ...TICKET_COLUMNS.slice(at)]
+}
+
 /** The headings and one row a ticket, in the order given. */
-export function ticketSheet(tickets: readonly Ticket[], now = Date.now()): { headings: string[]; rows: Cell[][] } {
+export function ticketSheet(
+  tickets: readonly Ticket[], now = Date.now(), teamOf?: (t: Ticket) => string | null,
+): { headings: string[]; rows: Cell[][] } {
+  const columns = columnsFor(teamOf)
   return {
-    headings: TICKET_COLUMNS.map(c => c.heading),
-    rows: tickets.map(t => TICKET_COLUMNS.map(c => {
+    headings: columns.map(c => c.heading),
+    rows: tickets.map(t => columns.map(c => {
       const v = c.value(t, now)
       return v === undefined || v === '' ? null : v
     })),
@@ -154,10 +168,13 @@ const FORMAT: Partial<Record<Kind, string>> = {
  * downloads, so the list does not carry it. Column widths, the formats of
  * dates and rupees, and Excel's filter arrows on the heading row.
  */
-export function ticketWorkbook(XLSX: typeof import('xlsx'), tickets: readonly Ticket[], now = Date.now()) {
-  const { headings, rows } = ticketSheet(tickets, now)
+export function ticketWorkbook(
+  XLSX: typeof import('xlsx'), tickets: readonly Ticket[], now = Date.now(), teamOf?: (t: Ticket) => string | null,
+) {
+  const columns = columnsFor(teamOf)
+  const { headings, rows } = ticketSheet(tickets, now, teamOf)
   const ws = XLSX.utils.aoa_to_sheet([headings, ...rows])
-  TICKET_COLUMNS.forEach((col, c) => {
+  columns.forEach((col, c) => {
     const z = FORMAT[col.kind]
     if (!z) return
     for (let r = 1; r <= rows.length; r++) {
@@ -165,7 +182,7 @@ export function ticketWorkbook(XLSX: typeof import('xlsx'), tickets: readonly Ti
       if (cell && cell.t === 'n') cell.z = z
     }
   })
-  ws['!cols'] = TICKET_COLUMNS.map(col => ({ wch: col.width }))
+  ws['!cols'] = columns.map(col => ({ wch: col.width }))
   ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: Math.max(rows.length, 1), c: headings.length - 1 } }) }
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, 'Tickets')

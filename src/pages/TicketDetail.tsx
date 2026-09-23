@@ -67,12 +67,20 @@ export default function TicketDetail() {
   return <TicketView ticket={ticket} />
 }
 
-/** Back to the list as it was left — its tab, filters and order ride along from it. */
+/**
+ * Back to where the ticket was opened from: the list as it was left — its
+ * tab, filters and order ride along — or the page that says so, like My team
+ * with the team that was open (the user, 23 Sep: "on searching ticket on team
+ * and going back, it is going to tab tickets").
+ */
 function BackLink() {
-  const list = (useLocation().state as { list?: string } | null)?.list ?? ''
+  const state = useLocation().state as { list?: string; back?: { to: string; label: string } } | null
   return (
-    <Link to={'/tickets' + list} className="inline-flex items-center gap-1.5 text-sm text-ink-600 hover:text-ink-900">
-      <ArrowLeft className="h-4 w-4" /> All tickets
+    <Link
+      to={state?.back?.to ?? '/tickets' + (state?.list ?? '')}
+      className="inline-flex items-center gap-1.5 text-sm text-ink-600 hover:text-ink-900"
+    >
+      <ArrowLeft className="h-4 w-4" /> {state?.back?.label ?? 'All tickets'}
     </Link>
   )
 }

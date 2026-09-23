@@ -6,6 +6,7 @@ import type {
 } from './tickets'
 import { uploadPartFile } from './partFiles'
 import { inRound, uploadStageFile, type StageName } from './attachments'
+import type { MyTeam } from './team'
 
 // ---------------------------------------------------------------------
 // Shapes
@@ -311,6 +312,19 @@ export function useTickets() {
   return useQuery({
     queryKey: ['revive', 'tickets'],
     queryFn: async () => unwrap<Ticket[]>(await supabase.rpc('revive_ticket_list')),
+  })
+}
+
+/**
+ * Everyone under the viewer, and whose each ticket is — the My team page
+ * (rl_0029). Empty for somebody nobody reports to. A new ticket needs no
+ * refetch here: it belongs to its field engineer, whom the list already names.
+ */
+export function useMyTeam() {
+  return useQuery({
+    queryKey: ['revive', 'my-team'],
+    staleTime: 5 * 60_000,
+    queryFn: async () => unwrap<MyTeam>(await supabase.rpc('revive_my_team')),
   })
 }
 

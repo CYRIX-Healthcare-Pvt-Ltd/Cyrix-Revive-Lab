@@ -1,19 +1,23 @@
 import { useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import {
   Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
-import { BellRing, Building2, ChartColumn, Inbox, PackagePlus, TrendingUp } from 'lucide-react'
+import { AlarmClock, ArrowRight, BellRing, Building2, ChartColumn, HardHat, Inbox, PackagePlus, TrendingUp, Users } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { useTickets, useTrcs, useVisibleEvents } from '@/lib/queries'
+import { useMembers, useMyTeam, useTickets, useTrcs, useVisibleEvents } from '@/lib/queries'
 import {
   REPAIRING, STATUS, STATUS_ORDER, TONE_DOT, TONE_FILL, TONE_TEXT, canRaise, itemsSummary, statusGroups, ticketTabs, waitingOnMe,
 } from '@/lib/tickets'
 import { asDays, formatSpan, ticketTat, type TatEvent } from '@/lib/tat'
 import { EmptyState, PageLoader, ReturnedTag, SectorTag, StatTile, TransferTag, WarehouseChip } from '@/components/ui'
 import IconChip from '@/components/IconChip'
-import { ClassTag } from '@/components/Classification'
+import { CATEGORY_CLASS, ClassTag } from '@/components/Classification'
+import {
+  PERIODS, categoryReport, countTickets, engineerReport, inRange, indexTeam, ownerOfTicket, percent, periodRange,
+  type CategoryRow, type EngineerRow, type Period,
+} from '@/lib/team'
 
 const TOOLTIP = { fontSize: 12, borderRadius: 8, border: '1px solid #d4d8e0' }
 const TICK = { fontSize: 11, fill: '#606b82' }
@@ -32,6 +36,13 @@ export default function Dashboard() {
   const { data: tickets, isLoading } = useTickets()
   const { data: events } = useVisibleEvents()
   const { data: trcs } = useTrcs()
+  // The desk's own reports need its engineers, idle ones included.
+  const desk = !!me && (me.is_coordinator || me.is_manager || me.is_admin)
+  const { data: members } = useMembers(desk)
+  const { data: team } = useMyTeam()
+  const [params, setParams] = useSearchParams()
+  const period: Period = PERIODS.some(p => p.id === params.get('period')) ? params.get('period') as Period : 'month'
+  const words = PERIODS.find(p => p.id === period)!.words
 
   const stats = useMemo(() => {
     /*
@@ -51,11 +62,11 @@ export default function Dashboard() {
 
     const now = new Date()
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
-    const ninetyDays = Date.now() - 90 * 86_400_000
+    const range = periodRange(period)
 
     // A ticket discarded before it went anywhere took no turnaround to count.
     const closed = all.filter(t => t.status === 'closed' && t.closed_at && t.closure !== 'discarded')
-    const recentClosed = closed.filter(t => Date.parse(t.closed_at!) >= ninetyDays)
+    const recentClosed = closed.filter(t => inRange(Date.parse(t.closed_at!), range))
     const avgTotal = recentClosed.length
       ? recentClosed.reduce((a, t) => a + (tatOf(t.id, t.trc_id).total.ms ?? 0), 0) / recentClosed.length
       : null
@@ -110,7 +121,25 @@ export default function Dashboard() {
       trend,
       total: all.length,
     }
-  }, [tickets, events, trcs, me])
+  }, [tickets, events, trcs, me, period])
+
+  // Every Revive Lab engineer at this person's Revive Labs (all of them for an admin), and the reports on them.
+  const lab = useMemo(() => {
+    if (!desk) return null
+    const all = tickets ?? []
+    const roster = (members ?? [])
+      .filter(m => m.is_engineer && (me!.is_admin || m.trc_ids.some(id => me!.trc_ids.includes(id))))
+      .map(m => ({ id: m.employee_id, name: m.full_name }))
+    const range = periodRange(period)
+    return { engineers: engineerReport(all, roster, Date.now(), range), categories: categoryReport(all, Date.now(), range) }
+  }, [desk, tickets, members, me, period])
+
+  // The viewer's team's spares, for the card that leads to My team (rl_0029).
+  const teamCounts = useMemo(() => {
+    const ix = indexTeam(team)
+    const list = (tickets ?? []).filter(t => ownerOfTicket(ix, t))
+    return list.length ? countTickets(list) : null
+  }, [team, tickets])
 
   if (isLoading) return <PageLoader />
 
@@ -127,11 +156,29 @@ export default function Dashboard() {
             Where every spare is, and how long it has taken.
           </p>
         </div>
-        {canRaise(me) && (
-          <Link to="/new" className="btn-primary">
-            <PackagePlus className="h-4 w-4" /> Raise ticket
-          </Link>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* The period for everything about what happened — sent back, on
+              time, the average. What is true now needs none. */}
+          <div className="inline-flex rounded-lg border border-ink-200 bg-ink-50 p-0.5" role="group" aria-label="Period">
+            {PERIODS.map(p => (
+              <button
+                key={p.id}
+                type="button"
+                aria-pressed={period === p.id}
+                onClick={() => setParams(q => { if (p.id === 'month') q.delete('period'); else q.set('period', p.id); return q }, { replace: true })}
+                className={clsx('rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                  period === p.id ? 'bg-surface text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800')}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+          {canRaise(me) && (
+            <Link to="/new" className="btn-primary">
+              <PackagePlus className="h-4 w-4" /> Raise ticket
+            </Link>
+          )}
+        </div>
       </div>
 
       {/* grid-fill: the fifth tile takes a whole row on a phone rather than half of one. */}
@@ -144,12 +191,14 @@ export default function Dashboard() {
           value={stats.moving}
           sub={stats.back ? `going back · ${stats.back} to be fitted` : 'going back, or between Revive Labs'}
         />
+        {/* From raising to back with the field engineer, averaged over the
+            tickets closed in the period chosen above. */}
         <StatTile
           label="Average TAT"
           value={stats.avgTotal === null ? '—' : formatSpan(stats.avgTotal)}
           sub={stats.recentClosed
-            ? `raised to back in the field · ${stats.recentClosed} closed in the last 90 days`
-            : 'nothing closed in the last 90 days'}
+            ? `raised → back with the field engineer · ${stats.recentClosed} closed ${words}`
+            : `raised → back with the field engineer · none closed ${words}`}
         />
       </div>
 
@@ -190,7 +239,7 @@ export default function Dashboard() {
                     <ul className="divide-y divide-ink-100 border-b border-ink-100 last:border-b-0">
                       {g.rows.map(t => (
                         <li key={t.id}>
-                          <Link to={`/tickets/${t.code}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 hover:bg-ink-50">
+                          <Link to={`/tickets/${t.code}`} state={{ back: { to: '/', label: 'Dashboard' } }} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 hover:bg-ink-50">
                             <span className="font-mono text-sm font-semibold text-ink-900">{t.code}</span>
                             {t.source === 'warehouse' && <WarehouseChip />}
                             <ReturnedTag ticket={t} />
@@ -209,6 +258,26 @@ export default function Dashboard() {
               </div>
             </div>
           )}
+
+          {teamCounts && (
+            <Link to="/team" className="card flex flex-wrap items-center gap-x-5 gap-y-2 p-4 hover:bg-ink-50">
+              <span className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
+                <IconChip icon={Users} tone="violet" /> My team
+              </span>
+              <span className="text-sm text-ink-600"><b className="tabular-nums text-ink-900">{teamCounts.open}</b> open</span>
+              <span className="text-sm text-ink-600"><b className="tabular-nums text-ink-900">{teamCounts.byStage.repair}</b> being repaired</span>
+              <span className="text-sm text-ink-600"><b className="tabular-nums text-ink-900">{teamCounts.byStage.sent}</b> not yet accepted</span>
+              <span className={clsx('text-sm', teamCounts.late ? 'text-cyrixRed-700' : 'text-ink-600')}>
+                <b className="tabular-nums">{teamCounts.late}</b> late
+              </span>
+              <span className="ml-auto inline-flex items-center gap-1 text-sm font-medium text-ink-700">
+                Everyone under you, team by team <ArrowRight aria-hidden className="h-4 w-4" />
+              </span>
+            </Link>
+          )}
+
+          {lab && <CategoryTat rows={lab.categories.rows} unclassified={lab.categories.unclassified} words={words} />}
+          {lab && <EngineerTable rows={lab.engineers} words={words} />}
 
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="card p-4">
@@ -287,3 +356,149 @@ export default function Dashboard() {
   )
 }
 
+/**
+ * A, B and C against their time — the Revive Lab's clock for each runs from
+ * acceptance until the spare is dispatched back (rl_0024). On the clock now,
+ * due within a day, late, and how the period went.
+ */
+function CategoryTat({ rows, unclassified, words }: { rows: CategoryRow[]; unclassified: number; words: string }) {
+  return (
+    <div className="card p-4">
+      <h3 className="mb-1 flex items-center gap-2.5 text-sm font-semibold text-ink-800">
+        <IconChip icon={AlarmClock} tone="red" /> TAT by category
+      </h3>
+      <p className="mb-3 text-xs text-ink-500">
+        Each category has its own time at the Revive Lab, from acceptance until it is dispatched back:
+        A 3 days, B 2, C 1. Late is past that time and not dispatched yet. TAT met is how many of the
+        spares sent back {words} went inside their time.
+      </p>
+      <div className="grid gap-3 sm:grid-cols-3">
+        {rows.map(r => {
+          const onTime = r.sent ? r.onTime / r.sent : null
+          return (
+            <div key={r.category} className="rounded-xl border border-ink-200 p-3">
+              <div className="flex items-center gap-2">
+                <span className={clsx('inline-block min-w-6 rounded px-1.5 py-0.5 text-center text-sm font-bold', CATEGORY_CLASS[r.category])}>
+                  {r.category}
+                </span>
+                <span className="text-sm font-medium text-ink-800">{r.days} {r.days === 1 ? 'day' : 'days'}</span>
+              </div>
+              <dl className="mt-3 grid grid-cols-3 gap-2 text-center">
+                <div>
+                  <dt className="text-[11px] text-ink-500">At the lab</dt>
+                  <dd className="text-lg font-semibold tabular-nums text-ink-900">{r.atLab}</dd>
+                </div>
+                <div>
+                  <dt className="text-[11px] text-ink-500">Due in a day</dt>
+                  <dd className={clsx('text-lg font-semibold tabular-nums', r.dueSoon ? 'text-amber-600' : 'text-ink-300')}>{r.dueSoon}</dd>
+                </div>
+                <div>
+                  <dt className="text-[11px] text-ink-500">Late</dt>
+                  <dd className={clsx('text-lg font-semibold tabular-nums', r.late ? 'text-cyrixRed-600' : 'text-ink-300')}>{r.late}</dd>
+                </div>
+              </dl>
+              <div className="mt-3 border-t border-ink-100 pt-2">
+                <div className="flex items-baseline justify-between text-xs">
+                  <span className="text-ink-500">TAT met {words}</span>
+                  <span className="font-semibold tabular-nums text-ink-800">
+                    {r.sent ? `${r.onTime} of ${r.sent} · ${percent(r.onTime, r.sent)}` : `none sent back ${words}`}
+                  </span>
+                </div>
+                <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-ink-100" aria-hidden>
+                  {onTime !== null && (
+                    <div className={clsx('h-full rounded-full', onTime >= 0.9 ? 'bg-green-500' : onTime >= 0.7 ? 'bg-amber-500' : 'bg-cyrixRed-500')}
+                         style={{ width: `${Math.round(onTime * 100)}%` }} />
+                  )}
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      {unclassified > 0 && (
+        <p className="mt-2 text-xs text-ink-400">
+          {unclassified} more {unclassified === 1 ? 'is' : 'are'} not accepted yet — a spare gets its category when it is accepted.
+        </p>
+      )}
+    </div>
+  )
+}
+
+/**
+ * "4 of 5 · 80%": of what was sent back, how much inside its time — green
+ * from 90%, amber from 70%, red below, as the category bars; a dash when
+ * nothing went back.
+ */
+function Met({ met, of }: { met: number; of: number }) {
+  if (!of) return <span className="text-ink-300">—</span>
+  const share = met / of
+  return (
+    <span className="tabular-nums">
+      <span className="text-ink-500">{met} of {of} · </span>
+      <span className={clsx('font-semibold', share >= 0.9 ? 'text-green-700' : share >= 0.7 ? 'text-amber-600' : 'text-cyrixRed-600')}>
+        {percent(met, of)}
+      </span>
+    </span>
+  )
+}
+
+/**
+ * One row per Revive Lab engineer: what is with them now, what is late or
+ * due within a day; and, for the period chosen at the top, what they sent
+ * back and how much of it went inside its category's own time — A 3 days,
+ * B 2, C 1 — for each category and altogether.
+ */
+function EngineerTable({ rows, words }: { rows: EngineerRow[]; words: string }) {
+  return (
+    <div className="card overflow-hidden">
+      <div className="border-b border-ink-200 bg-ink-50 px-4 py-2.5">
+        <h3 className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
+          <IconChip icon={HardHat} tone="indigo" /> Revive Lab engineers
+        </h3>
+        <p className="mt-1 text-xs text-ink-500">
+          With them now is assigned, in repair or waiting for a component; late is past its category&apos;s time.
+          TAT met is, of what they sent back {words}, how much went inside its category&apos;s time: A 3 days,
+          B 2, C 1. Open an engineer to see their tickets.
+        </p>
+      </div>
+      {rows.length === 0 ? (
+        <p className="px-4 py-6 text-center text-sm text-ink-400">No Revive Lab engineer has had a ticket yet.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full whitespace-nowrap text-sm">
+            <thead>
+              <tr className="border-b border-ink-200 text-left text-[11px] font-semibold uppercase tracking-label text-ink-400">
+                <th className="px-4 py-2 font-semibold">Engineer</th>
+                <th className="px-3 py-2 text-right font-semibold" title="Assigned, in repair, or waiting for a component">With them now</th>
+                <th className="px-3 py-2 text-right font-semibold" title="Past its category's time, still with them">Late</th>
+                <th className="px-3 py-2 text-right font-semibold" title="Not due yet, but due within a day">Due in a day</th>
+                <th className="px-3 py-2 text-right font-semibold" title={`Dispatched back, or scrapped, ${words}`}>Sent back {words}</th>
+                <th className="px-3 py-2 text-right font-semibold" title="Category A: inside 3 days">TAT met · A</th>
+                <th className="px-3 py-2 text-right font-semibold" title="Category B: inside 2 days">TAT met · B</th>
+                <th className="px-3 py-2 text-right font-semibold" title="Category C: inside 1 day">TAT met · C</th>
+                <th className="px-4 py-2 text-right font-semibold" title="All categories together">TAT met · all</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-ink-100">
+              {rows.map(r => (
+                <tr key={r.id} className="hover:bg-ink-50">
+                  <td className="px-4 py-2.5">
+                    <Link to={`/tickets?eng=${r.id}`} className="font-medium text-ink-900 hover:underline">{r.name}</Link>
+                  </td>
+                  <td className={clsx('px-3 py-2.5 text-right tabular-nums', r.withThem ? 'font-semibold text-ink-900' : 'text-ink-300')}>{r.withThem}</td>
+                  <td className={clsx('px-3 py-2.5 text-right tabular-nums', r.late ? 'font-semibold text-cyrixRed-600' : 'text-ink-300')}>{r.late}</td>
+                  <td className={clsx('px-3 py-2.5 text-right tabular-nums', r.dueSoon ? 'font-semibold text-amber-600' : 'text-ink-300')}>{r.dueSoon}</td>
+                  <td className={clsx('px-3 py-2.5 text-right tabular-nums', r.sent ? 'text-ink-700' : 'text-ink-300')}>{r.sent}</td>
+                  <td className="px-3 py-2.5 text-right"><Met met={r.onTimeByCategory.A} of={r.sentByCategory.A} /></td>
+                  <td className="px-3 py-2.5 text-right"><Met met={r.onTimeByCategory.B} of={r.sentByCategory.B} /></td>
+                  <td className="px-3 py-2.5 text-right"><Met met={r.onTimeByCategory.C} of={r.sentByCategory.C} /></td>
+                  <td className="px-4 py-2.5 text-right"><Met met={r.onTime} of={r.sent} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
