@@ -351,6 +351,10 @@ function WhereItIs({ ticket: t }: { ticket: Ticket }) {
       )
     case 'closed':
       return t.closure === 'discarded' ? <>Discarded before it was sent to a Revive Lab</> : at
+    case 'in_transit_return':
+      // Being handed to another field engineer: theirs to take up first (rl_0028).
+      if (t.handover?.status === 'pending') return <>Dispatched back · waiting on {t.handover.to_name} to accept the transfer</>
+      return <>{at} · waiting on {STATUS[t.status]?.waitingOn}</>
     default:
       return <>{at} · waiting on {STATUS[t.status]?.waitingOn}</>
   }
