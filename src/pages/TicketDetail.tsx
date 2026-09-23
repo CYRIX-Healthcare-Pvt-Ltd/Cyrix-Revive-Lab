@@ -4,7 +4,7 @@ import { Link, useLocation, useParams } from 'react-router-dom'
 import clsx from 'clsx'
 import {
   ArrowLeft, ArrowRightLeft, BadgeCheck, Ban, Boxes, CalendarClock, Camera, CheckCircle2, CircleCheck, ClipboardCheck,
-  ClipboardList, Hand, History as HistoryIcon, PackageCheck, PackagePlus, PackageX, PlayCircle, Receipt, ScanSearch,
+  ClipboardList, Hand, History as HistoryIcon, PackageCheck, PackagePlus, PackageX, PlayCircle, Receipt, ScanSearch, Tag,
   Send, ShieldQuestion, ShieldX, ShoppingCart, Signpost, Timer, Trash2, TriangleAlert, Truck, Undo2, UserCog, UserPlus,
   UserX, Wrench, X,
   type LucideIcon,
@@ -13,16 +13,20 @@ import { useAuth } from '@/contexts/AuthContext'
 import {
   useAccept, useAddObservation, useApprove, useAssign, useCancelTransfer, useCloseTicket, useCompleteRepair,
   useDeclineApproval, useDiscard, useDispatch, useHops, useMarkReceived, useMembers, useRequestTransfer, useReroute,
-  useReturnToDesk, useScrap, useSend, useSetExpectedDate, useStartRepair, useTickets, useTrail, useTrcs,
+  useReturnToDesk, useScrap, useSend, useSetClassification, useSetExpectedDate, useStartRepair, useTickets, useTrail, useTrcs,
   useUpdateCourier,
   type Ticket, type TrailEvent,
 } from '@/lib/queries'
 import {
-  actionsFor, approversOf, itemsSummary, orList, parseTicketCode, serves, stateLabel,
+  actionsFor, approversOf, canClassify, itemsSummary, orList, parseTicketCode, serves, stateLabel,
+  CATEGORY_TAT_DAYS, CRITICALITY_LABEL,
   ITEM_KIND_LABEL, OUTCOME_LABEL, REPAIRING, STATUS, TONE_DOT, TONE_SOFT, TONE_TEXT, TRC_KIND_LABEL, statusLook,
-  type Action, type Approval, type Outcome, type Proposal, type TicketItem, type Tone,
+  type Action, type Approval, type Criticality, type Outcome, type Proposal, type SpareCategory, type TicketItem,
+  type TicketSource, type Tone,
 } from '@/lib/tickets'
-import { formatSpan, ticketTat, type Span } from '@/lib/tat'
+import { categoryTat, formatSpan, ticketTat, type Span } from '@/lib/tat'
+import { dateTime, dayDate, gapLabel, gapWords } from '@/lib/when'
+import { ClassificationFields, TatChip } from '@/components/Classification'
 import { Alert, EmptyState, PageLoader, Spinner, StatusBadge, WarehouseChip } from '@/components/ui'
 import IconChip from '@/components/IconChip'
 import AttachmentsCard from '@/components/TicketAttachments'
@@ -36,13 +40,10 @@ import Lightbox from '@/components/Lightbox'
 import { removeVideoOf } from '@/lib/attachments'
 import { signedLinks } from '@/lib/partFiles'
 
-const when = (iso: string | null | undefined) =>
-  iso ? new Date(iso).toLocaleString(undefined, {
-    day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit',
-  }) : '—'
+/** "21 Sept 2026, 11:53 AM" — twelve-hour, AM or PM, whatever the device's clock (lib/when). */
+const when = (iso: string | null | undefined) => (iso ? dateTime(iso) : '—')
 
-const day = (iso: string | null | undefined) =>
-  iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : null
+const day = (iso: string | null | undefined) => (iso ? dayDate(iso) : null)
 
 export default function TicketDetail() {
   const { code } = useParams()
@@ -112,6 +113,7 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
               {t.facility}{summary ? ` · ${summary}` : ''}
             </p>
             <p className="mt-0.5 text-xs text-ink-500"><WhereItIs ticket={t} /></p>
+            <Classification ticket={t} />
             {/* What the field engineer waits for instead of phoning. */}
             {t.expected_by && (t.status === 'assigned' || REPAIRING.includes(t.status)) && (
               <p className={clsx(
@@ -128,7 +130,15 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
                 Damaged in transit {t.arrival_damaged ? 'on the way in' : ''}{t.arrival_damaged && t.return_damaged ? ' and ' : ''}{t.return_damaged ? 'on the way back' : ''}
               </p>
             )}
-            {t.status === 'closed' && t.final_working !== null && (
+            {/* A hospital's spare is fitted and said to work, or not. A warehouse's
+                goes back into its stock and nobody tests it there, so it says only
+                that (the user, 23 Sep: "working is not logical for a warehouse"). */}
+            {t.status === 'closed' && t.source === 'warehouse' && t.closure === 'returned' && (
+              <p className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-green-100 px-2 py-1 text-xs font-medium text-green-900">
+                <PackageCheck className="h-3.5 w-3.5" /> Back in warehouse stock
+              </p>
+            )}
+            {t.status === 'closed' && t.source !== 'warehouse' && t.final_working !== null && (
               <p className={clsx(
                 'mt-2 inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium',
                 t.final_working ? 'bg-green-100 text-green-900' : 'bg-rose-100 text-rose-900',
@@ -180,6 +190,7 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
               {t.billing_spare !== null && t.billing_spare !== undefined && (
                 <Row label="Billing spare">{t.billing_spare ? 'Yes' : 'No'}</Row>
               )}
+              {t.contract_type && <Row label="Contract type">{t.contract_type}</Row>}
               <Row label="Revive Lab">
                 {t.trc_name}
                 <span className="text-xs text-ink-500"> · {stateLabel(t.trc_state)}</span>
@@ -275,7 +286,7 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
         </div>
 
         <Section title="History" icon={HistoryIcon} tone="indigo">
-          {!trail ? <Spinner className="h-4 w-4 text-ink-400" /> : <Timeline trail={trail} proposal={t.proposal} />}
+          {!trail ? <Spinner className="h-4 w-4 text-ink-400" /> : <Timeline trail={trail} proposal={t.proposal} source={t.source} />}
         </Section>
       </div>
     </div>
@@ -528,9 +539,19 @@ const PART_STEP: Record<string, { title: string; icon: LucideIcon; tone: Tone }>
 /** The steps after which the repair carries on, when nothing else is waiting. */
 const RESUMES = ['confirmed', 'declined', 'cancelled', 'stock_used', 'stock_declined', 'stock_cancelled']
 
-function stepLook(e: TrailEvent, earlier: TrailEvent[], proposal: Proposal | null): { title: ReactNode; tone: Tone; icon: LucideIcon } {
+function stepLook(
+  e: TrailEvent, earlier: TrailEvent[], proposal: Proposal | null, source?: TicketSource | null,
+): { title: ReactNode; tone: Tone; icon: LucideIcon } {
   const tone = STATUS[e.status]?.tone ?? 'sky'
   if (e.kind === 'eta') return { title: 'Expected repair date changed', tone: 'indigo', icon: CalendarClock }
+  // The desk's category and criticality, set or changed (rl_0024).
+  if (e.kind === 'classify') {
+    const n = e.note ?? ''
+    const cat = n.includes('Category')
+    const crit = /Critical|Non-critical/.test(n)
+    const what = cat && crit ? 'Category and criticality' : cat ? 'Category' : 'Criticality'
+    return { title: `${what} ${n.includes('→') ? 'changed' : 'set'}`, tone: 'violet', icon: Tag }
+  }
 
   // Going to another Revive Lab (rl_0014). Checked before the component
   // steps: "declined" is theirs too, and only these come from waiting for approval.
@@ -576,6 +597,8 @@ function stepLook(e: TrailEvent, earlier: TrailEvent[], proposal: Proposal | nul
   if (e.action === 'received_stock') return { title: 'Received back into warehouse stock — closed', tone, icon: PackageCheck }
   if (e.action === 'damaged') return { title: e.status === 'accepted' ? 'Accepted — damaged in transit' : 'Received back — damaged in transit', tone: 'amber', icon: TriangleAlert }
   if (e.action === 'working' || e.action === 'not_working') {
+    // A warehouse ticket closed before rl_0023 went through this step too; it went back into stock.
+    if (source === 'warehouse') return { title: 'Received back into warehouse stock — closed', tone, icon: PackageCheck }
     return { title: e.action === 'working' ? 'Closed — fitted and working' : 'Closed — fitted, not working', tone, icon: CircleCheck }
   }
   if (e.kind === 'courier') return { title: 'Courier details updated', tone: 'teal', icon: Truck }
@@ -606,7 +629,20 @@ function stepLook(e: TrailEvent, earlier: TrailEvent[], proposal: Proposal | nul
   }
 }
 
-function Timeline({ trail, proposal }: { trail: TrailEvent[]; proposal: Proposal | null }) {
+/**
+ * The history, with how long each step took to the next on the line between
+ * them — the thread broken by a small pill that says so (the user, 23 Sep).
+ * A wait of a day or more is picked out in amber.
+ */
+/** A step's note as it reads now: a warehouse ticket closed the old way lost its "Working", which it never had to say. */
+function noteOf(e: TrailEvent, source: TicketSource): string | null {
+  if (source === 'warehouse' && (e.action === 'working' || e.action === 'not_working')) {
+    return e.note?.replace(/^(Not working|Working)( · )?/, '') || null
+  }
+  return e.note
+}
+
+function Timeline({ trail, proposal, source }: { trail: TrailEvent[]; proposal: Proposal | null; source: TicketSource }) {
   // Every spoken observation's link in one go, rather than one call each.
   const spoken = trail.map(e => e.voice_path).filter((p): p is string => !!p)
   const { data: voices } = useQuery({
@@ -618,12 +654,26 @@ function Timeline({ trail, proposal }: { trail: TrailEvent[]; proposal: Proposal
   return (
     <ol>
       {trail.map((e, i) => {
-        const look = stepLook(e, trail.slice(0, i), proposal)
-        const last = i === trail.length - 1
+        const look = stepLook(e, trail.slice(0, i), proposal, source)
+        const next = trail[i + 1]
+        const gap = next ? Math.max(0, Date.parse(next.at) - Date.parse(e.at)) : null
         return (
-          <li key={e.id} className={clsx('relative flex gap-3', !last && 'pb-5')}>
-            {/* The thread from this step down to the next. */}
-            {!last && <span aria-hidden className="absolute bottom-0 left-4 top-8 w-px -translate-x-1/2 bg-ink-200" />}
+          <li key={e.id} className={clsx('relative flex gap-3', next && 'pb-9')}>
+            {/* The thread from this step down to the next, and on it — halfway
+                between the two, breaking it — how long that took. */}
+            {next && <span aria-hidden className="absolute bottom-0 left-4 top-8 w-px -translate-x-1/2 bg-ink-200" />}
+            {gap !== null && (
+              <span
+                aria-hidden
+                title={`${gapWords(gap)} to the next step`}
+                className={clsx(
+                  'absolute left-4 top-[calc(50%+1rem)] -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-full bg-surface px-2 py-0.5 text-[10px] font-semibold tabular-nums ring-1',
+                  gap >= 86_400_000 ? 'text-amber-800 ring-amber-300' : 'text-ink-500 ring-ink-200',
+                )}
+              >
+                {gapLabel(gap)}
+              </span>
+            )}
             <span className={clsx('relative grid h-8 w-8 shrink-0 place-items-center rounded-full', TONE_SOFT[look.tone])}>
               <look.icon className="h-4 w-4" />
             </span>
@@ -632,12 +682,13 @@ function Timeline({ trail, proposal }: { trail: TrailEvent[]; proposal: Proposal
               <p className="mt-0.5 text-xs text-ink-500">
                 {when(e.at)} · {e.actor_name ?? 'System'}{e.trc_name ? ` · ${e.trc_name}` : ''}
               </p>
-              {e.note && (
-                <p className="mt-1.5 whitespace-pre-wrap rounded-lg bg-ink-50 px-2.5 py-1.5 text-sm text-ink-700">{e.note}</p>
+              {noteOf(e, source) && (
+                <p className="mt-1.5 whitespace-pre-wrap rounded-lg bg-ink-50 px-2.5 py-1.5 text-sm text-ink-700">{noteOf(e, source)}</p>
               )}
               {e.voice_path && voices?.[e.voice_path] && (
                 <audio src={voices[e.voice_path]} controls preload="none" className="mt-1.5 h-9 w-full max-w-xs" />
               )}
+              {gap !== null && <span className="sr-only">{gapWords(gap)} to the next step.</span>}
             </div>
           </li>
         )
@@ -956,7 +1007,14 @@ function ActionForm({
   const fromCard = action === 'courier' || action === 'reroute' || action === 'accept' || sendingRaise
   const [courier, setCourier] = useState(fromCard ? t.in_courier ?? '' : '')
   const [awb, setAwb] = useState(fromCard ? t.in_awb ?? '' : '')
-  const [on, setOn] = useState((fromCard && t.in_dispatched_on) || new Date().toISOString().slice(0, 10))
+  // Accepting asks the date the sender dispatched it: blank until somebody says, never today by default.
+  const [on, setOn] = useState((fromCard && t.in_dispatched_on) || (action === 'accept' ? '' : new Date().toISOString().slice(0, 10)))
+  // What the Revive Lab says the spare is, on arrival (rl_0024). A CAMC spare is critical already.
+  const camc = t.contract_type === 'CAMC'
+  const [category, setCategory] = useState<SpareCategory | null>(t.spare_category)
+  const [criticality, setCriticality] = useState<Criticality | null>(camc ? 'critical' : t.criticality)
+  // How it came: required when a spare arrives from the sender; a transfer's courier was recorded when it was sent.
+  const courierRequired = action === 'accept' && t.status === 'pending_acceptance'
 
   const engineers = (members ?? [])
     .filter(m => m.is_engineer && m.trc_ids.includes(t.trc_id) && m.employee_id !== t.engineer_id)
@@ -975,11 +1033,14 @@ function ActionForm({
     try {
       switch (action) {
         case 'accept':
+          if (!category) { onError('Choose the spare category — A, B or C.'); return }
+          if (!criticality) { onError('Choose whether the spare is critical or non-critical.'); return }
+          if (courierRequired && !courier.trim()) { onError('Enter the courier it came with.'); return }
+          if (courierRequired && !awb.trim()) { onError('Enter the tracking / AWB number.'); return }
+          if (courierRequired && !on) { onError('Enter the date of dispatch.'); return }
           if (damaged && blobs.length === 0) { onError('Photograph the damage — it is the only proof there will be.'); return }
-          await accept.mutateAsync({ id: t.id, note, damaged, photos: blobs, courier, awb, on })
-          onDone(damaged
-            ? `${t.code} accepted at ${t.trc_name}, damaged in transit. The photographs are on the ticket.`
-            : `${t.code} accepted at ${t.trc_name}.`)
+          await accept.mutateAsync({ id: t.id, note, damaged, photos: blobs, courier, awb, on, category, criticality })
+          onDone(`${t.code} accepted at ${t.trc_name}${damaged ? ', damaged in transit' : ''} — category ${category}, TAT ${CATEGORY_TAT_DAYS[category]} day${CATEGORY_TAT_DAYS[category] === 1 ? '' : 's'} from now.`)
           break
         case 'assign': {
           if (!engineerId) { onError('Choose the engineer.'); return }
@@ -1180,6 +1241,17 @@ function ActionForm({
         </div>
       )}
 
+      {/* What it is, first: the category sets how long the Revive Lab may keep it. */}
+      {action === 'accept' && (
+        <ClassificationFields
+          category={category}
+          criticality={criticality}
+          onCategory={setCategory}
+          onCriticality={setCriticality}
+          camc={camc}
+        />
+      )}
+
       {asksDamage && (
         <div className="space-y-2">
           <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-ink-200 px-3 py-2">
@@ -1245,17 +1317,20 @@ function ActionForm({
           <label className="block">
             <span className="label">
               {action === 'accept' ? 'Courier it came with' : 'Courier'}
-              {action === 'dispatch' && <span className="text-cyrixRed-600"> *</span>}
+              {(action === 'dispatch' || courierRequired) && <span className="text-cyrixRed-600"> *</span>}
             </span>
             <input className="input mt-1" value={courier} onChange={e => setCourier(e.target.value)} placeholder="DTDC, Blue Dart…" />
           </label>
           <label className="block">
-            <span className="label">Tracking / AWB</span>
+            <span className="label">Tracking / AWB{courierRequired && <span className="text-cyrixRed-600"> *</span>}</span>
             <input className="input mt-1" value={awb} onChange={e => setAwb(e.target.value)} />
           </label>
           <label className="block">
-            <span className="label">{fromCard ? 'Date of dispatch' : 'Dispatched on'}</span>
-            <input className="input mt-1" type="date" value={on} onChange={e => setOn(e.target.value)} />
+            <span className="label">
+              {fromCard ? 'Date of dispatch' : 'Dispatched on'}
+              {courierRequired && <span className="text-cyrixRed-600"> *</span>}
+            </span>
+            <input className="input mt-1" type="date" value={on} max={action === 'accept' ? localToday() : undefined} onChange={e => setOn(e.target.value)} />
           </label>
         </div>
       )}
@@ -1265,7 +1340,9 @@ function ActionForm({
       )}
       {action === 'accept' && (
         <p className="text-xs text-ink-500">
-          The consignment note is in your hand — fill in whatever the sender could not, and it stays on the ticket.
+          {courierRequired
+            ? 'The consignment note is in your hand — all three are needed, and what the sender already entered is filled in.'
+            : 'The consignment note is in your hand — fill in whatever the sender could not, and it stays on the ticket.'}
         </p>
       )}
       {(sendingRaise || action === 'reroute') && (
@@ -1318,6 +1395,99 @@ function ActionForm({
         <button type="button" className="btn-secondary" onClick={onCancel}>Cancel</button>
       </div>
     </div>
+  )
+}
+
+/**
+ * What the Revive Lab says the spare is — its category and criticality —
+ * and where it stands against the category's TAT, under the ticket's title
+ * (rl_0024). The desk changes them from here until it is dispatched back;
+ * each change is a step in the history.
+ */
+function Classification({ ticket: t }: { ticket: Ticket }) {
+  const { me } = useAuth()
+  const [editing, setEditing] = useState(false)
+  const [saved, setSaved] = useState<string | null>(null)
+  const close = useCallback(() => setEditing(false), [])
+  const tat = categoryTat(t)
+  const editable = canClassify(t, me)
+  if (!t.spare_category && !t.criticality && !editable) return null
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      {t.spare_category ? (
+        <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-md bg-violet-100 px-2 py-1 text-xs font-medium text-violet-900">
+          <Tag aria-hidden className="h-3.5 w-3.5" /> Category {t.spare_category} · {CATEGORY_TAT_DAYS[t.spare_category]}-day TAT
+        </span>
+      ) : editable ? (
+        <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-md bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900">
+          <Tag aria-hidden className="h-3.5 w-3.5" /> No category yet — set it to count the TAT
+        </span>
+      ) : null}
+      {t.criticality && (
+        <span className={clsx(
+          'inline-flex items-center whitespace-nowrap rounded-md px-2 py-1 text-xs font-medium',
+          t.criticality === 'critical' ? 'bg-cyrixRed-100 text-cyrixRed-900' : 'bg-green-100 text-green-900',
+        )}>
+          {CRITICALITY_LABEL[t.criticality]}{t.contract_type === 'CAMC' ? ' · CAMC' : ''}
+        </span>
+      )}
+      {tat && <TatChip tat={tat} />}
+      {editable && (
+        <button type="button" onClick={() => { setSaved(null); setEditing(true) }} className="link-accent inline-flex items-center gap-1 px-1 text-xs font-medium">
+          Change
+        </button>
+      )}
+      {saved && <span className="text-xs text-green-700" role="status">{saved}</span>}
+      {editing && <ClassifyDialog ticket={t} onClose={close} onDone={msg => { setEditing(false); setSaved(msg) }} />}
+    </div>
+  )
+}
+
+function ClassifyDialog({ ticket: t, onClose, onDone }: {
+  ticket: Ticket
+  onClose: () => void
+  onDone: (msg: string) => void
+}) {
+  const set = useSetClassification()
+  const camc = t.contract_type === 'CAMC'
+  const [category, setCategory] = useState<SpareCategory | null>(t.spare_category)
+  const [criticality, setCriticality] = useState<Criticality | null>(camc ? 'critical' : t.criticality)
+  const [error, setError] = useState<string | null>(null)
+
+  const save = async () => {
+    setError(null)
+    if (!category) { setError('Choose the spare category — A, B or C.'); return }
+    if (!criticality) { setError('Choose whether the spare is critical or non-critical.'); return }
+    if (category === t.spare_category && criticality === t.criticality) { onClose(); return }
+    try {
+      await set.mutateAsync({ id: t.id, category, criticality })
+      onDone('Saved — the change is in the history.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'That did not go through.')
+    }
+  }
+
+  return (
+    <Dialog title="Category and criticality" icon={<IconChip icon={Tag} tone="violet" />} onClose={onClose} wide>
+      <ClassificationFields
+        category={category}
+        criticality={criticality}
+        onCategory={setCategory}
+        onCriticality={setCriticality}
+        camc={camc}
+      />
+      <p className="text-xs text-ink-500">
+        The TAT counts from when it was accepted{t.accepted_at ? ` — ${dateTime(t.accepted_at)}` : ''}. Each change is kept in the history.
+      </p>
+      {error && <Alert kind="error">{error}</Alert>}
+      <div className="flex gap-2">
+        <button type="button" className="btn-primary" onClick={save} disabled={set.isPending}>
+          {set.isPending ? <Spinner className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />} Save
+        </button>
+        <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
+      </div>
+    </Dialog>
   )
 }
 

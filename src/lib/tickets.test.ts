@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   ticketCode, parseTicketCode, actionsFor, runsTrc, waitingOnMe, cleanItems, itemsSummary,
   partsWaitingOn, ticketTabs, serves, approversOf, orList, statusLook, canRaise, partActor, partStatusLook,
-  ITEM_KIND_LABEL, PART_PROGRESS, PART_STATUS, poLabel,
+  ITEM_KIND_LABEL, PART_PROGRESS, PART_STATUS, poLabel, canClassify, statusGroups,
   type Me, type TicketLike,
 } from './tickets'
 
@@ -183,16 +183,17 @@ describe('components and how a repair ends (rl_0013)', () => {
 
   it('gives each role its own tabs', () => {
     const labels = (m: Me) => ticketTabs(m).map(x => x.label)
-    expect(labels(desk)).toEqual(['All', 'Not assigned', 'Component pending', 'Closed'])
-    expect(labels(engineer)).toEqual(['All', 'In repair', 'Assigned', 'Closed'])
-    expect(labels(buyer)).toEqual(['All', 'Component pending', 'Closed'])
-    expect(labels(me({ employee_id: 'field' }))).toEqual(['All', 'Open', 'Closed'])
+    // What waits on each of them comes second, whoever they are (the user, 23 Sep).
+    expect(labels(desk)).toEqual(['All', 'Waiting on you', 'Not assigned', 'Component pending', 'Closed'])
+    expect(labels(engineer)).toEqual(['All', 'Waiting on you', 'In repair', 'Assigned', 'Closed'])
+    expect(labels(buyer)).toEqual(['All', 'Waiting on you', 'Component pending', 'Closed'])
+    expect(labels(me({ employee_id: 'field' }))).toEqual(['All', 'Waiting on you', 'Open', 'Closed'])
   })
 
   it('shows Purchase everything the database gives them, with what is still to buy apart', () => {
     // The database shows Purchase only what came to them; All hides none of it —
     // a ticket of their own was hidden once while the badge counted it (rl_0019).
-    const [all, pending, closed] = ticketTabs(buyer)
+    const [all, , pending, closed] = ticketTabs(buyer)
     const bought = ticket({ status: 'closed', parts: [{ id: 'x', route: 'purchase', status: 'received' }] })
     const waiting = ticket({ status: 'parts_requested', parts: [{ id: 'y', route: 'purchase', status: 'requested' }] })
     const localOnly = ticket({ status: 'parts_requested', parts: [{ id: 'z', route: 'local', status: 'requested' }] })
@@ -320,8 +321,8 @@ describe('the receipt, and who raises tickets (rl_0015)', () => {
   })
 
   it('gives every tab the colour of what it holds', () => {
-    expect(ticketTabs(desk).map(x => x.tone)).toEqual(['slate', 'red', 'orange', 'green'])
-    expect(ticketTabs(engineer).map(x => x.tone)).toEqual(['slate', 'indigo', 'sky', 'green'])
+    expect(ticketTabs(desk).map(x => x.tone)).toEqual(['slate', 'rose', 'red', 'orange', 'green'])
+    expect(ticketTabs(engineer).map(x => x.tone)).toEqual(['slate', 'rose', 'indigo', 'sky', 'green'])
   })
 })
 
@@ -392,5 +393,51 @@ describe('make, model, a whole machine and the order (rl_0019)', () => {
 
   it('names where a local purchase stands', () => {
     expect(PART_PROGRESS).toEqual({ enquiry_given: 'Enquiry given', order_placed: 'Order placed' })
+  })
+})
+
+describe('what waits on whom, grouped (the user, 23 Sep)', () => {
+  const desk = me({ is_coordinator: true, trc_ids: [REG] })
+  const engineer = me({ employee_id: 'eng', is_engineer: true, trc_ids: [REG] })
+
+  it('does not count an assigned repair as waiting on the desk: it waits on the engineer', () => {
+    const assigned = ticket({ status: 'assigned', engineer_id: 'eng' })
+    expect(actionsFor(assigned, desk)).toContain('assign')   // Reassign is still offered,
+    expect(waitingOnMe(assigned, desk)).toBe(false)          // but it is not a wait,
+    expect(waitingOnMe(assigned, engineer)).toBe(true)       // and the engineer accepts the repair.
+  })
+
+  it('still counts an accepted spare with nobody on it as the desk one', () => {
+    expect(waitingOnMe(ticket({ status: 'accepted' }), desk)).toBe(true)
+  })
+
+  it('gives the engineer what is theirs: accepting it, finishing it, confirming a component', () => {
+    expect(waitingOnMe(ticket({ status: 'in_repair', engineer_id: 'eng' }), engineer)).toBe(true)
+    expect(waitingOnMe(ticket({ status: 'parts_requested', engineer_id: 'eng' }), engineer)).toBe(false)
+    const ready = ticket({ status: 'parts_ready', engineer_id: 'eng', parts: [{ id: 'p', route: 'local', status: 'sent' }] })
+    expect(waitingOnMe(ready, engineer)).toBe(true)
+  })
+
+  it('groups by where each spare stands, in the order a spare goes', () => {
+    const rows = [
+      ticket({ status: 'repaired' }), ticket({ status: 'pending_acceptance' }),
+      ticket({ status: 'repaired' }), ticket({ status: 'accepted' }),
+    ]
+    expect(statusGroups(rows).map(x => [x.label, x.rows.length])).toEqual([
+      ['Pending acceptance', 1], ['Accepted', 1], ['Pending dispatch', 2],
+    ])
+  })
+})
+
+describe('category and criticality (rl_0024)', () => {
+  const desk = me({ is_coordinator: true, trc_ids: [REG] })
+  it('lets the desk change them from acceptance until it is dispatched back', () => {
+    const at = { trc_id: REG, accepted_at: '2026-09-23T04:00:00Z' }
+    expect(canClassify({ ...at, status: 'in_repair' }, desk)).toBe(true)
+    expect(canClassify({ ...at, status: 'repaired' }, desk)).toBe(true)
+    expect(canClassify({ ...at, status: 'in_transit_return' }, desk)).toBe(false)
+    expect(canClassify({ ...at, status: 'closed' }, desk)).toBe(false)
+    expect(canClassify({ trc_id: REG, accepted_at: null, status: 'pending_acceptance' }, desk)).toBe(false)
+    expect(canClassify({ ...at, status: 'in_repair' }, me({ employee_id: 'eng', is_engineer: true, trc_ids: [REG] }))).toBe(false)
   })
 })

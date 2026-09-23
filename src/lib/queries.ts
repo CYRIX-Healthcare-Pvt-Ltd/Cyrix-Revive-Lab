@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase, friendlyError } from './supabase'
 import type {
   Approval, Closure, Outcome, PartRoute, PartStatus, PartSummary, Proposal, StockUseStatus, StockUseSummary,
-  PartProgress, TicketItem, TicketSource, TicketStatus, TrcKind,
+  PartProgress, TicketItem, TicketSource, TicketStatus, TrcKind, SpareCategory, Criticality, ContractType,
 } from './tickets'
 import { uploadPartFile } from './partFiles'
 import { uploadStageFile } from './attachments'
@@ -108,6 +108,15 @@ export interface Ticket {
   /** A hospital's spare, or a warehouse's; a warehouse one names it in facility (rl_0020). */
   source: TicketSource
   warehouse_id: string | null
+  /** What the Revive Lab says it is, on arrival (rl_0024). */
+  spare_category: SpareCategory | null
+  criticality: Criticality | null
+  /** Under a Pvt BEMMP: AMC, or CAMC — which is always critical. */
+  contract_type: ContractType | null
+  /** When a Revive Lab first accepted it: the category TAT's start. */
+  accepted_at: string | null
+  /** When it was first dispatched back: the category TAT's end. */
+  dispatched_at: string | null
 }
 
 export interface TrailEvent {
@@ -128,7 +137,7 @@ export interface TrailEvent {
    * the courier details added after the ticket was raised (rl_0011). Only a
    * move changes the status.
    */
-  kind: 'status' | 'observation' | 'courier' | 'component' | 'eta'
+  kind: 'status' | 'observation' | 'courier' | 'component' | 'eta' | 'classify'
   /**
    * The button that made the step, where the status alone does not say:
    * used, requested, accepted, declined, purchased, confirmed, cancelled,
@@ -279,6 +288,8 @@ export interface BemmpProject {
   asks_billing: boolean
   /** The state whose programme it is; null runs in every state (rl_0014). */
   state: string | null
+  /** The route card asks AMC or CAMC under this one — Pvt (rl_0024). */
+  asks_contract: boolean
 }
 
 /** The BEMMP programmes a ticket can belong to. Admins keep the list. */
@@ -314,7 +325,7 @@ export function useBemmpProjects() {
     staleTime: 5 * 60_000,
     queryFn: async () => unwrap<BemmpProject[]>(
       await supabase.from('revive_bemmp_projects')
-        .select('id, code, is_active, sort_order, asks_billing, state')
+        .select('id, code, is_active, sort_order, asks_billing, asks_contract, state')
         .order('sort_order').order('code'),
     ),
   })
@@ -553,6 +564,11 @@ export interface RaiseInput {
   /** A warehouse's spare, raised by the desk: no BEMMP, district or ticket ID (rl_0020). */
   source: TicketSource
   warehouseId: string | null
+  /** Under a BEMMP that asks — Pvt (rl_0024). */
+  contractType: ContractType | null
+  /** The desk's own raise is its acceptance, so it says what the spare is then. */
+  category: SpareCategory | null
+  criticality: Criticality | null
 }
 
 export function useRaiseTicket() {
@@ -581,6 +597,9 @@ export function useRaiseTicket() {
     p_equipment_model: a.equipmentModel,
     p_source: a.source,
     p_warehouse_id: a.warehouseId,
+    p_contract_type: a.contractType,
+    p_category: a.category,
+    p_criticality: a.criticality,
   }) as Promise<{ id: string; code: string; number: number; status: TicketStatus }>)
 }
 
@@ -591,14 +610,23 @@ export function useRaiseTicket() {
  * consignment note in its hand and the sender often never came back.
  */
 export const useAccept = () => useTicketMutation(
-  async (a: { id: string; note?: string; damaged?: boolean; photos?: Blob[]; courier?: string; awb?: string; on?: string }) => {
+  async (a: {
+    id: string; note?: string; damaged?: boolean; photos?: Blob[]; courier?: string; awb?: string; on?: string
+    category: SpareCategory | null; criticality: Criticality | null
+  }) => {
     const paths = await uploadStage(a.id, 'arrival', a.photos)
     return rpc('revive_accept', {
       p_ticket_id: a.id, p_note: a.note || null,
       p_damaged: !!a.damaged, p_photos: paths,
       p_courier: a.courier || null, p_awb: a.awb || null, p_dispatched_on: a.on || null,
+      p_category: a.category, p_criticality: a.criticality,
     })
   })
+
+/** The desk changes the category and criticality until it is dispatched back; each change is in the history. */
+export const useSetClassification = () => useTicketMutation(
+  (a: { id: string; category: SpareCategory; criticality: Criticality }) =>
+    rpc('revive_set_classification', { p_ticket_id: a.id, p_category: a.category, p_criticality: a.criticality }))
 
 /** arrival-1, arrival-2, return-1 … uploaded in order, and their paths. */
 async function uploadStage(ticketId: string, name: 'arrival' | 'return' | 'done', blobs?: Blob[]): Promise<string[]> {

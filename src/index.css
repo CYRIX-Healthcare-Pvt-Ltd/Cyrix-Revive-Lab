@@ -1444,3 +1444,65 @@
 @keyframes lightbox-photo {
   from { opacity: 0; transform: scale(0.96); }
 }
+
+/*
+  "Waiting on you": the one card that asks something of whoever reads it,
+  so it glows — a neon edge in the Cyrix red with a light running round it,
+  and a soft glow breathing under it (the user, 23 Sep: "neon red border,
+  our theme colour, animated, something beautiful").
+
+  The running light is a conic gradient turned by an animated custom
+  property; a browser without @property shows the same edge, still. The
+  glow breathes by opacity alone. Reduced motion: both stop, the edge and
+  a steady glow stay — the card still stands out, it just does not move.
+*/
+@property --neon-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.neon-card {
+  position: relative;
+  isolation: isolate;
+  border-radius: 0.75rem;
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--neon-angle),
+    rgb(227 6 19 / 0.4) 0deg,
+    rgb(227 6 19 / 0.4) 190deg,
+    #ff5a6a 250deg,
+    #ffc2c8 285deg,
+    #ff5a6a 320deg,
+    rgb(227 6 19 / 0.4) 360deg
+  );
+  animation: neon-run 5s linear infinite;
+}
+.neon-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  box-shadow: 0 0 22px 1px rgb(227 6 19 / 0.55), 0 0 2px 0 rgb(227 6 19 / 0.8);
+  opacity: 0.45;
+  pointer-events: none;
+  animation: neon-breathe 2.8s ease-in-out infinite;
+}
+.neon-card-body {
+  position: relative;
+  overflow: hidden;
+  border-radius: calc(0.75rem - 1.5px);
+  background: rgb(var(--surface));
+}
+@keyframes neon-run {
+  to { --neon-angle: 360deg; }
+}
+@keyframes neon-breathe {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.9; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .neon-card { animation: none; }
+  .neon-card::before { animation: none; opacity: 0.6; }
+}

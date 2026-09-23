@@ -1,15 +1,19 @@
 import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
+import clsx from 'clsx'
 import {
   Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import { BellRing, Building2, ChartColumn, Inbox, PackagePlus, TrendingUp } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTickets, useTrcs, useVisibleEvents } from '@/lib/queries'
-import { REPAIRING, STATUS, STATUS_ORDER, TONE_FILL, canRaise, itemsSummary, ticketTabs, waitingOnMe } from '@/lib/tickets'
+import {
+  REPAIRING, STATUS, STATUS_ORDER, TONE_DOT, TONE_FILL, TONE_TEXT, canRaise, itemsSummary, statusGroups, ticketTabs, waitingOnMe,
+} from '@/lib/tickets'
 import { asDays, formatSpan, ticketTat, type TatEvent } from '@/lib/tat'
-import { EmptyState, PageLoader, StatTile, StatusBadge, WarehouseChip } from '@/components/ui'
+import { EmptyState, PageLoader, StatTile, WarehouseChip } from '@/components/ui'
 import IconChip from '@/components/IconChip'
+import { ClassTag } from '@/components/Classification'
 
 const TOOLTIP = { fontSize: 12, borderRadius: 8, border: '1px solid #d4d8e0' }
 const TICK = { fontSize: 11, fill: '#606b82' }
@@ -157,29 +161,50 @@ export default function Dashboard() {
         </EmptyState>
       ) : (
         <>
+          {/* The one card that asks something of whoever reads it: a neon
+              edge in the Cyrix red, and what waits in groups by where each
+              spare stands — Pending acceptance, Pending dispatch … — in the
+              order a spare goes through them (the user, 23 Sep). */}
           {stats.mine.length > 0 && (
-            <div className="card overflow-hidden">
-              <div className="flex items-center justify-between border-b border-ink-200 bg-ink-50 px-4 py-2.5">
-                <h3 className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
-                  <IconChip icon={BellRing} tone="red" /> Waiting on you
-                </h3>
-                <span className="text-xs tabular-nums text-ink-500">{stats.mine.length}</span>
-              </div>
-              <ul className="divide-y divide-ink-100">
-                {stats.mine.map(t => (
-                  <li key={t.id}>
-                    <Link to={`/tickets/${t.code}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 hover:bg-ink-50">
-                      <span className="font-mono text-sm font-semibold text-ink-900">{t.code}</span>
-                      <StatusBadge status={t.status} closure={t.closure} />
-                      {t.source === 'warehouse' && <WarehouseChip />}
-                      <span className="min-w-0 flex-1 truncate text-sm text-ink-600">
-                        {t.facility}{itemsSummary(t) ? ` · ${itemsSummary(t)}` : ''}
-                      </span>
-                      <span className="text-xs text-ink-400">{t.trc_name}</span>
-                    </Link>
-                  </li>
+            <div className="neon-card">
+              <div className="neon-card-body">
+                <div className="flex items-center justify-between border-b border-ink-200 bg-ink-50 px-4 py-2.5">
+                  <h3 className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
+                    <IconChip icon={BellRing} tone="red" /> Waiting on you
+                  </h3>
+                  <Link
+                    to="/tickets?view=mine"
+                    className="rounded-full bg-cyrixRed-600 px-2.5 py-0.5 text-xs font-semibold tabular-nums text-white hover:bg-cyrixRed-700"
+                    title="Open them on Tickets"
+                  >
+                    {stats.mine.length}
+                  </Link>
+                </div>
+                {statusGroups(stats.mine).map(g => (
+                  <section key={g.key} aria-label={`${g.label}: ${g.rows.length}`}>
+                    <h4 className="flex items-center gap-2 border-b border-ink-100 bg-ink-50/60 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-label">
+                      <span aria-hidden className={clsx('h-2 w-2 rounded-full', TONE_DOT[g.tone])} />
+                      <span className={TONE_TEXT[g.tone]}>{g.label}</span>
+                      <span className="tabular-nums text-ink-400">{g.rows.length}</span>
+                    </h4>
+                    <ul className="divide-y divide-ink-100 border-b border-ink-100 last:border-b-0">
+                      {g.rows.map(t => (
+                        <li key={t.id}>
+                          <Link to={`/tickets/${t.code}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 hover:bg-ink-50">
+                            <span className="font-mono text-sm font-semibold text-ink-900">{t.code}</span>
+                            {t.source === 'warehouse' && <WarehouseChip />}
+                            <span className="min-w-0 flex-1 truncate text-sm text-ink-600">
+                              {t.facility}{itemsSummary(t) ? ` · ${itemsSummary(t)}` : ''}
+                            </span>
+                            <ClassTag ticket={t} />
+                            <span className="text-xs text-ink-400">{t.trc_name}</span>
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
                 ))}
-              </ul>
+              </div>
             </div>
           )}
 

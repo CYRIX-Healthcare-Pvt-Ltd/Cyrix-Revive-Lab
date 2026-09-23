@@ -587,14 +587,67 @@ const SIDE_STEPS: readonly Action[] = [
   'decline_approval', 'cancel_transfer', 'discard',
 ]
 
-/** Whether a ticket is waiting on this person specifically, for "My queue". */
+/**
+ * Whether a ticket is waiting on this person specifically, for "Waiting on
+ * you". Reassigning is a choice the desk has, not a wait: once an engineer
+ * has it, it waits on the engineer (the user, 23 Sep: "how is assigned
+ * waiting for him?").
+ */
 export function waitingOnMe(t: TicketLike, me: Me | null | undefined): boolean {
-  return actionsFor(t, me).some(a => !SIDE_STEPS.includes(a)) || partsWaitingOn(t, me) > 0
+  const forward = (a: Action) => !SIDE_STEPS.includes(a) && !(a === 'assign' && t.status !== 'accepted')
+  return actionsFor(t, me).some(forward) || partsWaitingOn(t, me) > 0
+}
+
+/**
+ * What the Revive Lab says a spare is, on arrival (rl_0024): its category,
+ * which sets how long the Revive Lab may keep it, and whether it is
+ * critical. A spare under a CAMC contract is always critical — the route
+ * card says so, and nobody changes it.
+ */
+export type SpareCategory = 'A' | 'B' | 'C'
+export type Criticality = 'critical' | 'non_critical'
+export type ContractType = 'AMC' | 'CAMC'
+
+export const SPARE_CATEGORIES: readonly SpareCategory[] = ['A', 'B', 'C']
+
+/** Days the Revive Lab has it, from acceptance until it is dispatched back. */
+export const CATEGORY_TAT_DAYS: Record<SpareCategory, number> = { A: 3, B: 2, C: 1 }
+
+export const CRITICALITY_LABEL: Record<Criticality, string> = { critical: 'Critical', non_critical: 'Non-critical' }
+
+/** From acceptance until it is dispatched back: while the desk may still change them. */
+const CLASSIFIABLE: readonly TicketStatus[] = [
+  'accepted', 'assigned', 'in_repair', 'parts_requested', 'parts_ordered', 'parts_ready',
+  'repaired', 'not_repairable', 'service_denied', 'awaiting_approval', 'approved',
+]
+
+export function canClassify(
+  t: { trc_id: string; status: TicketStatus; accepted_at?: string | null },
+  me: Me | null | undefined,
+): boolean {
+  return runsTrc(me, t.trc_id) && !!t.accepted_at && CLASSIFIABLE.includes(t.status)
+}
+
+/**
+ * Tickets in groups by where they stand — Pending acceptance, Pending
+ * dispatch … — in the order a spare goes through them, for a list of what
+ * is waiting on somebody (the user, 23 Sep).
+ */
+export function statusGroups<T extends TicketLike>(rows: readonly T[]): Array<{ key: string; label: string; tone: Tone; rows: T[] }> {
+  const groups = new Map<string, { key: string; label: string; tone: Tone; order: number; rows: T[] }>()
+  for (const t of rows) {
+    const look = statusLook(t.status, t.closure, t.proposal)
+    const key = look.short
+    const g = groups.get(key) ?? { key, label: look.short, tone: look.tone, order: STATUS[t.status]?.order ?? 99, rows: [] }
+    g.rows.push(t)
+    groups.set(key, g)
+  }
+  return [...groups.values()].sort((a, b) => a.order - b.order).map(({ key, label, tone, rows }) => ({ key, label, tone, rows }))
 }
 
 /* ------------------------------------------------------------------ */
 
-export type TabId = 'all' | 'repair' | 'assigned' | 'unassigned' | 'parts' | 'open' | 'closed'
+export type TabId = 'all' | 'mine' | 'repair' | 'assigned' | 'unassigned' | 'parts' | 'open' | 'closed'
 
 export interface TicketTab {
   id: TabId
@@ -617,9 +670,13 @@ export function ticketTabs(me: Me | null | undefined): TicketTab[] {
   const closed = (t: TicketLike) => t.status === 'closed'
   const partsPending = (t: TicketLike) => PARTS_STATUSES.includes(t.status)
 
+  // What waits on this person, whoever they are — second, after All (the user, 23 Sep).
+  const mine: TicketTab = { id: 'mine', label: 'Waiting on you', tone: 'rose', match: t => waitingOnMe(t, me) }
+
   if (me && (me.is_coordinator || me.is_manager || me.is_admin)) {
     return [
       { id: 'all', label: 'All', tone: 'slate', match: () => true },
+      mine,
       { id: 'unassigned', label: 'Not assigned', tone: 'red', match: t => ['pending_acceptance', 'transferred', 'accepted'].includes(t.status) },
       { id: 'parts', label: 'Component pending', tone: 'orange', match: partsPending },
       { id: 'closed', label: 'Closed', tone: 'green', match: closed },
@@ -628,6 +685,7 @@ export function ticketTabs(me: Me | null | undefined): TicketTab[] {
   if (me?.is_engineer) {
     return [
       { id: 'all', label: 'All', tone: 'slate', match: () => true },
+      mine,
       { id: 'repair', label: 'In repair', tone: 'indigo', match: t => REPAIRING.includes(t.status) },
       { id: 'assigned', label: 'Assigned', tone: 'sky', match: t => t.status === 'assigned' },
       { id: 'closed', label: 'Closed', tone: 'green', match: closed },
@@ -639,12 +697,14 @@ export function ticketTabs(me: Me | null | undefined): TicketTab[] {
     // same code was hidden here while the badge counted it.
     return [
       { id: 'all', label: 'All', tone: 'slate', match: () => true },
+      mine,
       { id: 'parts', label: 'Component pending', tone: 'orange', match: t => (t.parts ?? []).some(p => p.route === 'purchase' && partOpen(p.status)) },
       { id: 'closed', label: 'Closed', tone: 'green', match: closed },
     ]
   }
   return [
     { id: 'all', label: 'All', tone: 'slate', match: () => true },
+    mine,
     { id: 'open', label: 'Open', tone: 'amber', match: t => !closed(t) },
     { id: 'closed', label: 'Closed', tone: 'green', match: closed },
   ]

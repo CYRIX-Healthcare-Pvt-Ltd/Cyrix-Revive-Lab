@@ -17,6 +17,7 @@ import {
   type PartProgress,
 } from '@/lib/tickets'
 import { signedLinks } from '@/lib/partFiles'
+import { dateTime } from '@/lib/when'
 import { readBillAmount } from '@/lib/billOcr'
 import { Alert, Spinner } from '@/components/ui'
 import IconChip from '@/components/IconChip'
@@ -24,8 +25,8 @@ import Dialog from '@/components/Dialog'
 import Lightbox from '@/components/Lightbox'
 import PhotoPick, { type PickedPhoto } from '@/components/PhotoPick'
 
-const when = (iso: string | null) =>
-  iso ? new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : ''
+/** '22 Sept, 10:57 AM' — twelve-hour, AM or PM, whatever the device's clock (lib/when). */
+const when = (iso: string | null) => (iso ? dateTime(iso, false) : '')
 
 /** A date without a time — a PO's, a delivery's — read as that day wherever the reader is. */
 const onDay = (d: string | null) =>

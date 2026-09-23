@@ -8,7 +8,12 @@ import { useAuth } from '@/contexts/AuthContext'
 import {
   useBemmpProjects, useMembers, useRaiseTicket, useTickets, useTrcs, useWarehouses, type Person, type Trc,
 } from '@/lib/queries'
-import { approversOf, cleanItems, orList, runsTrc, serves, stateLabel, type TicketSource } from '@/lib/tickets'
+import {
+  approversOf, cleanItems, orList, runsTrc, serves, stateLabel,
+  type ContractType, type Criticality, type SpareCategory, type TicketSource,
+} from '@/lib/tickets'
+import Choices, { type ChoiceOption } from '@/components/Choices'
+import { ClassificationFields } from '@/components/Classification'
 import { STATES, districtsOf } from '@/lib/india'
 import { uploadAttachment, type Slot } from '@/lib/attachments'
 import { Alert, PageLoader, Spinner } from '@/components/ui'
@@ -65,6 +70,11 @@ export default function NewTicket() {
   // The desk's own question: a hospital's spare, or a warehouse's (rl_0020).
   const [source, setSource] = useState<TicketSource>('hospital')
   const [warehouseId, setWarehouseId] = useState('')
+  // A Pvt spare says which contract it is under (rl_0024).
+  const [contractType, setContractType] = useState<ContractType | null>(null)
+  // The desk's raise is its acceptance (rl_0023), so it says what the spare is now.
+  const [category, setCategory] = useState<SpareCategory | null>(null)
+  const [criticality, setCriticality] = useState<Criticality | null>(null)
   const [form, setForm] = useState({
     state: '', district: '', bemmpId: '', hospital: '', equipmentBarcode: '', equipmentName: '',
     equipmentMake: '', equipmentModel: '',
@@ -113,6 +123,10 @@ export default function NewTicket() {
   const approvers = useMemo(() => approversOf(members ?? [], trcs ?? []), [members, trcs])
   // Pvt asks whether the spare is billed to the customer.
   const asksBilling = !!bemmpChoices.find(b => b.id === form.bemmpId)?.asks_billing
+  // Pvt asks the contract too: AMC, or CAMC — and a CAMC spare is always critical.
+  const asksContract = !fromWarehouse && !!bemmpChoices.find(b => b.id === form.bemmpId)?.asks_contract
+  const camc = asksContract && contractType === 'CAMC'
+  useEffect(() => { if (!asksContract) setContractType(null) }, [asksContract])
 
   // One Revive Lab to choose from: it is the answer, not a question. The same for a warehouse.
   useEffect(() => {
@@ -158,6 +172,10 @@ export default function NewTicket() {
       return
     }
 
+    if (asksContract && !contractType) { setError('Choose the contract type — AMC or CAMC.'); return }
+    if (atLab && !category) { setError('Choose the spare category — A, B or C.'); return }
+    if (atLab && !camc && !criticality) { setError('Choose whether the spare is critical or non-critical.'); return }
+
     let created: { id: string; code: string } | null = null
     try {
       setStage('raising')
@@ -171,6 +189,9 @@ export default function NewTicket() {
         approvalReason: far ? far.reason : null,
         stakeholderId: atLab ? holder!.id : null,
         billingSpare: !fromWarehouse && asksBilling ? form.billingSpare === 'yes' : null,
+        contractType: asksContract ? contractType : null,
+        category: atLab ? category : null,
+        criticality: atLab ? (camc ? 'critical' : criticality) : null,
       })
     } catch (err) {
       setStage('idle')
@@ -258,6 +279,19 @@ export default function NewTicket() {
               <span className="label">{fromWarehouse ? 'Warehouse in-charge' : 'Field engineer it belongs to'} <Req /></span>
               <div className="mt-1"><PersonPicker value={holder} onChange={setHolder} /></div>
               <p className="mt-1 text-xs text-ink-500">They and their reporting manager follow this ticket as if they had raised it.</p>
+            </div>
+            {/* Raised here, it is accepted as it is raised: what it is, now (rl_0024). */}
+            <div className="border-t border-ink-100 pt-3">
+              <ClassificationFields
+                category={category}
+                criticality={criticality}
+                onCategory={setCategory}
+                onCriticality={setCriticality}
+                camc={camc}
+              />
+              <p className="mt-1.5 text-xs text-ink-500">
+                Raised here, it is accepted as it is raised — its TAT counts from now: A 3 days, B 2, C 1.
+              </p>
             </div>
           </div>
         )}
@@ -347,6 +381,12 @@ export default function NewTicket() {
                 </button>
               )}
             </div>
+
+            {asksContract && (
+              <div className="sm:col-span-2">
+                <Choices label="Contract type" options={CONTRACT_CHOICES} value={contractType} onChange={setContractType} required />
+              </div>
+            )}
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -548,6 +588,12 @@ const SOURCE_LOOK: Record<TicketSource, { on: string; off: string; icon: string 
   hospital: { on: 'border-sky-300 bg-sky-50 ring-1 ring-sky-300', off: 'border-ink-200 hover:border-sky-300 hover:bg-sky-50/50', icon: 'text-sky-600' },
   warehouse: { on: 'border-amber-300 bg-amber-50 ring-1 ring-amber-300', off: 'border-ink-200 hover:border-amber-300 hover:bg-amber-50/50', icon: 'text-amber-600' },
 }
+
+/** Under Pvt: which contract the equipment is under (rl_0024). */
+const CONTRACT_CHOICES: ReadonlyArray<ChoiceOption<ContractType>> = [
+  { value: 'AMC', label: 'AMC', hint: 'Annual maintenance contract', tone: 'teal' },
+  { value: 'CAMC', label: 'CAMC', hint: 'Comprehensive — always critical', tone: 'fuchsia' },
+]
 
 function Req() {
   return <span className="text-cyrixRed-600">*</span>

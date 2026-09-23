@@ -1,26 +1,28 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import { ArrowDownUp, Inbox, PackagePlus, Search } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { useTickets, useTrcs, type Ticket } from '@/lib/queries'
+import { useTickets, type Ticket } from '@/lib/queries'
 import {
-  STATUS, STATUS_ORDER, TONE_CLASS, TONE_DOT, TONE_TEXT, canRaise, itemsSummary, parseTicketCode, ticketTabs,
-  type TabId,
+  STATUS, STATUS_ORDER, TONE_CLASS, TONE_DOT, TONE_TEXT, canRaise, itemsSummary, parseTicketCode, statusGroups, ticketTabs,
+  type TabId, type TicketStatus, type Tone,
 } from '@/lib/tickets'
 import { EmptyState, PageLoader, SortHeader, StatusBadge, WarehouseChip } from '@/components/ui'
+import { ClassTag } from '@/components/Classification'
+import { clockTime, dayDate } from '@/lib/when'
 
-type SortKey = 'code' | 'raised' | 'status' | 'hospital' | 'spare' | 'trc' | 'field' | 'engineer' | 'age'
+type SortKey = 'code' | 'raised' | 'status' | 'category' | 'hospital' | 'spare' | 'trc' | 'field' | 'engineer' | 'age'
 
 const COLUMN: Record<SortKey, string> = {
-  code: 'Ticket', raised: 'Raised', status: 'Status', hospital: 'Hospital', spare: 'Spare', trc: 'Revive Lab',
-  field: 'Field engineer', engineer: 'Revive Lab engineer', age: 'Age',
+  code: 'Ticket', raised: 'Raised', status: 'Status', category: 'Category', hospital: 'Hospital', spare: 'Spare',
+  trc: 'Revive Lab', field: 'Field engineer', engineer: 'Revive Lab engineer', age: 'Age',
 }
 
 /** A column's first click: dates newest first, ages longest first, words A to Z. */
 const FIRST_ASC: Record<SortKey, boolean> = {
   code: false, raised: false, age: false,
-  status: true, hospital: true, spare: true, trc: true, field: true, engineer: true,
+  status: true, category: true, hospital: true, spare: true, trc: true, field: true, engineer: true,
 }
 
 /** On a phone there are no column headings to click, so the orders are named. */
@@ -28,6 +30,7 @@ const PHONE_SORTS: Array<{ key: SortKey; asc: boolean; label: string }> = [
   { key: 'raised', asc: false, label: 'Newest first' },
   { key: 'raised', asc: true, label: 'Oldest first' },
   { key: 'status', asc: true, label: 'Status' },
+  { key: 'category', asc: true, label: 'Category' },
   { key: 'hospital', asc: true, label: 'Hospital' },
   { key: 'trc', asc: true, label: 'Revive Lab' },
   { key: 'field', asc: true, label: 'Field engineer' },
@@ -47,20 +50,25 @@ function age(t: Ticket): string {
   return h >= 1 ? `${h}h` : '<1h'
 }
 
-/** "17 Sep 2026" and the time, apart — always with the year, so a list that runs into January never leaves anyone guessing which one. */
+/**
+ * "17 Sep 2026" and "11:53 AM", apart — always with the year, so a list that
+ * runs into January never leaves anyone guessing which one, and always AM or
+ * PM, whatever the device's clock (lib/when).
+ */
 function raisedOn(iso: string): { date: string; time: string } {
-  const d = new Date(iso)
-  return {
-    date: d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }),
-    time: d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }),
-  }
+  return { date: dayDate(iso), time: clockTime(iso) }
 }
+
+/** A filter's choice, and how many tickets it would show. */
+interface Facet { value: string; label: string; n: number }
 
 function sortValue(key: SortKey, t: Ticket): string | number | null {
   switch (key) {
     case 'code': return t.number
     case 'raised': return Date.parse(t.created_at)
     case 'status': return STATUS[t.status]?.order ?? 99
+    // A before B before C, and within a category the critical ones first.
+    case 'category': return t.spare_category ? `${t.spare_category}${t.criticality === 'critical' ? 0 : 1}` : null
     case 'hospital': return t.facility
     case 'spare': return itemsSummary(t)
     case 'trc': return t.trc_name
@@ -78,7 +86,6 @@ export default function Tickets() {
   const { search } = useLocation()
   const [params, setParams] = useSearchParams()
   const { data: tickets, isLoading } = useTickets()
-  const { data: trcs } = useTrcs()
 
   // Everything that shapes the list lives in the address, so coming back
   // from a ticket finds it as it was left.
@@ -95,6 +102,9 @@ export default function Tickets() {
   const status = params.get('status') ?? ''
   // A hospital's spares or a warehouse's (rl_0020); asked only once there are any from a warehouse.
   const from = params.get('from') ?? ''
+  // The category and the criticality the Revive Lab gave it (rl_0024); 'none' is not classified yet.
+  const cat = params.get('cat') ?? ''
+  const crit = params.get('crit') ?? ''
   const anyWarehouse = useMemo(() => (tickets ?? []).some(t => t.source === 'warehouse'), [tickets])
   // The search box answers to every key at once; the address follows it,
   // and a link that clears the address clears the box.
@@ -120,13 +130,11 @@ export default function Tickets() {
     return Object.fromEntries(tabs.map(x => [x.id, all.filter(x.match).length])) as Record<TabId, number>
   }, [tickets, tabs])
 
-  const shown = useMemo(() => {
+  // This tab's tickets that pass the search: what every filter chooses among.
+  const searched = useMemo(() => {
     const needle = q.trim().toLowerCase()
     const asNumber = parseTicketCode(q)
     let rows = (tickets ?? []).filter(tab.match)
-    if (trcId) rows = rows.filter(t => t.trc_id === trcId)
-    if (status) rows = rows.filter(t => t.status === status)
-    if (from) rows = rows.filter(t => (t.source ?? 'hospital') === from)
     if (needle) {
       rows = rows.filter(t =>
         (asNumber !== null && t.number === asNumber)
@@ -138,6 +146,59 @@ export default function Tickets() {
             ...(t.items ?? []).map(i => i.name)]
           .some(v => (v ?? '').toLowerCase().includes(needle)))
     }
+    return rows
+  }, [tickets, tab, q])
+
+  /*
+    The filters offer only what is there, each with how many it would show,
+    and each counts what the others already allow — choose a Revive Lab and
+    the statuses are that Revive Lab's (the user, 23 Sep: "show only what has
+    data, and the dropdowns connected"). A choice that no longer matches
+    anything stays offered, at nought, so it can be seen and cleared.
+  */
+  type Filter = 'lab' | 'status' | 'from' | 'cat' | 'crit'
+  const passes = (t: Ticket, skip: Filter | null = null) =>
+    (skip === 'lab' || !trcId || t.trc_id === trcId)
+    && (skip === 'status' || !status || t.status === status)
+    && (skip === 'from' || !from || (t.source ?? 'hospital') === from)
+    && (skip === 'cat' || !cat || (t.spare_category ?? 'none') === cat)
+    && (skip === 'crit' || !crit || (t.criticality ?? 'none') === crit)
+
+  const facets = useMemo(() => {
+    const tally = (skip: Filter, key: (t: Ticket) => string, name: (t: Ticket) => string) => {
+      const m = new Map<string, Facet>()
+      for (const t of searched) {
+        if (!passes(t, skip)) continue
+        const k = key(t)
+        const f = m.get(k) ?? { value: k, label: name(t), n: 0 }
+        f.n++
+        m.set(k, f)
+      }
+      return m
+    }
+    const labs = [...tally('lab', t => t.trc_id, t => t.trc_name).values()].sort((a, b) => text.compare(a.label, b.label))
+    const statusMap = tally('status', t => t.status, t => STATUS[t.status]?.short ?? t.status)
+    const statuses = STATUS_ORDER.filter(s => statusMap.has(s)).map(s => statusMap.get(s)!)
+    const sources = tally('from', t => t.source ?? 'hospital', t => (t.source === 'warehouse' ? 'From warehouses' : 'From hospitals'))
+    const cats = tally('cat', t => t.spare_category ?? 'none', t => (t.spare_category ? `Category ${t.spare_category}` : 'No category yet'))
+    const crits = tally('crit', t => t.criticality ?? 'none', t => (t.criticality === 'critical' ? 'Critical' : t.criticality === 'non_critical' ? 'Non-critical' : 'Not said yet'))
+    const keep = (list: Facet[], value: string, label: string) =>
+      value && !list.some(f => f.value === value) ? [...list, { value, label, n: 0 }] : list
+    return {
+      labs: keep(labs, trcId, 'That Revive Lab'),
+      statuses: keep(statuses, status, STATUS[status as TicketStatus]?.short ?? status),
+      sources: keep(['hospital', 'warehouse'].filter(s => sources.has(s)).map(s => sources.get(s)!), from,
+        from === 'warehouse' ? 'From warehouses' : 'From hospitals'),
+      cats: keep(['A', 'B', 'C', 'none'].filter(s => cats.has(s)).map(s => cats.get(s)!), cat,
+        cat === 'none' ? 'No category yet' : `Category ${cat}`),
+      crits: keep(['critical', 'non_critical', 'none'].filter(s => crits.has(s)).map(s => crits.get(s)!), crit,
+        crit === 'critical' ? 'Critical' : crit === 'non_critical' ? 'Non-critical' : 'Not said yet'),
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searched, trcId, status, from, cat, crit])
+
+  const shown = useMemo(() => {
+    const rows = searched.filter(t => passes(t))
     const dir = asc ? 1 : -1
     return [...rows].sort((a, b) => {
       const x = sortValue(sortKey, a), y = sortValue(sortKey, b)
@@ -151,7 +212,15 @@ export default function Tickets() {
       // Level on this column: newest first.
       return Date.parse(b.created_at) - Date.parse(a.created_at)
     })
-  }, [tickets, tab, q, trcId, status, from, sortKey, asc])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searched, trcId, status, from, cat, crit, sortKey, asc])
+
+  // What waits on this person, in groups by where each spare stands — the
+  // same groups as the dashboard's card. Every other tab is one list.
+  const grouped = view === 'mine'
+  const groups: Array<{ key: string; label: string; tone: Tone; rows: Ticket[] }> = grouped
+    ? statusGroups(shown)
+    : [{ key: 'all', label: '', tone: 'slate', rows: shown }]
 
   // The phone's order, named; one set by a column heading on a wider
   // screen is kept rather than shown as something it is not.
@@ -207,21 +276,28 @@ export default function Tickets() {
             })}
           </div>
           <div className="ml-auto flex w-full flex-wrap gap-2 sm:w-auto">
-            <select className="input !py-1.5 sm:w-40" value={trcId} onChange={e => setParam('lab', e.target.value || null)} aria-label="Filter by Revive Lab">
+            <select className="input !py-1.5 sm:w-44" value={trcId} onChange={e => setParam('lab', e.target.value || null)} aria-label="Filter by Revive Lab">
               <option value="">All Revive Labs</option>
-              {(trcs ?? []).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              {facets.labs.map(f => <option key={f.value} value={f.value}>{f.label} ({f.n})</option>)}
             </select>
-            <select className="input !py-1.5 sm:w-44" value={status} onChange={e => setParam('status', e.target.value || null)} aria-label="Filter by status">
+            <select className="input !py-1.5 sm:w-48" value={status} onChange={e => setParam('status', e.target.value || null)} aria-label="Filter by status">
               <option value="">Any status</option>
-              {STATUS_ORDER.map(s => <option key={s} value={s}>{STATUS[s].short}</option>)}
+              {facets.statuses.map(f => <option key={f.value} value={f.value}>{f.label} ({f.n})</option>)}
             </select>
             {(anyWarehouse || from) && (
               <select className="input !py-1.5 sm:w-48" value={from} onChange={e => setParam('from', e.target.value || null)} aria-label="Filter by where it came from">
                 <option value="">Hospital or warehouse</option>
-                <option value="hospital">From hospitals</option>
-                <option value="warehouse">From warehouses</option>
+                {facets.sources.map(f => <option key={f.value} value={f.value}>{f.label} ({f.n})</option>)}
               </select>
             )}
+            <select className="input !py-1.5 sm:w-40" value={cat} onChange={e => setParam('cat', e.target.value || null)} aria-label="Filter by category">
+              <option value="">Any category</option>
+              {facets.cats.map(f => <option key={f.value} value={f.value}>{f.label} ({f.n})</option>)}
+            </select>
+            <select className="input !py-1.5 sm:w-40" value={crit} onChange={e => setParam('crit', e.target.value || null)} aria-label="Filter by criticality">
+              <option value="">Any criticality</option>
+              {facets.crits.map(f => <option key={f.value} value={f.value}>{f.label} ({f.n})</option>)}
+            </select>
             <label className="relative min-w-0 flex-1 sm:w-56 sm:flex-none">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
               <input
@@ -237,10 +313,15 @@ export default function Tickets() {
 
         {shown.length === 0 ? (
           <div className="p-4">
-            <EmptyState icon={Inbox} title={view === 'parts' ? 'No component is pending' : 'No tickets here'}>
+            <EmptyState
+              icon={Inbox}
+              title={view === 'parts' ? 'No component is pending' : view === 'mine' ? 'Nothing is waiting on you' : 'No tickets here'}
+            >
               {view === 'parts'
                 ? 'When a repair is waiting on a component — requested, being purchased, or ready — it shows up here.'
-                : 'Try another tab, or clear the filters.'}
+                : view === 'mine'
+                  ? 'Whatever needs your move next — to accept, assign, dispatch, confirm — shows up here, in groups.'
+                  : 'Try another tab, or clear the filters.'}
             </EmptyState>
           </div>
         ) : (
@@ -256,6 +337,7 @@ export default function Tickets() {
                     <SortHeader label="Ticket" col="code" sortKey={sortKey} asc={asc} onSort={onSort} className={pinned} />
                     <SortHeader label="Raised" col="raised" sortKey={sortKey} asc={asc} onSort={onSort} />
                     <SortHeader label="Status" col="status" sortKey={sortKey} asc={asc} onSort={onSort} />
+                    <SortHeader label="Category" col="category" sortKey={sortKey} asc={asc} onSort={onSort} />
                     <SortHeader label={anyWarehouse ? 'Hospital / Warehouse' : 'Hospital'} col="hospital" sortKey={sortKey} asc={asc} onSort={onSort} />
                     <SortHeader label="Spare" col="spare" sortKey={sortKey} asc={asc} onSort={onSort} />
                     <SortHeader label="Revive Lab" col="trc" sortKey={sortKey} asc={asc} onSort={onSort} />
@@ -265,7 +347,20 @@ export default function Tickets() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-ink-100">
-                  {shown.map(t => {
+                  {groups.map(g => (
+                  <Fragment key={g.key}>
+                  {grouped && (
+                    <tr className="bg-ink-50/70">
+                      <td colSpan={10} className="px-4 py-1.5">
+                        <span className="sticky left-4 inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-label">
+                          <span aria-hidden className={clsx('h-2 w-2 rounded-full', TONE_DOT[g.tone])} />
+                          <span className={TONE_TEXT[g.tone]}>{g.label}</span>
+                          <span className="tabular-nums text-ink-400">{g.rows.length}</span>
+                        </span>
+                      </td>
+                    </tr>
+                  )}
+                  {g.rows.map(t => {
                     const raised = raisedOn(t.created_at)
                     return (
                       <tr key={t.id} className="group cursor-pointer align-top hover:bg-ink-50" onClick={() => open(t)}>
@@ -285,6 +380,11 @@ export default function Tickets() {
                           <p className="text-xs text-ink-500">{raised.time}</p>
                         </td>
                         <td className="px-4 py-3"><StatusBadge status={t.status} closure={t.closure} /></td>
+                        <td className="px-4 py-3">
+                          {t.spare_category || t.criticality
+                            ? <ClassTag ticket={t} oneLine />
+                            : <span className="text-ink-300">—</span>}
+                        </td>
                         <td className="px-4 py-3">
                           <p className="text-ink-900">{t.facility}</p>
                           {t.source === 'warehouse'
@@ -316,6 +416,8 @@ export default function Tickets() {
                       </tr>
                     )
                   })}
+                  </Fragment>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -343,7 +445,16 @@ export default function Tickets() {
               </label>
             </div>
             <ul className="divide-y divide-ink-100 lg:hidden">
-              {shown.map(t => {
+              {groups.map(g => (
+              <Fragment key={g.key}>
+              {grouped && (
+                <li className="flex items-center gap-2 bg-ink-50/70 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-label">
+                  <span aria-hidden className={clsx('h-2 w-2 rounded-full', TONE_DOT[g.tone])} />
+                  <span className={TONE_TEXT[g.tone]}>{g.label}</span>
+                  <span className="tabular-nums text-ink-400">{g.rows.length}</span>
+                </li>
+              )}
+              {g.rows.map(t => {
                 const raised = raisedOn(t.created_at)
                 const spare = [itemsSummary(t), t.equipment_name, t.district].filter(Boolean).join(' · ')
                 return (
@@ -367,10 +478,13 @@ export default function Tickets() {
                       <p className="text-xs text-ink-500">
                         {t.trc_name} · {t.stakeholder_name} · {age(t)}
                       </p>
+                      <ClassTag ticket={t} className="flex" />
                     </Link>
                   </li>
                 )
               })}
+              </Fragment>
+              ))}
             </ul>
           </>
         )}

@@ -222,6 +222,8 @@ export function ticketTat(
   }
 }
 
+import { CATEGORY_TAT_DAYS, type SpareCategory } from './tickets'
+
 const MIN = 60_000
 const HOUR = 60 * MIN
 const DAY = 24 * HOUR
@@ -241,6 +243,38 @@ export function formatSpan(ms: number | null | undefined): string {
   if (d > 0) return h > 0 ? `${d}d ${h}h` : `${d}d`
   if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`
   return `${m}m`
+}
+
+/**
+ * The Revive Lab's TAT for the spare's category (rl_0024): A 3 days, B 2,
+ * C 1, from when it was accepted until it was dispatched back — or moved
+ * to scrap. Null until there is a category and an acceptance to count from.
+ */
+export interface CategoryTat {
+  days: number
+  dueAt: number
+  /** When the Revive Lab let go of it; null while it still has it. */
+  endedAt: number | null
+  exceeded: boolean
+  /** Past the due time when positive, still left when negative — at the end, or now. */
+  overMs: number
+}
+
+export function categoryTat(
+  t: {
+    spare_category?: SpareCategory | null
+    accepted_at?: string | null
+    dispatched_at?: string | null
+    scrapped_at?: string | null
+  },
+  now = Date.now(),
+): CategoryTat | null {
+  if (!t.spare_category || !t.accepted_at) return null
+  const days = CATEGORY_TAT_DAYS[t.spare_category]
+  const dueAt = Date.parse(t.accepted_at) + days * DAY
+  const endedAt = t.dispatched_at ? Date.parse(t.dispatched_at) : t.scrapped_at ? Date.parse(t.scrapped_at) : null
+  const at = endedAt ?? now
+  return { days, dueAt, endedAt, exceeded: at > dueAt, overMs: at - dueAt }
 }
 
 /** Days, to one decimal place, for charts. */

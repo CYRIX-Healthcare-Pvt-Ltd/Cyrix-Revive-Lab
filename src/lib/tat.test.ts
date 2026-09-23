@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ticketTat, formatSpan, asDays, type TatEvent } from './tat'
+import { ticketTat, formatSpan, asDays, type TatEvent, categoryTat } from './tat'
 
 const H = 3_600_000
 const D = 24 * H
@@ -246,5 +246,38 @@ describe('ticketTat — back with the field engineer (rl_0015)', () => {
     ], 'A', T0 + 20 * D)
     expect(old.total).toEqual({ ms: 5 * D, running: false })
     expect(old.dispatch).toEqual({ ms: 2 * D, running: false })
+  })
+})
+
+describe('the category TAT (rl_0024)', () => {
+  const H = 3_600_000
+  const accepted = '2026-09-23T04:00:00Z'
+  const t0 = Date.parse(accepted)
+
+  it('gives A three days, B two and C one, from acceptance', () => {
+    expect(categoryTat({ spare_category: 'A', accepted_at: accepted }, t0)!.dueAt).toBe(t0 + 72 * H)
+    expect(categoryTat({ spare_category: 'B', accepted_at: accepted }, t0)!.dueAt).toBe(t0 + 48 * H)
+    expect(categoryTat({ spare_category: 'C', accepted_at: accepted }, t0)!.dueAt).toBe(t0 + 24 * H)
+  })
+
+  it('is exceeded once the time has passed with the spare still at the Revive Lab', () => {
+    const tat = categoryTat({ spare_category: 'C', accepted_at: accepted }, t0 + 30 * H)!
+    expect(tat.exceeded).toBe(true)
+    expect(tat.overMs).toBe(6 * H)
+    expect(categoryTat({ spare_category: 'C', accepted_at: accepted }, t0 + 20 * H)!.exceeded).toBe(false)
+  })
+
+  it('stops at dispatch, or at scrap, whatever the clock says now', () => {
+    const sent = new Date(t0 + 20 * H).toISOString()
+    expect(categoryTat({ spare_category: 'C', accepted_at: accepted, dispatched_at: sent }, t0 + 99 * H)!.exceeded).toBe(false)
+    const late = new Date(t0 + 50 * H).toISOString()
+    const tat = categoryTat({ spare_category: 'B', accepted_at: accepted, scrapped_at: late }, t0 + 99 * H)!
+    expect(tat.exceeded).toBe(true)
+    expect(tat.endedAt).toBe(t0 + 50 * H)
+  })
+
+  it('counts nothing without a category or an acceptance', () => {
+    expect(categoryTat({ spare_category: null, accepted_at: accepted })).toBeNull()
+    expect(categoryTat({ spare_category: 'A', accepted_at: null })).toBeNull()
   })
 })
