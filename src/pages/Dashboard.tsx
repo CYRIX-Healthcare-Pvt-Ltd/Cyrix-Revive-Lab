@@ -11,7 +11,7 @@ import {
   REPAIRING, STATUS, STATUS_ORDER, TONE_DOT, TONE_FILL, TONE_TEXT, canRaise, itemsSummary, statusGroups, ticketTabs, waitingOnMe,
 } from '@/lib/tickets'
 import { asDays, formatSpan, ticketTat, type TatEvent } from '@/lib/tat'
-import { EmptyState, PageLoader, SectorTag, StatTile, WarehouseChip } from '@/components/ui'
+import { EmptyState, PageLoader, ReturnedTag, SectorTag, StatTile, WarehouseChip } from '@/components/ui'
 import IconChip from '@/components/IconChip'
 import { ClassTag } from '@/components/Classification'
 
@@ -193,6 +193,7 @@ export default function Dashboard() {
                           <Link to={`/tickets/${t.code}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 hover:bg-ink-50">
                             <span className="font-mono text-sm font-semibold text-ink-900">{t.code}</span>
                             {t.source === 'warehouse' && <WarehouseChip />}
+                            <ReturnedTag ticket={t} />
                             <span className="min-w-0 flex-1 truncate text-sm text-ink-600">
                               {t.facility} <SectorTag ticket={t} className="mx-0.5" />{itemsSummary(t) ? ` · ${itemsSummary(t)}` : ''}
                             </span>

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   ticketCode, parseTicketCode, actionsFor, runsTrc, waitingOnMe, cleanItems, itemsSummary,
   partsWaitingOn, ticketTabs, serves, approversOf, orList, statusLook, canRaise, partActor, partStatusLook,
-  ITEM_KIND_LABEL, PART_PROGRESS, PART_STATUS, poLabel, canClassify, statusGroups,
+  ITEM_KIND_LABEL, PART_PROGRESS, PART_STATUS, poLabel, canClassify, statusGroups, roundOf, ordinal,
   type Me, type TicketLike,
 } from './tickets'
 
@@ -439,5 +439,25 @@ describe('category and criticality (rl_0024)', () => {
     expect(canClassify({ ...at, status: 'closed' }, desk)).toBe(false)
     expect(canClassify({ trc_id: REG, accepted_at: null, status: 'pending_acceptance' }, desk)).toBe(false)
     expect(canClassify({ ...at, status: 'in_repair' }, me({ employee_id: 'eng', is_engineer: true, trc_ids: [REG] }))).toBe(false)
+  })
+})
+
+describe('a spare sent back not working (rl_0027)', () => {
+  it('counts the rounds from its returns', () => {
+    expect(roundOf({ field_returns: [] })).toBe(1)
+    expect(roundOf({})).toBe(1)
+    expect(roundOf({ field_returns: [{}] })).toBe(2)
+    expect(roundOf({ field_returns: [{}, {}] })).toBe(3)
+  })
+
+  it('says which return it was', () => {
+    expect([1, 2, 3, 4, 11, 12, 13, 21, 22, 101].map(ordinal))
+      .toEqual(['1st', '2nd', '3rd', '4th', '11th', '12th', '13th', '21st', '22nd', '101st'])
+  })
+
+  it('leaves closing the ticket to the field engineer it went back to, once it is with them', () => {
+    const t = { status: 'received_back' as const, trc_id: REG, engineer_id: 'e1', stakeholder_id: 'f1', raised_by: 'f1' }
+    expect(actionsFor(t, me({ employee_id: 'f1' }))).toContain('close_ticket')
+    expect(actionsFor(t, me({ employee_id: 'c1', is_coordinator: true, trc_ids: [REG] }))).not.toContain('close_ticket')
   })
 })

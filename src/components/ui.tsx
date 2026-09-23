@@ -8,7 +8,7 @@
  */
 import { useEffect, useRef, type ReactNode } from 'react'
 import clsx from 'clsx'
-import { AlertCircle, ArrowDown, ArrowUp, CheckCircle2, ChevronsUpDown, Info, Loader2, Warehouse } from 'lucide-react'
+import { AlertCircle, ArrowDown, ArrowUp, CheckCircle2, ChevronsUpDown, Info, Loader2, RotateCcw, Warehouse } from 'lucide-react'
 import { STATUS, TONE_CLASS, statusLook, type Closure, type Proposal, type TicketStatus } from '@/lib/tickets'
 
 export function Spinner({ className }: { className?: string }) {
@@ -201,6 +201,30 @@ export function SectorTag({ ticket: t, className }: {
       title={`BEMMP ${t.bemmp_code}`}
     >
       {pvt ? 'Pvt' : 'Govt'}
+    </span>
+  )
+}
+
+/**
+ * Fitted, not working, and sent back to the Revive Lab on the same ticket —
+ * once or more (rl_0027). Beside the status, so a list shows a spare on its
+ * second time round without opening it; it stays once the ticket is closed.
+ */
+export function ReturnedTag({ ticket: t, className }: {
+  ticket: { field_returns?: ReadonlyArray<{ reason: string }> | null }
+  className?: string
+}) {
+  const n = t.field_returns?.length ?? 0
+  if (n === 0) return null
+  return (
+    <span
+      className={clsx(
+        'inline-flex items-center gap-1 whitespace-nowrap rounded bg-rose-100 px-1.5 py-px align-middle text-[10px] font-semibold text-rose-900',
+        className,
+      )}
+      title={`Returned not working${n > 1 ? `, ${n} times` : ''}: ${t.field_returns![n - 1].reason}`}
+    >
+      <RotateCcw aria-hidden className="h-3 w-3" /> Returned{n > 1 ? ` ×${n}` : ''}
     </span>
   )
 }

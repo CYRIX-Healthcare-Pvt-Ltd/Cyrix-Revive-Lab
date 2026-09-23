@@ -3,8 +3,8 @@ import { useQuery } from '@tanstack/react-query'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import clsx from 'clsx'
 import {
-  ArrowLeft, ArrowRightLeft, BadgeCheck, Ban, Boxes, CalendarClock, Camera, CheckCircle2, CircleCheck, ClipboardCheck,
-  ClipboardList, Hand, History as HistoryIcon, PackageCheck, PackagePlus, PackageX, PlayCircle, Receipt, ScanSearch, Tag,
+  ArrowLeft, ArrowRightLeft, BadgeCheck, Ban, Boxes, CalendarClock, Camera, CheckCircle2, CircleCheck, CircleX, ClipboardCheck,
+  ClipboardList, Hand, History as HistoryIcon, PackageCheck, PackagePlus, PackageX, PlayCircle, Receipt, RotateCcw, ScanSearch, Tag,
   Send, ShieldQuestion, ShieldX, ShoppingCart, Signpost, Timer, Trash2, TriangleAlert, Truck, Undo2, UserCog, UserPlus,
   UserX, Wrench, X,
   type LucideIcon,
@@ -13,12 +13,12 @@ import { useAuth } from '@/contexts/AuthContext'
 import {
   useAccept, useAddObservation, useApprove, useAssign, useCancelTransfer, useCloseTicket, useCompleteRepair,
   useDeclineApproval, useDiscard, useDispatch, useHops, useMarkReceived, useMembers, useRequestTransfer, useReroute,
-  usePartRequests, useReturnToDesk, useScrap, useSend, useSetClassification, useSetExpectedDate, useStartRepair, useTickets, useTrail, useTrcs,
-  useUpdateCourier,
-  type Ticket, type TrailEvent,
+  usePartRequests, useReturnToDesk, useReturnToLab, useScrap, useSend, useSetClassification, useSetExpectedDate, useStartRepair, useTickets,
+  useTrail, useTrcs, useUpdateCourier,
+  type PastRound, type Ticket, type TrailEvent,
 } from '@/lib/queries'
 import {
-  actionsFor, approversOf, canClassify, itemsSummary, orList, parseTicketCode, serves, stateLabel,
+  actionsFor, approversOf, canClassify, itemsSummary, orList, ordinal, parseTicketCode, roundOf, serves, stateLabel,
   CATEGORY_TAT_DAYS, CRITICALITY_LABEL,
   ITEM_KIND_LABEL, OUTCOME_LABEL, REPAIRING, STATUS, TONE_DOT, TONE_SOFT, TONE_TEXT, TRC_KIND_LABEL, statusLook,
   type Action, type Approval, type Criticality, type Outcome, type Proposal, type SpareCategory, type TicketItem,
@@ -27,6 +27,7 @@ import {
 import { categoryTat, formatSpan, ticketTat, type Span } from '@/lib/tat'
 import { dateTime, dayDate, gapLabel, gapWords } from '@/lib/when'
 import { ClassificationFields, TatChip } from '@/components/Classification'
+import Choices, { type ChoiceOption } from '@/components/Choices'
 import { Alert, EmptyState, PageLoader, SectorTag, Spinner, StatusBadge, WarehouseChip } from '@/components/ui'
 import IconChip from '@/components/IconChip'
 import AttachmentsCard from '@/components/TicketAttachments'
@@ -128,6 +129,14 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
               <p className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900">
                 <TriangleAlert className="h-3.5 w-3.5" />
                 Damaged in transit {t.arrival_damaged ? 'on the way in' : ''}{t.arrival_damaged && t.return_damaged ? ' and ' : ''}{t.return_damaged ? 'on the way back' : ''}
+              </p>
+            )}
+            {/* Fitted, not working, and sent back: the Revive Lab repairs it again (rl_0027). */}
+            {(t.field_returns ?? []).length > 0 && (
+              <p className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-rose-100 px-2 py-1 text-xs font-medium text-rose-900">
+                <RotateCcw className="h-3.5 w-3.5" />
+                Returned not working{t.field_returns.length > 1 ? ` — ${t.field_returns.length} times` : ''}
+                {t.status !== 'closed' && <> · round {roundOf(t)}</>}
               </p>
             )}
             {/* A hospital's spare is fitted and said to work, or not. A warehouse's
@@ -269,6 +278,8 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
             </Section>
           </div>
 
+          {(t.field_returns ?? []).length > 0 && <ReturnsCard ticket={t} />}
+
           {(hops ?? []).length > 0 && (
             <Section title="Transfers" icon={ArrowRightLeft} tone="violet">
               <ol className="space-y-3">
@@ -395,11 +406,22 @@ function ApprovalNote({ ticket: t, approval: a }: { ticket: Ticket; approval: Ap
  * working, and how it came back. Kept apart from the route card's own
  * photos, which say what was wrong rather than what was done.
  */
+/** One round's photographs and recordings: the ticket's own for the round it is on, a return's for the one before (rl_0027). */
+type RoundMedia = Pick<PastRound,
+  'arrival_photos' | 'arrival_damaged' | 'done_photos' | 'done_video' | 'done_voice' | 'return_photos' | 'return_damaged'>
+
 function StageMedia({ ticket: t }: { ticket: Ticket }) {
-  const paths = [
-    ...t.arrival_photos, ...t.done_photos, ...t.return_photos,
-    ...(t.done_video ? [t.done_video] : []), ...(t.done_voice ? [t.done_voice] : []),
+  // Newest first: the round it is on, then each one before it came back not working.
+  const rounds: Array<{ n: number; media: RoundMedia }> = [
+    ...(t.field_returns ?? []).map((r, i) => ({ n: i + 1, media: r.before })),
+    { n: roundOf(t), media: t },
+  ].reverse()
+  const several = rounds.length > 1
+  const pathsOf = (m: RoundMedia) => [
+    ...(m.arrival_photos ?? []), ...(m.done_photos ?? []), ...(m.return_photos ?? []),
+    ...(m.done_video ? [m.done_video] : []), ...(m.done_voice ? [m.done_voice] : []),
   ]
+  const paths = rounds.flatMap(r => pathsOf(r.media))
   const { data: links } = useQuery({
     enabled: paths.length > 0,
     queryKey: ['revive', 'stage-media', t.id, paths.join(',')],
@@ -409,11 +431,14 @@ function StageMedia({ ticket: t }: { ticket: Ticket }) {
   const [viewing, setViewing] = useState<number | null>(null)
   if (paths.length === 0) return null
 
-  const shots = [
-    ...t.arrival_photos.map(p => ({ path: p, alt: 'As it arrived at the Revive Lab' })),
-    ...t.done_photos.map(p => ({ path: p, alt: 'The repaired spare' })),
-    ...t.return_photos.map(p => ({ path: p, alt: 'As it arrived back' })),
-  ].filter(x => links?.[x.path])
+  const shots = rounds.flatMap(({ n, media: m }) => {
+    const of = several ? ` — round ${n}` : ''
+    return [
+      ...(m.arrival_photos ?? []).map(p => ({ path: p, alt: `As it arrived at the Revive Lab${of}` })),
+      ...(m.done_photos ?? []).map(p => ({ path: p, alt: `The repaired spare${of}` })),
+      ...(m.return_photos ?? []).map(p => ({ path: p, alt: `As it arrived back${of}` })),
+    ]
+  }).filter(x => links?.[x.path])
 
   const group = (title: string, tone: string, list: string[], damaged: boolean) => list.length === 0 ? null : (
     <div>
@@ -438,31 +463,109 @@ function StageMedia({ ticket: t }: { ticket: Ticket }) {
     </div>
   )
 
+  const round = (m: RoundMedia) => (
+    <>
+      {group('On arrival', 'bg-amber-100 text-amber-900', m.arrival_photos ?? [], !!m.arrival_damaged)}
+      {group('Repaired', 'bg-lime-100 text-lime-900', m.done_photos ?? [], false)}
+      {m.done_video && links?.[m.done_video] && (
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-label text-ink-400">The repair, running</p>
+          <video src={links[m.done_video]} controls playsInline className="mt-1.5 max-h-72 w-full rounded-lg border border-ink-200 bg-shade" />
+        </div>
+      )}
+      {m.done_voice && links?.[m.done_voice] && (
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-label text-ink-400">The engineer, on the repair</p>
+          <audio src={links[m.done_voice]} controls onLoadedMetadata={revealLength} className="mt-1.5 h-10 w-full" />
+        </div>
+      )}
+      {group('Back with the field engineer', 'bg-amber-100 text-amber-900', m.return_photos ?? [], !!m.return_damaged)}
+    </>
+  )
+
   return (
-    <Section title={t.done_video || t.done_voice ? 'Arrival, repair and return — photos and recordings' : 'Arrival, repair and return photos'} icon={Camera} tone="sky">
-      <div className="space-y-4">
-        {group('On arrival', 'bg-amber-100 text-amber-900', t.arrival_photos, t.arrival_damaged)}
-        {group('Repaired', 'bg-lime-100 text-lime-900', t.done_photos, false)}
-        {t.done_video && links?.[t.done_video] && (
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-label text-ink-400">The repair, running</p>
-            <video src={links[t.done_video]} controls playsInline className="mt-1.5 max-h-72 w-full rounded-lg border border-ink-200 bg-shade" />
-          </div>
-        )}
-        {t.done_voice && links?.[t.done_voice] && (
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-label text-ink-400">The engineer, on the repair</p>
-            <audio src={links[t.done_voice]} controls onLoadedMetadata={revealLength} className="mt-1.5 h-10 w-full" />
-          </div>
-        )}
-        {group('Back with the field engineer', 'bg-amber-100 text-amber-900', t.return_photos, t.return_damaged)}
-      </div>
+    <Section
+      title={rounds.some(r => r.media.done_video || r.media.done_voice) ? 'Arrival, repair and return — photos and recordings' : 'Arrival, repair and return photos'}
+      icon={Camera}
+      tone="sky"
+    >
+      {!several ? (
+        <div className="space-y-4">{round(t)}</div>
+      ) : (
+        // Every round kept, each under its number: the first time is history too (the user, 23 Sep).
+        <div className="space-y-3">
+          {rounds.filter(r => pathsOf(r.media).length > 0).map(({ n, media }) => (
+            <div key={n} className="space-y-4 rounded-lg border border-ink-200 p-3">
+              <p className="flex items-center gap-1.5 text-xs font-semibold text-ink-700">
+                {n === roundOf(t)
+                  ? <>Round {n}{t.status !== 'closed' && <span className="font-normal text-ink-500"> · this time</span>}</>
+                  : <>Round {n} <span className="inline-flex items-center gap-1 rounded bg-rose-100 px-1.5 py-px text-[10px] text-rose-900"><RotateCcw className="h-3 w-3" /> came back not working</span></>}
+              </p>
+              {round(media)}
+            </div>
+          ))}
+        </div>
+      )}
       <Lightbox
         images={shots.map(x => ({ src: links?.[x.path] ?? '', alt: x.alt }))}
         index={viewing}
         onIndex={setViewing}
         onClose={() => setViewing(null)}
       />
+    </Section>
+  )
+}
+
+/**
+ * Each time the field engineer fitted it, found it not working and sent it
+ * back (rl_0027): why, how it went, and what the round before had — its
+ * category and TAT, who repaired it, how it was dispatched. That round's
+ * photographs are under its number above, and every step of it is in the
+ * history.
+ */
+function ReturnsCard({ ticket: t }: { ticket: Ticket }) {
+  const returns = t.field_returns ?? []
+  return (
+    <Section title={returns.length > 1 ? `Returned not working — ${returns.length} times` : 'Returned not working'} icon={RotateCcw} tone="rose">
+      <ol className="space-y-3">
+        {returns.map((r, i) => {
+          const b = r.before
+          const tat = categoryTat({ spare_category: b.spare_category, accepted_at: b.accepted_at, dispatched_at: b.dispatched_at })
+          const went = [
+            b.engineer_name && `Repaired by ${b.engineer_name}${b.engineer_ecode ? ` ${b.engineer_ecode}` : ''}`,
+            b.outcome && b.outcome !== 'repaired' && `closed as ${OUTCOME_LABEL[b.outcome].toLowerCase()}`,
+            b.out_courier && `dispatched back by ${b.out_courier}${b.out_awb ? `, AWB ${b.out_awb}` : ''}${b.out_dispatched_on ? `, on ${day(b.out_dispatched_on)}` : ''}`,
+            b.billing_estimate !== null && b.billing_estimate !== undefined && `estimated billing ${rupees(Number(b.billing_estimate))}`,
+            b.received_at && `received ${when(b.received_at)}${b.return_damaged ? ', damaged in transit' : ''}`,
+          ].filter(Boolean)
+          return (
+            <li key={r.at} className="rounded-lg border border-ink-200 p-3">
+              <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-sm font-medium text-ink-900">
+                <RotateCcw className="h-4 w-4 text-rose-600" />
+                {ordinal(i + 1)} return, to {r.trc_name}
+                <span className="text-xs font-normal text-ink-400">· {when(r.at)}{r.by_name ? ` · by ${r.by_name}` : ''}</span>
+              </p>
+              <p className="mt-1 whitespace-pre-wrap text-sm text-ink-700">{r.reason}</p>
+              <p className="mt-1 text-xs text-ink-500">
+                {[r.courier, r.awb && `AWB ${r.awb}`, day(r.dispatched_on) && `sent ${day(r.dispatched_on)}`].filter(Boolean).join(' · ')}
+              </p>
+              <div className="mt-2.5 rounded-md bg-ink-50 px-2.5 py-2">
+                <p className="text-[10px] font-semibold uppercase tracking-label text-ink-400">Round {i + 1}, before it came back</p>
+                <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                  {b.spare_category && (
+                    <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-md bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-900">
+                      <Tag aria-hidden className="h-3 w-3" /> Category {b.spare_category}
+                      {b.criticality && <> · {CRITICALITY_LABEL[b.criticality]}</>}
+                    </span>
+                  )}
+                  {tat && <TatChip tat={tat} />}
+                </div>
+                {went.length > 0 && <p className="mt-1.5 text-xs text-ink-600">{went.join(' · ')}</p>}
+              </div>
+            </li>
+          )
+        })}
+      </ol>
     </Section>
   )
 }
@@ -602,6 +705,8 @@ function stepLook(
   // A warehouse keeps it as stock: received back closes it (rl_0023).
   if (e.action === 'received_stock') return { title: 'Received back into warehouse stock — closed', tone, icon: PackageCheck }
   if (e.action === 'damaged') return { title: e.status === 'accepted' ? 'Accepted — damaged in transit' : 'Received back — damaged in transit', tone: 'amber', icon: TriangleAlert }
+  // Fitted, not working, and sent back on the same ticket: the next round starts here (rl_0027).
+  if (e.action === 'field_return') return { title: 'Returned to the Revive Lab — not working', tone: 'rose', icon: RotateCcw }
   if (e.action === 'working' || e.action === 'not_working') {
     // A warehouse ticket closed before rl_0023 went through this step too; it went back into stock.
     if (source === 'warehouse') return { title: 'Received back into warehouse stock — closed', tone, icon: PackageCheck }
@@ -617,8 +722,10 @@ function stepLook(
         : { title: STATUS.accepted.label, tone, icon: Hand }
     case 'assigned': {
       // Any earlier assignment makes this one a reassignment — straight from
-      // one engineer to another, or again after being handed back.
-      const again = earlier.some(x => x.status === 'assigned')
+      // one engineer to another, or again after being handed back. A spare
+      // sent back by the field starts a new round, assigned afresh (rl_0027).
+      const round = earlier.slice(earlier.map(x => x.action).lastIndexOf('field_return') + 1)
+      const again = round.some(x => x.status === 'assigned')
       const title = e.engineer_name
         ? <>{again ? 'Reassigned' : 'Assigned'} to {e.engineer_name}
           {e.engineer_ecode && <span className="font-normal text-ink-400"> {e.engineer_ecode}</span>}</>
@@ -767,7 +874,8 @@ function TatCard({
                   <td className="py-2 pr-3 text-ink-900">
                     {i + 1}. {trcName(leg.trcId)}
                     <span className="block text-xs text-ink-400">
-                      {leg.endedBy === 'transfer' ? 'transferred on' : leg.endedBy === 'closed' ? 'closed' : 'current'}
+                      {leg.endedBy === 'transfer' ? 'transferred on' : leg.endedBy === 'returned' ? 'came back not working'
+                        : leg.endedBy === 'closed' ? 'closed' : 'current'}
                     </span>
                   </td>
                   {[leg.reach, leg.assign, leg.repair, leg.dispatch, leg.total].map((s, j) => (
@@ -825,6 +933,12 @@ const ACTION_META: Record<Action, { label: string; icon: LucideIcon; tone: Tone;
   cancel_transfer: { label: 'Cancel transfer', icon: Undo2, tone: 'slate', weight: 'aside' },
   discard: { label: 'Discard ticket', icon: Ban, tone: 'slate', weight: 'aside' },
 }
+
+/** The field engineer's answer once it is fitted, in the colours of the two ways it can end. */
+const WORKING_CHOICES: ReadonlyArray<ChoiceOption<'yes' | 'no'>> = [
+  { value: 'yes', label: 'Working', hint: 'Fitted, runs', tone: 'green', icon: CircleCheck },
+  { value: 'no', label: 'Not working', hint: 'Still faulty', tone: 'red', icon: CircleX },
+]
 
 /** A button says where it goes when it can. */
 function actionMeta(action: Action, t: Ticket) {
@@ -989,6 +1103,9 @@ function ActionForm({
   const send = useSend()
   const reroute = useReroute()
   const closeTicket = useCloseTicket()
+  const returnToLab = useReturnToLab()
+  // Which time round it is: a later round's photographs are its own (rl_0027).
+  const round = roundOf(t)
 
   const meta = actionMeta(action, t)
   // Reassigning: somebody has it, and the choice is who has it instead.
@@ -1007,6 +1124,9 @@ function ActionForm({
   const [shots, setShots] = useState<PendingPhoto[]>([])
   const [damaged, setDamaged] = useState(false)
   const [working, setWorking] = useState<'' | 'yes' | 'no'>('')
+  // Not working: close the ticket there, or send it back to be repaired again (the user, 23 Sep).
+  const [afterwards, setAfterwards] = useState<'close' | 'return' | null>(null)
+  const returning = action === 'close_ticket' && working === 'no' && afterwards === 'return'
   const [engineerId, setEngineerId] = useState(reassign ? '' : t.engineer_id ?? '')
   const [toTrc, setToTrc] = useState('')
   // The field engineer's own courier details start from what is on the card.
@@ -1020,7 +1140,8 @@ function ActionForm({
   const [category, setCategory] = useState<SpareCategory | null>(t.spare_category)
   const [criticality, setCriticality] = useState<Criticality | null>(camc ? 'critical' : t.criticality)
   // How it came: required when a spare arrives from the sender; a transfer's courier was recorded when it was sent.
-  const courierRequired = action === 'accept' && t.status === 'pending_acceptance'
+  // Going back to the Revive Lab, the field engineer gives all three (rl_0027).
+  const courierRequired = (action === 'accept' && t.status === 'pending_acceptance') || returning
   // Under Pvt the customer can be asked to pay for the repair: what to bill, before it goes (rl_0025).
   const asksEstimate = action === 'dispatch' && !!t.asks_billing_estimate
   const [estimate, setEstimate] = useState('')
@@ -1036,7 +1157,7 @@ function ActionForm({
   const nearby = (trcs ?? []).filter(x => x.is_active && serves(x, t.state))
   const labName = (id: string) => trcs?.find(x => x.id === id)?.name ?? 'that Revive Lab'
 
-  const busy = [accept, assign, observe, giveBack, complete, dispatch, received, transfer, updateCourier, send, reroute, closeTicket]
+  const busy = [accept, assign, observe, giveBack, complete, dispatch, received, transfer, updateCourier, send, reroute, closeTicket, returnToLab]
     .some(m => m.isPending)
   const blobs = photos.map(p => p.blob)
 
@@ -1050,7 +1171,7 @@ function ActionForm({
           if (courierRequired && !awb.trim()) { onError('Enter the tracking / AWB number.'); return }
           if (courierRequired && !on) { onError('Enter the date of dispatch.'); return }
           if (damaged && blobs.length === 0) { onError('Photograph the damage — it is the only proof there will be.'); return }
-          await accept.mutateAsync({ id: t.id, note, damaged, photos: blobs, courier, awb, on, category, criticality })
+          await accept.mutateAsync({ id: t.id, note, damaged, photos: blobs, courier, awb, on, category, criticality, round })
           onDone(`${t.code} accepted at ${t.trc_name}${damaged ? ', damaged in transit' : ''} — category ${category}, TAT ${CATEGORY_TAT_DAYS[category]} day${CATEGORY_TAT_DAYS[category] === 1 ? '' : 's'} from now.`)
           break
         case 'assign': {
@@ -1075,6 +1196,7 @@ function ActionForm({
             photos: outcome === 'repaired' ? shots.map(p => p.blob) : [],
             video: outcome === 'repaired' ? video : null,
             voice: outcome === 'repaired' ? voice : null,
+            round,
           })
           onDone(outcome === 'repaired' ? 'Repair closed. It is with the coordinator for dispatch.'
             : outcome === 'not_repairable'
@@ -1094,13 +1216,23 @@ function ActionForm({
         }
         case 'received':
           if (damaged && blobs.length === 0) { onError('Photograph the damage — it is the only proof there will be.'); return }
-          await received.mutateAsync({ id: t.id, note, damaged, photos: blobs })
+          await received.mutateAsync({ id: t.id, note, damaged, photos: blobs, round })
           void removeVideoOf(t.id)
           onDone(t.source === 'warehouse'
             ? `${t.code} is back at the warehouse — the ticket is closed.`
-            : `${t.code} is back with you. Close it once it is fitted.`); break
+            : `${t.code} is back with you. Once it is fitted, close the ticket — or, if it does not work, return it to ${t.trc_name}.`); break
         case 'close_ticket':
           if (!working) { onError('Say whether it works.'); return }
+          if (working === 'no' && !afterwards) { onError(`Say what happens to it now: close the ticket, or return it to ${t.trc_name}.`); return }
+          if (returning) {
+            if (note.trim().length < 5) { onError('Say why it is going back — what is not working.'); return }
+            if (!courier.trim()) { onError('Enter the courier it is going back with.'); return }
+            if (!awb.trim()) { onError('Enter the tracking / AWB number.'); return }
+            if (!on) { onError('Enter the date of dispatch.'); return }
+            await returnToLab.mutateAsync({ id: t.id, reason: note, courier, awb, on })
+            onDone(`${t.code} is on its way back to ${t.trc_name}. Its coordinator accepts it when it arrives, and it is repaired again — the first time stays in the history.`)
+            break
+          }
           if (note.trim().length < 2) { onError('Give the final status.'); return }
           await closeTicket.mutateAsync({ id: t.id, working: working === 'yes', note })
           onDone(`${t.code} is closed.`); break
@@ -1132,8 +1264,9 @@ function ActionForm({
   // The back of the route card: the Revive Lab's Action taken, and the
   // field engineer's Final status.
   const needsNote = action === 'return' || action === 'transfer' || action === 'complete' || action === 'close_ticket' || action === 'observe'
-  const needsCourier = action === 'dispatch' || action === 'courier' || action === 'send' || action === 'reroute' || action === 'accept'
-  const asksNote = action !== 'courier' && action !== 'reroute'
+  const needsCourier = action === 'dispatch' || action === 'courier' || action === 'send' || action === 'reroute' || action === 'accept' || returning
+  // Going back, the why is asked beside the choice, before the courier.
+  const asksNote = action !== 'courier' && action !== 'reroute' && !returning
   // The tick that asks for the photograph: a courier's damage, in or out.
   const asksDamage = action === 'accept' || action === 'received'
 
@@ -1320,13 +1453,43 @@ function ActionForm({
       )}
 
       {action === 'close_ticket' && (
+        <Choices
+          label="Is it working?"
+          required
+          options={WORKING_CHOICES}
+          value={working || null}
+          onChange={setWorking}
+        />
+      )}
+
+      {/* Not working: two ways on — it ends here, or the Revive Lab repairs it again on this ticket (rl_0027). */}
+      {action === 'close_ticket' && working === 'no' && (
+        <Choices
+          label="What happens to it now?"
+          required
+          options={[
+            { value: 'close', label: 'Close the ticket', hint: 'It ends here', tone: 'slate', icon: CircleCheck },
+            { value: 'return', label: `Return to ${t.trc_name}`, hint: 'Repair again', tone: 'orange', icon: RotateCcw },
+          ]}
+          value={afterwards}
+          onChange={setAfterwards}
+          note={afterwards === 'return'
+            ? `The same ticket goes back: ${t.trc_name}'s coordinator accepts it when it arrives, and the repair starts again. Everything so far stays in its history.`
+            : undefined}
+        />
+      )}
+
+      {returning && (
         <label className="block">
-          <span className="label">Is it working? <span className="text-cyrixRed-600">*</span></span>
-          <select className="input mt-1" value={working} onChange={e => setWorking(e.target.value as 'yes' | 'no')}>
-            <option value="">Choose…</option>
-            <option value="yes">Working</option>
-            <option value="no">Not working</option>
-          </select>
+          <span className="label">Why is it going back? <span className="text-cyrixRed-600">*</span></span>
+          <textarea
+            className="input mt-1"
+            rows={2}
+            maxLength={500}
+            value={note}
+            onChange={e => setNote(e.target.value)}
+            placeholder="e.g. Fitted; no output after 10 minutes, same fault as before"
+          />
         </label>
       )}
 
@@ -1334,7 +1497,7 @@ function ActionForm({
         <div className="grid gap-3 sm:grid-cols-3">
           <label className="block">
             <span className="label">
-              {action === 'accept' ? 'Courier it came with' : 'Courier'}
+              {action === 'accept' ? 'Courier it came with' : returning ? 'Courier it goes back with' : 'Courier'}
               {(action === 'dispatch' || courierRequired) && <span className="text-cyrixRed-600"> *</span>}
             </span>
             <input className="input mt-1" value={courier} onChange={e => setCourier(e.target.value)} placeholder="DTDC, Blue Dart…" />
@@ -1348,7 +1511,7 @@ function ActionForm({
               {fromCard ? 'Date of dispatch' : 'Dispatched on'}
               {courierRequired && <span className="text-cyrixRed-600"> *</span>}
             </span>
-            <input className="input mt-1" type="date" value={on} max={action === 'accept' ? localToday() : undefined} onChange={e => setOn(e.target.value)} />
+            <input className="input mt-1" type="date" value={on} max={action === 'accept' || returning ? localToday() : undefined} onChange={e => setOn(e.target.value)} />
           </label>
         </div>
       )}
@@ -1410,7 +1573,7 @@ function ActionForm({
             placeholder={
               action === 'complete' ? (outcome === 'repaired' ? 'What was done — parts replaced, tests run' : outcome === 'not_repairable' ? 'e.g. Board delaminated, controller IC not available' : 'e.g. Hospital declined the quote')
                 : action === 'observe' ? 'e.g. Burnt track near the fuse; C12 bulged, replacing it'
-                  : action === 'close_ticket' ? 'e.g. Installed and working; output steady at 12 V'
+                  : action === 'close_ticket' ? (working === 'no' ? 'e.g. Still no output; the hospital is replacing the machine' : 'e.g. Installed and working; output steady at 12 V')
                     : action === 'received' ? 'e.g. Box opened, board looks fine'
                     : action === 'transfer' ? 'e.g. Needs FPGA rework this Revive Lab cannot do'
                       : action === 'return' ? 'e.g. Cannot be repaired at this Revive Lab'
@@ -1423,14 +1586,18 @@ function ActionForm({
 
       <div className="flex gap-2">
         <button type="button" className="btn-primary" onClick={run} disabled={busy}>
-          {busy ? <Spinner className="h-4 w-4" /> : action === 'transfer' ? <ShieldQuestion className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+          {busy ? <Spinner className="h-4 w-4" />
+            : action === 'transfer' ? <ShieldQuestion className="h-4 w-4" />
+              : returning ? <RotateCcw className="h-4 w-4" />
+                : <CheckCircle2 className="h-4 w-4" />}
           {/* Never the same words as the button that opened this: that one
               asks the question, this one answers it. */}
           {action === 'transfer' ? 'Ask for approval'
             : action === 'reroute' ? 'Send'
               : action === 'received' ? 'Confirm it arrived'
-                : action === 'close_ticket' ? 'Close the ticket'
-                  : meta.label}
+                : returning ? `Return to ${t.trc_name}`
+                  : action === 'close_ticket' ? 'Close the ticket'
+                    : meta.label}
         </button>
         <button type="button" className="btn-secondary" onClick={onCancel}>Cancel</button>
       </div>

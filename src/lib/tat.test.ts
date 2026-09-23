@@ -281,3 +281,46 @@ describe('the category TAT (rl_0024)', () => {
     expect(categoryTat({ spare_category: 'A', accepted_at: null })).toBeNull()
   })
 })
+
+describe('ticketTat — fitted, not working, and sent back to the same Revive Lab (rl_0027)', () => {
+  const trail = [
+    ev('pending_acceptance', 0),
+    ev('accepted', D),
+    ev('assigned', D),
+    ev('in_repair', 2 * D),
+    ev('repaired', 3 * D),
+    ev('in_transit_return', 3 * D),
+    ev('received_back', 5 * D),       // with the field engineer: the first leg ends
+    ev('pending_acceptance', 6 * D),  // fitted, not working, sent back — a day of theirs in between
+    ev('accepted', 7 * D),
+    ev('assigned', 7 * D),
+    ev('in_repair', 7 * D),
+    ev('repaired', 8 * D),
+    ev('in_transit_return', 8 * D),
+    ev('received_back', 10 * D),
+    ev('closed', 10 * D + H),
+  ]
+
+  it('makes the second time round a leg of its own, at the same Revive Lab', () => {
+    const tat = ticketTat(trail, 'A', T0 + 20 * D)
+    expect(tat.legs.map(l => [l.trcId, l.endedBy])).toEqual([['A', 'returned'], ['A', 'closed']])
+    expect(tat.legs[0].dispatch).toEqual({ ms: 2 * D, running: false })
+    expect(tat.legs[1].startedAt).toBe(at(6 * D))
+    expect(tat.legs[1].reach).toEqual({ ms: D, running: false })
+    expect(tat.legs[1].repair).toEqual({ ms: D, running: false })
+  })
+
+  it('adds both rounds, and runs the total until it is back the second time', () => {
+    const tat = ticketTat(trail, 'A', T0 + 20 * D)
+    expect(tat.reach).toEqual({ ms: 2 * D, running: false })
+    expect(tat.repair).toEqual({ ms: 2 * D, running: false })
+    expect(tat.total).toEqual({ ms: 10 * D, running: false })
+  })
+
+  it('keeps the total running while it is back at the Revive Lab', () => {
+    const tat = ticketTat(trail.slice(0, 9), 'A', T0 + 7 * D + 12 * H)
+    expect(tat.legs[1]).toMatchObject({ trcId: 'A', endedBy: null })
+    expect(tat.total).toEqual({ ms: 7 * D + 12 * H, running: true })
+    expect(tat.legs[1].assign).toEqual({ ms: 12 * H, running: true })
+  })
+})

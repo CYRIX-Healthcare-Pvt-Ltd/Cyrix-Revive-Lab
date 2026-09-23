@@ -21,12 +21,19 @@ export type Slot = 'image-1' | 'image-2' | 'video' | 'voice'
  * observation spoken rather than typed. The storage rules give each of
  * those to the person whose step it is — the desk that accepted it, the
  * engineer repairing it, the field engineer it went back to.
+ *
+ * A spare the field engineer sent back, not working, goes round again, and
+ * that round's files carry it — arrival-1-r2, done-voice-r2 — beside the
+ * first round's and never over them (rl_0027).
  */
-export type StageFile =
+export type StageName =
   | 'arrival-1' | 'arrival-2'
   | 'done-1' | 'done-2' | 'done' | 'done-voice'
   | 'return-1' | 'return-2'
-  | `voice-${number}`
+export type StageFile = StageName | `${StageName}-r${number}` | `voice-${number}`
+
+/** A step's file in its round. The first round's has no suffix: everything uploaded before keeps its name. */
+export const inRound = (name: StageName, round = 1): StageFile => (round > 1 ? `${name}-r${round}` : name)
 export type AttachmentKind = 'image' | 'video' | 'voice'
 
 export interface Attachment {

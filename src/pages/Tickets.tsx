@@ -8,7 +8,7 @@ import {
   STATUS, STATUS_ORDER, TONE_CLASS, TONE_DOT, TONE_TEXT, canRaise, itemsSummary, parseTicketCode, statusGroups, ticketTabs,
   type TabId, type TicketStatus, type Tone,
 } from '@/lib/tickets'
-import { EmptyState, PageLoader, SectorTag, SortHeader, StatusBadge, WarehouseChip } from '@/components/ui'
+import { EmptyState, PageLoader, ReturnedTag, SectorTag, SortHeader, StatusBadge, WarehouseChip } from '@/components/ui'
 import { ClassTag } from '@/components/Classification'
 import { clockTime, dayDate } from '@/lib/when'
 
@@ -379,7 +379,10 @@ export default function Tickets() {
                           <p className="text-ink-800">{raised.date}</p>
                           <p className="text-xs text-ink-500">{raised.time}</p>
                         </td>
-                        <td className="px-4 py-3"><StatusBadge status={t.status} closure={t.closure} /></td>
+                        <td className="px-4 py-3">
+                          <StatusBadge status={t.status} closure={t.closure} />
+                          <ReturnedTag ticket={t} className="mt-1 flex w-fit" />
+                        </td>
                         <td className="px-4 py-3">
                           {t.spare_category || t.criticality
                             ? <ClassTag ticket={t} oneLine />
@@ -465,7 +468,10 @@ export default function Tickets() {
                           <span className="font-mono font-semibold text-ink-900">{t.code}</span>
                           {t.source_ticket_no && <span className="ml-2 text-xs text-ink-500">{t.source_ticket_no}</span>}
                         </span>
-                        <StatusBadge status={t.status} closure={t.closure} />
+                        <span className="flex shrink-0 items-center gap-1.5">
+                          <ReturnedTag ticket={t} />
+                          <StatusBadge status={t.status} closure={t.closure} />
+                        </span>
                       </div>
                       <div className="flex items-baseline justify-between gap-3">
                         <p className="min-w-0 text-sm text-ink-800">

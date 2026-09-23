@@ -771,3 +771,19 @@ export function itemsSummary(t: { spare_name: string | null; items?: readonly Ti
   if (items.length === 0) return t.spare_name
   return items.length === 1 ? items[0].name : `${items[0].name} +${items.length - 1} more`
 }
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * Which time round the spare is on: 1, then 2 once the field engineer has
+ * sent it back not working, and so on (rl_0027). A later round's photos and
+ * recordings are named for it, so the first round's stay.
+ */
+export const roundOf = (t: { field_returns?: readonly unknown[] | null }): number => (t.field_returns?.length ?? 0) + 1
+
+/** 1st, 2nd, 3rd, 4th … 11th, 12th, 13th … 21st. */
+export function ordinal(n: number): string {
+  const tens = n % 100
+  if (tens >= 11 && tens <= 13) return `${n}th`
+  return `${n}${['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`
+}

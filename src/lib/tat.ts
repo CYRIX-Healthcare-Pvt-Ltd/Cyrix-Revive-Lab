@@ -11,7 +11,8 @@
  * raised; a transfer ends one leg and starts the next at the Revive Lab it went
  * to, from the moment it was sent — so the courier time between Revive Labs
  * counts towards reaching the second one, which is where anybody waiting
- * for the spare would put it.
+ * for the spare would put it. A spare the field engineer fitted and sent
+ * back not working starts a leg the same way, at the same Revive Lab (rl_0027).
  *
  * Per leg:
  *   reach     leg start → the coordinator accepts it
@@ -54,7 +55,8 @@ export interface Leg {
   trcId: string | null
   startedAt: string
   endedAt: string | null
-  endedBy: 'transfer' | 'closed' | null
+  /** returned: back with the field engineer, who sent it back not working — the next leg is the same Revive Lab again (rl_0027). */
+  endedBy: 'transfer' | 'closed' | 'returned' | null
   reach: Span
   assign: Span
   repair: Span
@@ -128,10 +130,19 @@ export function ticketTat(
     return { legs: [], reach: NONE, assign: NONE, repair: NONE, parts: NONE, dispatch: NONE, approval: NONE, total: NONE }
   }
 
-  // Cut the trail into legs at every transfer.
-  const chunks: { trcId: string | null; start: string; events: TatEvent[]; end: TatEvent | null }[] = []
-  let current = { trcId: sorted[0].trc_id, start: sorted[0].at, events: [] as TatEvent[], end: null as TatEvent | null }
+  // Cut the trail into legs at every transfer, and wherever the field
+  // engineer sent it back not working (rl_0027): that leg ended when they
+  // had it back, and the next starts when it went — at the same Revive Lab,
+  // the courier time again counting towards reaching it.
+  type Chunk = { trcId: string | null; start: string; events: TatEvent[]; end: TatEvent | null; returned: boolean }
+  const chunks: Chunk[] = []
+  let current: Chunk = { trcId: sorted[0].trc_id, start: sorted[0].at, events: [], end: null, returned: false }
   sorted.forEach((ev, i) => {
+    if (ev.status === 'pending_acceptance' && current.events.some(e => e.status === 'received_back')) {
+      chunks.push({ ...current, returned: true })
+      current = { trcId: ev.trc_id ?? current.trcId, start: ev.at, events: [ev], end: null, returned: false }
+      return
+    }
     if (ev.status !== 'transferred') {
       current.events.push(ev)
       return
@@ -142,7 +153,7 @@ export function ticketTat(
     // exists the spare is still in the courier's hands, headed for the
     // ticket's own current Revive Lab.
     const next = sorted.slice(i + 1).find(x => x.status !== 'transferred')
-    current = { trcId: next?.trc_id ?? currentTrcId, start: ev.at, events: [], end: null }
+    current = { trcId: next?.trc_id ?? currentTrcId, start: ev.at, events: [], end: null, returned: false }
   })
   chunks.push(current)
 
@@ -194,7 +205,7 @@ export function ticketTat(
       trcId: ch.trcId,
       startedAt: ch.start,
       endedAt: end,
-      endedBy: ch.end ? 'transfer' : closedAt ? 'closed' : null,
+      endedBy: ch.end ? 'transfer' : ch.returned ? 'returned' : closedAt ? 'closed' : null,
       // To the end of the leg when the next move never came: a ticket
       // discarded before any Revive Lab had it did not keep reaching one.
       reach: less(span(reachFrom, accepted, end, now), reachFrom, holds, heldNow),
@@ -208,7 +219,9 @@ export function ticketTat(
   })
 
   const raised = sorted[0].at
-  const closed = sorted.find(e => e.status === 'received_back' || e.status === 'closed')?.at
+  // Until the field engineer last had it back: one sent back is not done until it comes back again.
+  const last = legs[legs.length - 1]
+  const closed = last.endedBy === 'closed' ? last.endedAt ?? undefined : undefined
 
   return {
     legs,

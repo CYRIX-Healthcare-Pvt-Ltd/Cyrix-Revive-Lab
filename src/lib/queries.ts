@@ -5,7 +5,7 @@ import type {
   PartProgress, TicketItem, TicketSource, TicketStatus, TrcKind, SpareCategory, Criticality, ContractType,
 } from './tickets'
 import { uploadPartFile } from './partFiles'
-import { uploadStageFile } from './attachments'
+import { inRound, uploadStageFile, type StageName } from './attachments'
 
 // ---------------------------------------------------------------------
 // Shapes
@@ -121,6 +121,54 @@ export interface Ticket {
   billing_estimate: number | null
   /** Its BEMMP asks for that estimate — Pvt. */
   asks_billing_estimate: boolean
+  /** Each time the field engineer sent it back not working, oldest first (rl_0027). */
+  field_returns: FieldReturn[]
+}
+
+/**
+ * What a round had recorded when the field engineer sent the spare back —
+ * kept, since the ticket's own fields start the next round (rl_0027).
+ */
+export interface PastRound {
+  in_courier: string | null
+  in_awb: string | null
+  in_dispatched_on: string | null
+  accepted_at: string | null
+  spare_category: SpareCategory | null
+  criticality: Criticality | null
+  arrival_damaged: boolean
+  arrival_photos: string[]
+  engineer_id: string | null
+  engineer_name: string | null
+  engineer_ecode: string | null
+  expected_by: string | null
+  outcome: Outcome | null
+  proposal: Proposal | null
+  done_photos: string[]
+  done_video: string | null
+  done_voice: string | null
+  out_courier: string | null
+  out_awb: string | null
+  out_dispatched_on: string | null
+  /** When it went back to the field: that round's category TAT ended here. */
+  dispatched_at: string | null
+  billing_estimate: number | null
+  received_at: string | null
+  return_damaged: boolean
+  return_photos: string[]
+}
+
+/** Fitted, not working, and sent back to the Revive Lab on the same ticket (rl_0027). */
+export interface FieldReturn {
+  at: string
+  by: string
+  by_name: string | null
+  trc_name: string
+  reason: string
+  courier: string
+  awb: string
+  dispatched_on: string
+  before: PastRound
 }
 
 export interface TrailEvent {
@@ -617,8 +665,10 @@ export const useAccept = () => useTicketMutation(
   async (a: {
     id: string; note?: string; damaged?: boolean; photos?: Blob[]; courier?: string; awb?: string; on?: string
     category: SpareCategory | null; criticality: Criticality | null
+    /** Which time round this is — 2 once the field engineer has sent it back (rl_0027). */
+    round?: number
   }) => {
-    const paths = await uploadStage(a.id, 'arrival', a.photos)
+    const paths = await uploadStage(a.id, 'arrival', a.photos, a.round)
     return rpc('revive_accept', {
       p_ticket_id: a.id, p_note: a.note || null,
       p_damaged: !!a.damaged, p_photos: paths,
@@ -632,11 +682,11 @@ export const useSetClassification = () => useTicketMutation(
   (a: { id: string; category: SpareCategory; criticality: Criticality }) =>
     rpc('revive_set_classification', { p_ticket_id: a.id, p_category: a.category, p_criticality: a.criticality }))
 
-/** arrival-1, arrival-2, return-1 … uploaded in order, and their paths. */
-async function uploadStage(ticketId: string, name: 'arrival' | 'return' | 'done', blobs?: Blob[]): Promise<string[]> {
+/** arrival-1, arrival-2, return-1 … uploaded in order, and their paths — arrival-1-r2 in a second round (rl_0027). */
+async function uploadStage(ticketId: string, name: 'arrival' | 'return' | 'done', blobs?: Blob[], round = 1): Promise<string[]> {
   const paths: string[] = []
   for (const [i, blob] of (blobs ?? []).entries()) {
-    paths.push(await uploadStageFile(ticketId, `${name}-${i + 1}` as 'arrival-1', blob))
+    paths.push(await uploadStageFile(ticketId, inRound(`${name}-${i + 1}` as StageName, round), blob))
   }
   return paths
 }
@@ -683,11 +733,12 @@ export const useCompleteRepair = () => useTicketMutation(
   async (a: {
     id: string; note?: string; outcome: Outcome; proposal?: Proposal | null
     photos?: Blob[]; video?: Blob | null; voice?: Blob | null
+    round?: number
   }) => {
     const repaired = a.outcome === 'repaired'
-    const photos = repaired ? await uploadStage(a.id, 'done', a.photos) : []
-    const video = repaired && a.video ? await uploadStageFile(a.id, 'done', a.video) : null
-    const voice = repaired && a.voice ? await uploadStageFile(a.id, 'done-voice', a.voice) : null
+    const photos = repaired ? await uploadStage(a.id, 'done', a.photos, a.round) : []
+    const video = repaired && a.video ? await uploadStageFile(a.id, inRound('done', a.round), a.video) : null
+    const voice = repaired && a.voice ? await uploadStageFile(a.id, inRound('done-voice', a.round), a.voice) : null
     return rpc('revive_complete_repair', {
       p_ticket_id: a.id, p_note: a.note || null, p_outcome: a.outcome, p_proposal: a.proposal ?? null,
       p_photos: photos, p_video: video, p_voice: voice,
@@ -824,8 +875,8 @@ export const useDispatch = () => useTicketMutation(
 
 /** It arrived back: the field engineer has it, and says whether the courier damaged it. */
 export const useMarkReceived = () => useTicketMutation(
-  async (a: { id: string; note?: string; damaged?: boolean; photos?: Blob[] }) => {
-    const paths = await uploadStage(a.id, 'return', a.photos)
+  async (a: { id: string; note?: string; damaged?: boolean; photos?: Blob[]; round?: number }) => {
+    const paths = await uploadStage(a.id, 'return', a.photos, a.round)
     return rpc('revive_mark_received', {
       p_ticket_id: a.id, p_note: a.note || null, p_damaged: !!a.damaged, p_photos: paths,
     })
@@ -835,6 +886,17 @@ export const useMarkReceived = () => useTicketMutation(
 export const useCloseTicket = () => useTicketMutation(
   (a: { id: string; working: boolean; note: string }) =>
     rpc('revive_close_ticket', { p_ticket_id: a.id, p_working: a.working, p_note: a.note }))
+
+/**
+ * Fitted, and not working: back to the Revive Lab on the same ticket, with
+ * why and the courier it went with. Its coordinator accepts it, and the
+ * flow runs again (rl_0027).
+ */
+export const useReturnToLab = () => useTicketMutation(
+  (a: { id: string; reason: string; courier: string; awb: string; on: string }) =>
+    rpc('revive_return_to_lab', {
+      p_ticket_id: a.id, p_reason: a.reason, p_courier: a.courier, p_awb: a.awb, p_dispatched_on: a.on || null,
+    }))
 
 /** A transfer is asked for; the Regional Revive Lab admins approve it before it is sent (rl_0014). */
 export const useRequestTransfer = () => useTicketMutation(
