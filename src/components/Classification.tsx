@@ -111,8 +111,13 @@ export function ClassTag({ ticket: t, className, oneLine = false }: {
   return (
     <span className={clsx('inline-flex items-center gap-1', oneLine ? 'flex-nowrap whitespace-nowrap' : 'flex-wrap', className)}>
       {t.spare_category && (
-        <span className={clsx('rounded px-1.5 py-px text-[10px] font-bold', CATEGORY_CLASS[t.spare_category])} title={`Category ${t.spare_category} — ${CATEGORY_TAT_DAYS[t.spare_category]}-day TAT`}>
-          Cat {t.spare_category}
+        // The letter alone, in its own square — "Cat A" read as old (the user, 23 Sep); the word stays for a hover and a screen reader.
+        <span
+          className={clsx('inline-block min-w-5 rounded px-1 py-px text-center text-[10px] font-bold', CATEGORY_CLASS[t.spare_category])}
+          title={`Category ${t.spare_category} — ${CATEGORY_TAT_DAYS[t.spare_category]}-day TAT`}
+          aria-label={`Category ${t.spare_category}`}
+        >
+          {t.spare_category}
         </span>
       )}
       {t.criticality && (
