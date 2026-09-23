@@ -8,7 +8,7 @@
  */
 import { useEffect, useRef, type ReactNode } from 'react'
 import clsx from 'clsx'
-import { AlertCircle, ArrowDown, ArrowUp, CheckCircle2, ChevronsUpDown, Info, Loader2, RotateCcw, Warehouse } from 'lucide-react'
+import { AlertCircle, ArrowDown, ArrowUp, CheckCircle2, ChevronsUpDown, Forward, Info, Loader2, RotateCcw, Warehouse } from 'lucide-react'
 import { STATUS, TONE_CLASS, statusLook, type Closure, type Proposal, type TicketStatus } from '@/lib/tickets'
 
 export function Spinner({ className }: { className?: string }) {
@@ -225,6 +225,26 @@ export function ReturnedTag({ ticket: t, className }: {
       title={`Returned not working${n > 1 ? `, ${n} times` : ''}: ${t.field_returns![n - 1].reason}`}
     >
       <RotateCcw aria-hidden className="h-3 w-3" /> Returned{n > 1 ? ` ×${n}` : ''}
+    </span>
+  )
+}
+
+/** Being handed to another field engineer, waiting for them to accept it (rl_0028). */
+export function TransferTag({ ticket: t, className }: {
+  ticket: { handover?: { status: string; from_name: string; to_name: string } | null }
+  className?: string
+}) {
+  const h = t.handover
+  if (!h || h.status !== 'pending') return null
+  return (
+    <span
+      className={clsx(
+        'inline-flex items-center gap-1 whitespace-nowrap rounded bg-violet-100 px-1.5 py-px align-middle text-[10px] font-semibold text-violet-900',
+        className,
+      )}
+      title={`From ${h.from_name} to ${h.to_name} — waiting for them to accept`}
+    >
+      <Forward aria-hidden className="h-3 w-3" /> Transfer pending
     </span>
   )
 }

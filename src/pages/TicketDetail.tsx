@@ -1,31 +1,32 @@
-import { useCallback, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Link, useLocation, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import clsx from 'clsx'
 import {
   ArrowLeft, ArrowRightLeft, BadgeCheck, Ban, Boxes, CalendarClock, Camera, CheckCircle2, CircleCheck, CircleX, ClipboardCheck,
-  ClipboardList, Hand, History as HistoryIcon, PackageCheck, PackagePlus, PackageX, PlayCircle, Receipt, RotateCcw, ScanSearch, Tag,
-  Send, ShieldQuestion, ShieldX, ShoppingCart, Signpost, Timer, Trash2, TriangleAlert, Truck, Undo2, UserCog, UserPlus,
+  ClipboardList, Forward, Hand, History as HistoryIcon, PackageCheck, PackagePlus, PackageX, PlayCircle, Receipt, RotateCcw, ScanSearch, Tag,
+  Send, ShieldQuestion, ShieldX, ShoppingCart, Signpost, Timer, Trash2, TriangleAlert, Truck, Undo2, UserCheck, UserCog, UserPlus,
   UserX, Wrench, X,
   type LucideIcon,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import {
-  useAccept, useAddObservation, useApprove, useAssign, useCancelTransfer, useCloseTicket, useCompleteRepair,
+  useAccept, useAddObservation, useAnswerHandover, useApprove, useAssign, useCancelHandover, useCancelTransfer, useCloseTicket, useCompleteRepair,
+  useFindPeople, useHandOver, usePhoneOf,
   useDeclineApproval, useDiscard, useDispatch, useHops, useMarkReceived, useMembers, useRequestTransfer, useReroute,
   usePartRequests, useReturnToDesk, useReturnToLab, useScrap, useSend, useSetClassification, useSetExpectedDate, useStartRepair, useTickets,
   useTrail, useTrcs, useUpdateCourier,
-  type PastRound, type Ticket, type TrailEvent,
+  type PastRound, type Person, type Ticket, type TrailEvent,
 } from '@/lib/queries'
 import {
-  actionsFor, approversOf, canClassify, itemsSummary, orList, ordinal, parseTicketCode, roundOf, serves, stateLabel,
+  actionsFor, approversOf, canClassify, itemsSummary, mergeDeskRaise, orList, ordinal, parseTicketCode, roundOf, serves, stateLabel,
   CATEGORY_TAT_DAYS, CRITICALITY_LABEL,
   ITEM_KIND_LABEL, OUTCOME_LABEL, REPAIRING, STATUS, TONE_DOT, TONE_SOFT, TONE_TEXT, TRC_KIND_LABEL, statusLook,
   type Action, type Approval, type Criticality, type Outcome, type Proposal, type SpareCategory, type TicketItem,
   type TicketSource, type Tone,
 } from '@/lib/tickets'
 import { categoryTat, formatSpan, ticketTat, type Span } from '@/lib/tat'
-import { dateTime, dayDate, gapLabel, gapWords } from '@/lib/when'
+import { dateTime, dayDate, gapLabel, gapWords, localDay } from '@/lib/when'
 import { ClassificationFields, TatChip } from '@/components/Classification'
 import Choices, { type ChoiceOption } from '@/components/Choices'
 import { Alert, EmptyState, PageLoader, SectorTag, Spinner, StatusBadge, WarehouseChip } from '@/components/ui'
@@ -164,6 +165,7 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
               <p className="mt-2 text-xs text-ink-500">Repair closed as {OUTCOME_LABEL[t.outcome].toLowerCase()}</p>
             )}
             {approval && <ApprovalNote ticket={t} approval={approval} />}
+            <HandoverNote ticket={t} />
           </div>
           {/* Right-aligned beside the title; on a phone it drops below it, and lines up on the left. */}
           <div className="sm:text-right">
@@ -246,6 +248,9 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
               <Row label={t.source === 'warehouse' ? 'Warehouse in-charge' : 'Field engineer'}>
                 {t.stakeholder_name} <span className="text-xs text-ink-400">{t.stakeholder_ecode}</span>
                 {t.stakeholder_function && <span className="text-xs text-ink-500"> · {t.stakeholder_function}</span>}
+                {t.handover?.status === 'accepted' && t.handover.to_id === t.stakeholder_id && (
+                  <span className="block text-xs text-violet-700">Took it over from {t.handover.from_name}, {when(t.handover.decided_at)}</span>
+                )}
               </Row>
               <Row label="Their manager">{t.stakeholder_manager_name}</Row>
               <Row label="Revive Lab engineer">
@@ -349,6 +354,32 @@ function WhereItIs({ ticket: t }: { ticket: Ticket }) {
     default:
       return <>{at} · waiting on {STATUS[t.status]?.waitingOn}</>
   }
+}
+
+/**
+ * A transfer to another field engineer, waiting to be answered (rl_0028) —
+ * said to the one asked as a question, to the one who asked as a wait, and
+ * to everybody else as where the ticket stands.
+ */
+function HandoverNote({ ticket: t }: { ticket: Ticket }) {
+  const { me } = useAuth()
+  const h = t.handover
+  if (!h || h.status !== 'pending') return null
+  return (
+    <div className="mt-3 flex items-start gap-2.5 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2.5 text-sm text-violet-900">
+      <Forward className="mt-0.5 h-4 w-4 shrink-0 text-violet-600" />
+      <div>
+        <p className="font-medium">
+          {me?.employee_id === h.to_id
+            ? <>{h.from_name} is handing this ticket to you — accept it to take the spare over.</>
+            : me?.employee_id === h.from_id
+              ? <>Waiting for {h.to_name} ({h.to_ecode}) to accept the transfer.</>
+              : <>Being transferred from {h.from_name} to {h.to_name} ({h.to_ecode}) — waiting for them to accept.</>}
+        </p>
+        <p className="mt-0.5 text-xs text-violet-700">Asked {when(h.requested_at)} · {h.to_name}: {h.phone}</p>
+      </div>
+    </div>
+  )
 }
 
 const APPROVAL_LOOK = {
@@ -705,6 +736,15 @@ function stepLook(
   // A warehouse keeps it as stock: received back closes it (rl_0023).
   if (e.action === 'received_stock') return { title: 'Received back into warehouse stock — closed', tone, icon: PackageCheck }
   if (e.action === 'damaged') return { title: e.status === 'accepted' ? 'Accepted — damaged in transit' : 'Received back — damaged in transit', tone: 'amber', icon: TriangleAlert }
+  // Handed to another field engineer on its way back, and what they said (rl_0028).
+  if (e.kind === 'handover') {
+    switch (e.action) {
+      case 'handover_asked': return { title: 'Transfer to another field engineer', tone: 'violet', icon: Forward }
+      case 'handover_accepted': return { title: 'Took the ticket over', tone: 'violet', icon: UserCheck }
+      case 'handover_declined': return { title: 'Declined the transfer', tone: 'slate', icon: UserX }
+      default: return { title: 'Transfer cancelled', tone: 'slate', icon: Undo2 }
+    }
+  }
   // Fitted, not working, and sent back on the same ticket: the next round starts here (rl_0027).
   if (e.action === 'field_return') return { title: 'Returned to the Revive Lab — not working', tone: 'rose', icon: RotateCcw }
   if (e.action === 'working' || e.action === 'not_working') {
@@ -713,6 +753,8 @@ function stepLook(
     return { title: e.action === 'working' ? 'Closed — fitted and working' : 'Closed — fitted, not working', tone, icon: CircleCheck }
   }
   if (e.kind === 'courier') return { title: 'Courier details updated', tone: 'teal', icon: Truck }
+  // Raised by the desk with the spare in hand: nothing to accept (mergeDeskRaise).
+  if (e.action === 'raised_at_lab') return { title: 'Raised at the Revive Lab', tone, icon: PackagePlus }
   if (e.from_status === null) return { title: 'Raised', tone, icon: PackagePlus }
 
   switch (e.status) {
@@ -764,11 +806,13 @@ function Timeline({ trail, proposal, source }: { trail: TrailEvent[]; proposal: 
     staleTime: 30 * 60_000,
     queryFn: () => signedLinks(spoken),
   })
+  // The desk's own raise is one step, not raised-then-accepted in the same moment (the user, 23 Sep).
+  const steps = useMemo(() => mergeDeskRaise(trail), [trail])
   return (
     <ol>
-      {trail.map((e, i) => {
-        const look = stepLook(e, trail.slice(0, i), proposal, source)
-        const next = trail[i + 1]
+      {steps.map((e, i) => {
+        const look = stepLook(e, steps.slice(0, i), proposal, source)
+        const next = steps[i + 1]
         const gap = next ? Math.max(0, Date.parse(next.at) - Date.parse(e.at)) : null
         return (
           <li key={e.id} className={clsx('relative flex gap-3', next && 'pb-9')}>
@@ -932,6 +976,11 @@ const ACTION_META: Record<Action, { label: string; icon: LucideIcon; tone: Tone;
   transfer: { label: 'Transfer to another Revive Lab', icon: ArrowRightLeft, tone: 'violet', weight: 'aside' },
   cancel_transfer: { label: 'Cancel transfer', icon: Undo2, tone: 'slate', weight: 'aside' },
   discard: { label: 'Discard ticket', icon: Ban, tone: 'slate', weight: 'aside' },
+  // Another field engineer takes it over while it is on its way back (rl_0028).
+  hand_over: { label: 'Transfer ticket', icon: Forward, tone: 'violet', weight: 'main' },
+  accept_handover: { label: 'Accept ticket', icon: UserCheck, tone: 'violet', weight: 'main', primary: true },
+  decline_handover: { label: 'Decline', icon: UserX, tone: 'slate', weight: 'aside' },
+  cancel_handover: { label: 'Cancel transfer', icon: Undo2, tone: 'slate', weight: 'aside' },
 }
 
 /** The field engineer's answer once it is fitted, in the colours of the two ways it can end. */
@@ -954,6 +1003,7 @@ function actionMeta(action: Action, t: Ticket) {
       : { ...m, label: `Send to ${t.trc_name}` }
   }
   if (action === 'reroute' && t.state) return { ...m, label: `Send to a ${t.state} or Regional Revive Lab` }
+  if (action === 'cancel_handover' && t.handover) return { ...m, label: `Cancel transfer to ${t.handover.to_name}` }
   return m
 }
 
@@ -1071,9 +1121,138 @@ function ActionBar({ ticket: t, actions, spoken }: { ticket: Ticket; actions: Ac
           onDone={(msg, warning) => { setOpen(null); setError(warning ?? null); setDone(msg) }}
         />
       )}
-      {open && !POP_UP.includes(open) && open !== 'use_part' && open !== 'request_part' && (
+      {open === 'hand_over' && (
+        <HandOverForm ticket={t} onCancel={() => setOpen(null)} onError={setError} onDone={finish} />
+      )}
+      {open && !POP_UP.includes(open) && open !== 'use_part' && open !== 'request_part' && open !== 'hand_over' && (
         <ActionForm key={open} ticket={t} action={open} spoken={spoken} onCancel={() => setOpen(null)} onError={setError} onDone={finish} />
       )}
+    </div>
+  )
+}
+
+/**
+ * Handing the ticket to another field engineer while the spare is on its
+ * way back (rl_0028; the user, 23 Sep). Type a name and the people it
+ * matches are offered — choosing one fills in the rest; type an E-code in
+ * full and it finds its person the same way. The phone comes from their
+ * record when there is one. Every field can be changed, and all three are
+ * needed. They accept it before it is theirs.
+ */
+function HandOverForm({ ticket: t, onCancel, onError, onDone }: {
+  ticket: Ticket
+  onCancel: () => void
+  onError: (msg: string) => void
+  onDone: (msg: string) => void
+}) {
+  const handOver = useHandOver()
+  const [name, setName] = useState('')
+  const [ecode, setEcode] = useState('')
+  const [phone, setPhone] = useState('')
+  const [chosen, setChosen] = useState<Person | null>(null)
+  // Typing a name: the people it matches, until one is chosen.
+  const [naming, setNaming] = useState(false)
+  const byName = useFindPeople(naming ? name : '')
+  const byCode = useFindPeople(ecode)
+  const { data: onRecord } = usePhoneOf(chosen?.id)
+  // The phone as it was filled in: one typed by hand is never replaced.
+  const filled = useRef('')
+
+  const choose = (p: Person) => {
+    setChosen(p)
+    setName(p.full_name)
+    setEcode(p.ecode)
+    setNaming(false)
+    if (phone === filled.current) { setPhone(''); filled.current = '' }
+  }
+  // An E-code typed in full finds its person.
+  useEffect(() => {
+    const code = ecode.trim().toUpperCase()
+    const exact = (byCode.data ?? []).find(p => p.ecode.toUpperCase() === code)
+    if (exact && exact.id !== chosen?.id) choose(exact)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [byCode.data, ecode])
+  // Their phone, once known — unless one has been typed already.
+  useEffect(() => {
+    if (onRecord && (phone === '' || phone === filled.current)) { setPhone(onRecord); filled.current = onRecord }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onRecord])
+
+  const run = async () => {
+    if (name.trim().length < 2) { onError('Enter the name of the engineer taking it over.'); return }
+    if (!ecode.trim()) { onError('Enter their E-code.'); return }
+    if (phone.replace(/\D/g, '').length < 10) { onError('Enter their phone number — 10 digits.'); return }
+    try {
+      await handOver.mutateAsync({ id: t.id, ecode: ecode.trim(), phone: phone.trim() })
+      onDone(`Transfer asked of ${chosen?.full_name ?? ecode.trim().toUpperCase()}. It is theirs once they accept it — until then you can cancel it.`)
+    } catch (err) {
+      onError(err instanceof Error ? err.message : 'That did not go through.')
+    }
+  }
+
+  const offered = naming && name.trim().length >= 2 ? (byName.data ?? []) : []
+  return (
+    <div className="card space-y-3 p-4">
+      <p className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
+        <IconChip icon={Forward} tone="violet" /> Transfer to another field engineer
+      </p>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <label className="relative block sm:col-span-3">
+          <span className="label">Name <span className="text-cyrixRed-600">*</span></span>
+          <input
+            className="input mt-1"
+            value={name}
+            onChange={e => { setName(e.target.value); setNaming(true) }}
+            onFocus={() => setNaming(true)}
+            onBlur={() => setTimeout(() => setNaming(false), 150)}
+            placeholder="Type a name — or the E-code below"
+            autoComplete="off"
+          />
+          {naming && name.trim().length >= 2 && (
+            <ul className="absolute inset-x-0 top-full z-20 mt-1 max-h-64 overflow-y-auto rounded-lg border border-ink-200 bg-surface shadow-lg">
+              {byName.isFetching && offered.length === 0 ? (
+                <li className="flex items-center gap-2 px-3 py-2.5 text-sm text-ink-500"><Spinner className="h-4 w-4" /> Looking…</li>
+              ) : offered.length === 0 ? (
+                <li className="px-3 py-2.5 text-sm text-ink-500">Nobody active matches “{name.trim()}”.</li>
+              ) : offered.map(p => (
+                <li key={p.id}>
+                  <button
+                    type="button"
+                    className="block w-full px-3 py-2 text-left hover:bg-ink-50"
+                    // Before the box loses focus, so the choice is not lost with the list.
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={() => choose(p)}
+                  >
+                    <span className="block text-sm font-medium text-ink-900">{p.full_name}</span>
+                    <span className="block text-xs text-ink-500">
+                      {p.ecode}{p.designation ? ` · ${p.designation}` : ''}{p.department ? ` · ${p.department}` : ''}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </label>
+        <label className="block">
+          <span className="label">E-code <span className="text-cyrixRed-600">*</span></span>
+          <input className="input mt-1 font-mono uppercase" value={ecode} onChange={e => setEcode(e.target.value)} placeholder="E1234" autoComplete="off" />
+        </label>
+        <label className="block sm:col-span-2">
+          <span className="label">Phone number <span className="text-cyrixRed-600">*</span></span>
+          <input className="input mt-1 tabular-nums" type="tel" inputMode="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="98470 12345" />
+        </label>
+      </div>
+      <p className="text-xs text-ink-500">
+        {chosen ? `${chosen.full_name}` : 'They'} accept{chosen ? 's' : ''} it first. Then it is theirs: they confirm it arrived and close
+        the ticket — or pass it on again. {t.trc_name} calls them on this number. You can cancel it until they accept.
+      </p>
+      <div className="flex gap-2">
+        <button type="button" className="btn-primary" onClick={run} disabled={handOver.isPending}>
+          {handOver.isPending ? <Spinner className="h-4 w-4" /> : <Forward className="h-4 w-4" />}
+          {chosen ? `Transfer to ${chosen.full_name}` : 'Transfer'}
+        </button>
+        <button type="button" className="btn-secondary" onClick={onCancel}>Cancel</button>
+      </div>
     </div>
   )
 }
@@ -1106,6 +1285,8 @@ function ActionForm({
   const returnToLab = useReturnToLab()
   // Which time round it is: a later round's photographs are its own (rl_0027).
   const round = roundOf(t)
+  // No date on the ticket before the day it was raised (the user, 23 Sep).
+  const floor = localDay(t.created_at)
 
   const meta = actionMeta(action, t)
   // Reassigning: somebody has it, and the choice is who has it instead.
@@ -1162,6 +1343,11 @@ function ActionForm({
   const blobs = photos.map(p => p.blob)
 
   const run = async () => {
+    // Nothing on the ticket happens before it was raised. A date already on
+    // the card, as the sender gave it, stands as it is.
+    if (needsCourier && on && on < floor && !(fromCard && on === (t.in_dispatched_on ?? ''))) {
+      onError(`The date cannot be before the ticket was raised, ${day(t.created_at)}.`); return
+    }
     try {
       switch (action) {
         case 'accept':
@@ -1511,7 +1697,7 @@ function ActionForm({
               {fromCard ? 'Date of dispatch' : 'Dispatched on'}
               {courierRequired && <span className="text-cyrixRed-600"> *</span>}
             </span>
-            <input className="input mt-1" type="date" value={on} max={action === 'accept' || returning ? localToday() : undefined} onChange={e => setOn(e.target.value)} />
+            <input className="input mt-1" type="date" value={on} min={floor} max={action === 'accept' || returning ? localToday() : undefined} onChange={e => setOn(e.target.value)} />
           </label>
         </div>
       )}
@@ -1699,7 +1885,10 @@ function ClassifyDialog({ ticket: t, onClose, onDone }: {
 }
 
 /** The moves that ask one small question over the page instead of a form under the buttons. */
-const POP_UP: Action[] = ['start', 'expect', 'scrap', 'approve', 'decline_approval', 'cancel_transfer', 'discard']
+const POP_UP: Action[] = [
+  'start', 'expect', 'scrap', 'approve', 'decline_approval', 'cancel_transfer', 'discard',
+  'accept_handover', 'decline_handover', 'cancel_handover',
+]
 
 /** Today in the reader's own time, as the date inputs write it. */
 function localToday(offsetDays = 0): string {
@@ -1727,13 +1916,19 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
   const decline = useDeclineApproval()
   const cancelTransfer = useCancelTransfer()
   const discard = useDiscard()
+  const answer = useAnswerHandover()
+  const cancelHandover = useCancelHandover()
+  const navigate = useNavigate()
   const { data: trcs } = useTrcs()
   const a = t.approval
+  const h = t.handover
+  // Answering or taking back a transfer asks nothing more (rl_0028).
+  const noteless = action === 'accept_handover' || action === 'decline_handover' || action === 'cancel_handover'
   const [date, setDate] = useState(action === 'expect' ? t.expected_by ?? '' : '')
   const [note, setNote] = useState('')
   const [toTrc, setToTrc] = useState(action === 'approve' ? a?.to_trc_id ?? '' : '')
   const [error, setError] = useState<string | null>(null)
-  const busy = [start, expect, scrap, approve, decline, cancelTransfer, discard].some(m => m.isPending)
+  const busy = [start, expect, scrap, approve, decline, cancelTransfer, discard, answer, cancelHandover].some(m => m.isPending)
   const meta = actionMeta(action, t)
   // Approving a transfer for the Revive Lab it is already at would be no transfer.
   const approvable = (trcs ?? []).filter(x => x.is_active && !(a?.kind === 'transfer' && x.id === a.from_trc_id))
@@ -1776,6 +1971,16 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
         await discard.mutateAsync({ id: t.id, note })
         void removeVideoOf(t.id)
         onDone(`${t.code} is discarded.`)
+      } else if (action === 'accept_handover') {
+        await answer.mutateAsync({ id: t.id, accept: true })
+        onDone(`${t.code} is yours now. Confirm it arrived once you have it, then close the ticket.`)
+      } else if (action === 'decline_handover') {
+        await answer.mutateAsync({ id: t.id, accept: false })
+        // Declined, it is not theirs to see any more.
+        navigate('/tickets', { replace: true })
+      } else if (action === 'cancel_handover') {
+        await cancelHandover.mutateAsync({ id: t.id })
+        onDone(`Transfer cancelled. ${t.code} stays with you.`)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'That did not go through.')
@@ -1803,7 +2008,8 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
           </p>
           <label className="block">
             <span className="label">Expected repair date <span className="text-cyrixRed-600">*</span></span>
-            <input className="input mt-1" type="date" min={localToday()} value={date} onChange={e => setDate(e.target.value)} />
+            {/* From today — which is never before the day it was raised. */}
+            <input className="input mt-1" type="date" min={[localToday(), localDay(t.created_at)].sort()[1]} value={date} onChange={e => setDate(e.target.value)} />
           </label>
           <div className="flex flex-wrap gap-2">
             {quick.map(([days, label]) => (
@@ -1855,27 +2061,44 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
         </p>
       )}
 
+      {action === 'accept_handover' && h && (
+        <p className="text-sm text-ink-600">
+          {h.from_name} is handing {t.code} ({itemsSummary(t) ?? 'the spare'}, for {t.facility}) to you. Accept it and it is yours:
+          when it arrives you confirm it, fit it and close the ticket — or pass it on again. {t.trc_name} will call you on {h.phone}.
+        </p>
+      )}
+
+      {action === 'decline_handover' && h && (
+        <p className="text-sm text-ink-600">It stays with {h.from_name}, who can hand it to somebody else.</p>
+      )}
+
+      {action === 'cancel_handover' && h && (
+        <p className="text-sm text-ink-600">{h.to_name} is no longer asked to take it over. It stays with you.</p>
+      )}
+
       {action === 'discard' && (
         <p className="text-sm text-ink-600">
           {t.code} has not been sent to any Revive Lab. Discarding it closes the ticket; it stays in the list as Discarded.
         </p>
       )}
 
-      <label className="block">
-        <span className="label">
-          {action === 'expect' ? 'Why it moved' : action === 'decline_approval' ? 'Why not' : action === 'discard' ? 'Why' : 'Note'}
-          {action === 'decline_approval' && <span className="text-cyrixRed-600"> *</span>}
-        </span>
-        <textarea className="input mt-1" rows={2} value={note} onChange={e => setNote(e.target.value)} maxLength={action === 'discard' || action === 'cancel_transfer' ? 300 : 500}
-          placeholder={
-            action === 'expect' ? 'e.g. Waiting for a MOSFET from Purchase'
-              : action === 'scrap' ? 'e.g. Not worth the courier back'
-                : action === 'decline_approval' ? 'e.g. Send it to the Regional Revive Lab instead'
-                  : action === 'discard' ? 'e.g. Repaired on site after all'
-                    : action === 'approve' ? 'e.g. Go ahead — they are expecting it'
-                      : ''
-          } />
-      </label>
+      {!noteless && (
+        <label className="block">
+          <span className="label">
+            {action === 'expect' ? 'Why it moved' : action === 'decline_approval' ? 'Why not' : action === 'discard' ? 'Why' : 'Note'}
+            {action === 'decline_approval' && <span className="text-cyrixRed-600"> *</span>}
+          </span>
+          <textarea className="input mt-1" rows={2} value={note} onChange={e => setNote(e.target.value)} maxLength={action === 'discard' || action === 'cancel_transfer' ? 300 : 500}
+            placeholder={
+              action === 'expect' ? 'e.g. Waiting for a MOSFET from Purchase'
+                : action === 'scrap' ? 'e.g. Not worth the courier back'
+                  : action === 'decline_approval' ? 'e.g. Send it to the Regional Revive Lab instead'
+                    : action === 'discard' ? 'e.g. Repaired on site after all'
+                      : action === 'approve' ? 'e.g. Go ahead — they are expecting it'
+                        : ''
+            } />
+        </label>
+      )}
       {error && <Alert kind="error">{error}</Alert>}
       <div className="flex gap-2">
         <button type="button" className="btn-primary" onClick={run} disabled={busy}>
@@ -1883,7 +2106,8 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
           {action === 'expect' ? 'Save date' : meta.label}
         </button>
         <button type="button" className="btn-secondary" onClick={onClose}>
-          {action === 'cancel_transfer' || action === 'discard' ? 'Keep it' : 'Cancel'}
+          {action === 'cancel_transfer' || action === 'discard' || action === 'cancel_handover' ? 'Keep it'
+            : action === 'accept_handover' || action === 'decline_handover' ? 'Not now' : 'Cancel'}
         </button>
       </div>
     </Dialog>

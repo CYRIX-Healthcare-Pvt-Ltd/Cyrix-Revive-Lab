@@ -123,6 +123,26 @@ export interface Ticket {
   asks_billing_estimate: boolean
   /** Each time the field engineer sent it back not working, oldest first (rl_0027). */
   field_returns: FieldReturn[]
+  /** Its latest transfer to another field engineer, whatever became of it (rl_0028). */
+  handover: Handover | null
+}
+
+export type HandoverStatus = 'pending' | 'accepted' | 'declined' | 'cancelled'
+
+/** The spare on its way back, handed from one field engineer to another, who accepts it (rl_0028). */
+export interface Handover {
+  id: string
+  status: HandoverStatus
+  from_id: string
+  from_name: string
+  from_ecode: string
+  to_id: string
+  to_name: string
+  to_ecode: string
+  /** Where the Revive Lab reaches the new one; the ticket's contact number once accepted. */
+  phone: string
+  requested_at: string
+  decided_at: string | null
 }
 
 /**
@@ -189,7 +209,7 @@ export interface TrailEvent {
    * the courier details added after the ticket was raised (rl_0011). Only a
    * move changes the status.
    */
-  kind: 'status' | 'observation' | 'courier' | 'component' | 'eta' | 'classify'
+  kind: 'status' | 'observation' | 'courier' | 'component' | 'eta' | 'classify' | 'handover'
   /**
    * The button that made the step, where the status alone does not say:
    * used, requested, accepted, declined, purchased, confirmed, cancelled,
@@ -886,6 +906,33 @@ export const useMarkReceived = () => useTicketMutation(
 export const useCloseTicket = () => useTicketMutation(
   (a: { id: string; working: boolean; note: string }) =>
     rpc('revive_close_ticket', { p_ticket_id: a.id, p_working: a.working, p_note: a.note }))
+
+/**
+ * Not going to be there when it arrives: another field engineer takes it
+ * over, by E-code, with the phone to reach them on. They accept it (rl_0028).
+ */
+export const useHandOver = () => useTicketMutation(
+  (a: { id: string; ecode: string; phone: string }) =>
+    rpc('revive_hand_over', { p_ticket_id: a.id, p_ecode: a.ecode, p_phone: a.phone }))
+
+/** The one asked to take it over: yes, and it is theirs — or no, and it stays where it was. */
+export const useAnswerHandover = () => useTicketMutation(
+  (a: { id: string; accept: boolean }) =>
+    rpc('revive_answer_handover', { p_ticket_id: a.id, p_accept: a.accept }))
+
+/** Whoever asked takes it back, until it is answered. */
+export const useCancelHandover = () => useTicketMutation(
+  (a: { id: string }) => rpc('revive_cancel_handover', { p_ticket_id: a.id }))
+
+/** The phone to fill in once somebody is chosen: their official number, or the one on their own last card. */
+export function usePhoneOf(employeeId: string | null | undefined) {
+  return useQuery({
+    enabled: !!employeeId,
+    queryKey: ['revive', 'phone', employeeId],
+    staleTime: 5 * 60_000,
+    queryFn: async () => unwrap<string | null>(await supabase.rpc('revive_phone_of', { p_employee_id: employeeId })),
+  })
+}
 
 /**
  * Fitted, and not working: back to the Revive Lab on the same ticket, with

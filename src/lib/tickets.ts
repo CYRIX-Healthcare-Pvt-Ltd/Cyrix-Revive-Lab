@@ -469,6 +469,8 @@ export interface TicketLike {
   closure?: Closure | null
   proposal?: Proposal | null
   approval?: Pick<Approval, 'kind' | 'status'> | null
+  /** Its latest transfer to another field engineer (rl_0028). */
+  handover?: { status: 'pending' | 'accepted' | 'declined' | 'cancelled'; to_id: string } | null
 }
 
 /** A coordinator or manager of that lab: the desk. */
@@ -513,6 +515,7 @@ export type Action =
   | 'dispatch' | 'transfer' | 'received' | 'close_ticket' | 'courier'
   | 'use_part' | 'request_part' | 'expect' | 'scrap'
   | 'approve' | 'decline_approval' | 'send' | 'cancel_transfer' | 'reroute' | 'discard'
+  | 'hand_over' | 'accept_handover' | 'decline_handover' | 'cancel_handover'
 
 /**
  * What this person may do to this ticket now, in the order the buttons
@@ -554,8 +557,14 @@ export function actionsFor(t: TicketLike, me: Me | null | undefined): Action[] {
     if (t.proposal !== 'return') out.push('scrap')
   }
   // Only the field engineer it was sent back to: the Revive Lab dispatched
-  // it and cannot know it has landed (rl_0005).
-  if (t.stakeholder_id === me.employee_id && t.status === 'in_transit_return') out.push('received')
+  // it and cannot know it has landed (rl_0005). Not going to be there, they
+  // hand it to one who will — and, waiting on their answer, can take it back (rl_0028).
+  const handing = t.handover?.status === 'pending' ? t.handover : null
+  if (t.stakeholder_id === me.employee_id && t.status === 'in_transit_return') {
+    out.push(...(handing ? ['cancel_handover' as const] : ['received' as const, 'hand_over' as const]))
+  }
+  // Asked to take it over: theirs to accept or decline. Accepted, it is theirs — the same two buttons, and on.
+  if (handing && handing.to_id === me.employee_id && t.status === 'in_transit_return') out.push('accept_handover', 'decline_handover')
   // Back in their hands: they fit it, then close the ticket saying whether it works.
   if (t.stakeholder_id === me.employee_id && t.status === 'received_back') out.push('close_ticket')
   if (mine && (t.status === 'assigned' || t.status === 'in_repair')) out.push('return')
@@ -584,7 +593,7 @@ export function partsWaitingOn(t: TicketLike, me: Me | null | undefined): number
 
 const SIDE_STEPS: readonly Action[] = [
   'transfer', 'return', 'observe', 'courier', 'use_part', 'request_part', 'expect',
-  'decline_approval', 'cancel_transfer', 'discard',
+  'decline_approval', 'cancel_transfer', 'discard', 'hand_over', 'cancel_handover', 'decline_handover',
 ]
 
 /**
@@ -786,4 +795,47 @@ export function ordinal(n: number): string {
   const tens = n % 100
   if (tens >= 11 && tens <= 13) return `${n}th`
   return `${n}${['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`
+}
+
+/* ------------------------------------------------------------------ */
+
+/** Enough of a history step to see what it was. */
+export interface StepLike {
+  kind: string
+  status: string
+  from_status: string | null
+  action: string | null
+  actor_name: string | null
+  note: string | null
+  at: string
+}
+
+/**
+ * The desk's own raise, as the one step it was. The spare is already in the
+ * coordinator's hands, so the ticket is raised and taken in at once — and
+ * the database writes that as two steps in the same moment: raised, then
+ * "accepted on arrival" (rl_0023). The user, 23 Sep: "why saying accepted
+ * when coord raising? … merge it, for all". Every such pair, old or new,
+ * becomes one step — raised at the Revive Lab, with what the coordinator
+ * said the spare is — and nothing else is touched.
+ */
+export function mergeDeskRaise<T extends StepLike>(trail: readonly T[]): T[] {
+  const out: T[] = []
+  for (let i = 0; i < trail.length; i++) {
+    const e = trail[i]
+    const next = trail[i + 1]
+    if (
+      next && e.kind === 'status' && e.from_status === null && next.kind === 'status'
+      && next.status === 'accepted' && next.from_status === e.status
+      && next.at === e.at && next.actor_name === e.actor_name
+      && (next.note ?? '').startsWith('Accepted on arrival')
+    ) {
+      const said = (next.note ?? '').replace(/^Accepted on arrival[^·]*(· )?/, '').trim()
+      out.push({ ...e, status: 'accepted', action: 'raised_at_lab', note: said || null })
+      i++
+      continue
+    }
+    out.push(e)
+  }
+  return out
 }

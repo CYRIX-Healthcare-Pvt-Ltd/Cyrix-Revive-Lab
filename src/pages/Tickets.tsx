@@ -1,14 +1,15 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
-import { ArrowDownUp, Inbox, PackagePlus, Search } from 'lucide-react'
+import { ArrowDownUp, Download, Inbox, PackagePlus, Search } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTickets, type Ticket } from '@/lib/queries'
 import {
   STATUS, STATUS_ORDER, TONE_CLASS, TONE_DOT, TONE_TEXT, canRaise, itemsSummary, parseTicketCode, statusGroups, ticketTabs,
   type TabId, type TicketStatus, type Tone,
 } from '@/lib/tickets'
-import { EmptyState, PageLoader, ReturnedTag, SectorTag, SortHeader, StatusBadge, WarehouseChip } from '@/components/ui'
+import { EmptyState, PageLoader, ReturnedTag, SectorTag, SortHeader, Spinner, StatusBadge, TransferTag, WarehouseChip } from '@/components/ui'
+import { ticketFileName, ticketWorkbook } from '@/lib/ticketSheet'
 import { ClassTag } from '@/components/Classification'
 import { clockTime, dayDate } from '@/lib/when'
 
@@ -231,6 +232,20 @@ export default function Tickets() {
   // Scrolled sideways: the ticket column, which stays put, gets an edge.
   const [slid, setSlid] = useState(false)
 
+  // What the list shows, as an Excel sheet — this tab, these filters, this
+  // search, this order (the user, 23 Sep). The library loads on the click.
+  const [saving, setSaving] = useState(false)
+  const download = async () => {
+    setSaving(true)
+    try {
+      const XLSX = await import('xlsx')
+      // In the page's own order: Waiting on you is in its groups.
+      XLSX.writeFile(ticketWorkbook(XLSX, groups.flatMap(g => g.rows)), ticketFileName(tab.label))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   if (isLoading) return <PageLoader />
 
   const pinned = clsx('sticky left-0 z-10 bg-surface', slid && 'shadow-[1px_0_0_rgb(var(--ink-200))]')
@@ -308,6 +323,18 @@ export default function Tickets() {
                 aria-label="Search tickets"
               />
             </label>
+            {/* After the search: what the list now shows, as an Excel sheet (the user, 23 Sep). */}
+            <button
+              type="button"
+              className="btn-secondary !py-1.5 text-sm"
+              onClick={() => void download()}
+              disabled={shown.length === 0 || saving}
+              title={shown.length
+                ? `The ${shown.length} ticket${shown.length === 1 ? '' : 's'} listed below — this tab, with its filters — in an Excel sheet`
+                : 'Nothing listed to download'}
+            >
+              {saving ? <Spinner className="h-4 w-4" /> : <Download className="h-4 w-4 text-green-600" />} Excel
+            </button>
           </div>
         </div>
 
@@ -382,6 +409,7 @@ export default function Tickets() {
                         <td className="px-4 py-3">
                           <StatusBadge status={t.status} closure={t.closure} />
                           <ReturnedTag ticket={t} className="mt-1 flex w-fit" />
+                          <TransferTag ticket={t} className="mt-1 flex w-fit" />
                         </td>
                         <td className="px-4 py-3">
                           {t.spare_category || t.criticality
@@ -470,6 +498,7 @@ export default function Tickets() {
                         </span>
                         <span className="flex shrink-0 items-center gap-1.5">
                           <ReturnedTag ticket={t} />
+                          <TransferTag ticket={t} />
                           <StatusBadge status={t.status} closure={t.closure} />
                         </span>
                       </div>

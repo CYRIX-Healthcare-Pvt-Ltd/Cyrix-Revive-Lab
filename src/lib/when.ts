@@ -47,3 +47,13 @@ export function gapWords(ms: number): string {
   const part = (n: number, unit: string) => (n > 0 ? `${n} ${unit}${n === 1 ? '' : 's'}` : '')
   return [part(d, 'day'), part(h, 'hour'), d > 0 ? '' : part(m, 'minute')].filter(Boolean).join(' ')
 }
+
+/**
+ * The day something happened, in this device's time, as a date box writes
+ * it: "2026-09-23". A ticket's raised day is the earliest any date on it may
+ * be — nothing after the raise happened before it (the user, 23 Sep).
+ */
+export function localDay(at: string | number | Date = new Date()): string {
+  const d = toDate(at)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}

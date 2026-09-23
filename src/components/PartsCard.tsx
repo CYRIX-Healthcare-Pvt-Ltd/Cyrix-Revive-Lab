@@ -17,7 +17,7 @@ import {
   type PartProgress,
 } from '@/lib/tickets'
 import { signedLinks } from '@/lib/partFiles'
-import { dateTime } from '@/lib/when'
+import { dateTime, localDay } from '@/lib/when'
 import { readBillAmount } from '@/lib/billOcr'
 import { Alert, Spinner } from '@/components/ui'
 import IconChip from '@/components/IconChip'
@@ -668,11 +668,14 @@ function OrderDialog({ ticket: t, request: r, onClose, onDone }: {
   const [edd, setEdd] = useState('')
   const [vendor, setVendor] = useState('')
   const [error, setError] = useState<string | null>(null)
+  // No date on the ticket before the day it was raised (the user, 23 Sep).
+  const floor = localDay(t.created_at)
 
   const send = async () => {
     setError(null)
     if (!poNumber.trim()) { setError('Enter the PO number.'); return }
     if (!poDate) { setError('Enter the PO date.'); return }
+    if (poDate < floor) { setError(`The PO date cannot be before ${t.code} was raised, ${onDay(floor)}.`); return }
     if (!edd) { setError('Enter the expected delivery date.'); return }
     if (edd < poDate) { setError('The expected delivery date cannot be before the PO date.'); return }
     if (vendor.trim().length < 2) { setError('Enter the vendor’s name.'); return }
@@ -697,11 +700,11 @@ function OrderDialog({ ticket: t, request: r, onClose, onDone }: {
         </label>
         <label className="block">
           <span className="label">PO date <span className="text-cyrixRed-600">*</span></span>
-          <input className="input mt-1" type="date" value={poDate} max={today()} onChange={e => setPoDate(e.target.value)} />
+          <input className="input mt-1" type="date" value={poDate} min={floor} max={today()} onChange={e => setPoDate(e.target.value)} />
         </label>
         <label className="block">
           <span className="label">Expected delivery (EDD) <span className="text-cyrixRed-600">*</span></span>
-          <input className="input mt-1" type="date" value={edd} min={poDate || undefined} onChange={e => setEdd(e.target.value)} />
+          <input className="input mt-1" type="date" value={edd} min={poDate && poDate > floor ? poDate : floor} onChange={e => setEdd(e.target.value)} />
         </label>
         <label className="block">
           <span className="label">Vendor name <span className="text-cyrixRed-600">*</span></span>

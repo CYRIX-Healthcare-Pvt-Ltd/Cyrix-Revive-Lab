@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   ticketCode, parseTicketCode, actionsFor, runsTrc, waitingOnMe, cleanItems, itemsSummary,
   partsWaitingOn, ticketTabs, serves, approversOf, orList, statusLook, canRaise, partActor, partStatusLook,
-  ITEM_KIND_LABEL, PART_PROGRESS, PART_STATUS, poLabel, canClassify, statusGroups, roundOf, ordinal,
+  ITEM_KIND_LABEL, PART_PROGRESS, PART_STATUS, poLabel, canClassify, statusGroups, roundOf, ordinal, mergeDeskRaise,
   type Me, type TicketLike,
 } from './tickets'
 
@@ -94,14 +94,14 @@ describe('actionsFor — who may do what, now', () => {
 
   it('lets only the field engineer confirm it came back — the desk sent it', () => {
     const t = ticket({ status: 'in_transit_return' })
-    expect(actionsFor(t, me({ employee_id: 'field' }))).toEqual(['received'])
+    expect(actionsFor(t, me({ employee_id: 'field' }))).toEqual(['received', 'hand_over'])
     expect(actionsFor(t, desk)).toEqual([])
     expect(waitingOnMe(t, desk)).toBe(false)
   })
 
   it('still lets a coordinator confirm a spare they sent in themselves', () => {
     const t = ticket({ status: 'in_transit_return', stakeholder_id: 'me' })
-    expect(actionsFor(t, desk)).toEqual(['received'])
+    expect(actionsFor(t, desk)).toEqual(['received', 'hand_over'])
   })
 
   it('offers nothing on a closed ticket', () => {
@@ -299,7 +299,7 @@ describe('the receipt, and who raises tickets (rl_0015)', () => {
 
   it('gives the field engineer the spare back, and then the close', () => {
     const arriving = ticket({ status: 'in_transit_return' })
-    expect(actionsFor(arriving, field)).toEqual(['received'])
+    expect(actionsFor(arriving, field)).toEqual(['received', 'hand_over'])
     const back = ticket({ status: 'received_back' })
     expect(actionsFor(back, field)).toEqual(['close_ticket'])
     expect(waitingOnMe(back, field)).toBe(true)
@@ -459,5 +459,64 @@ describe('a spare sent back not working (rl_0027)', () => {
     const t = { status: 'received_back' as const, trc_id: REG, engineer_id: 'e1', stakeholder_id: 'f1', raised_by: 'f1' }
     expect(actionsFor(t, me({ employee_id: 'f1' }))).toContain('close_ticket')
     expect(actionsFor(t, me({ employee_id: 'c1', is_coordinator: true, trc_ids: [REG] }))).not.toContain('close_ticket')
+  })
+})
+
+describe('the desk’s own raise, as one step (the user, 23 Sep)', () => {
+  const step = (over: Record<string, unknown>) => ({
+    kind: 'status', status: 'pending_acceptance', from_status: null, action: null,
+    actor_name: 'Jeevan George', note: null, at: '2026-09-23T10:28:00Z', ...over,
+  })
+  const raised = step({ note: 'Raised at the Revive Lab' })
+  const taken = step({ status: 'accepted', from_status: 'pending_acceptance', note: 'Accepted on arrival — raised at the Revive Lab · Category B · Critical' })
+  const assigned = step({ status: 'assigned', from_status: 'accepted', at: '2026-09-23T10:29:00Z' })
+
+  it('makes the raise and the acceptance in the same moment one step, with what was said of the spare', () => {
+    const merged = mergeDeskRaise([raised, taken, assigned])
+    expect(merged).toHaveLength(2)
+    expect(merged[0]).toMatchObject({ action: 'raised_at_lab', status: 'accepted', from_status: null, note: 'Category B · Critical' })
+    expect(merged[1]).toBe(assigned)
+  })
+
+  it('leaves nothing to say when nothing was said', () => {
+    const merged = mergeDeskRaise([raised, step({ status: 'accepted', from_status: 'pending_acceptance', note: 'Accepted on arrival — raised at the Revive Lab' })])
+    expect(merged).toEqual([expect.objectContaining({ action: 'raised_at_lab', note: null })])
+  })
+
+  it('leaves a field engineer’s ticket, accepted later by the coordinator, as two steps', () => {
+    const later = step({ status: 'accepted', from_status: 'pending_acceptance', actor_name: 'Henry', at: '2026-09-24T08:00:00Z', note: 'Category A · Non-critical' })
+    expect(mergeDeskRaise([raised, later])).toHaveLength(2)
+  })
+})
+
+describe('a spare on its way back, handed to another field engineer (rl_0028)', () => {
+  const t = { status: 'in_transit_return' as const, trc_id: REG, engineer_id: 'e1', stakeholder_id: 'a', raised_by: 'a' }
+  const a = me({ employee_id: 'a' }), b = me({ employee_id: 'b' }), c = me({ employee_id: 'c' })
+
+  it('offers the one it is sent back to: received, or transfer', () => {
+    expect(actionsFor(t, a)).toEqual(['received', 'hand_over'])
+    expect(waitingOnMe(t, a)).toBe(true)
+  })
+
+  it('while the other decides: the first can only take it back, the other accepts or declines', () => {
+    const asked = { ...t, handover: { status: 'pending' as const, to_id: 'b' } }
+    expect(actionsFor(asked, a)).toEqual(['cancel_handover'])
+    expect(waitingOnMe(asked, a)).toBe(false)
+    expect(actionsFor(asked, b)).toEqual(['accept_handover', 'decline_handover'])
+    expect(waitingOnMe(asked, b)).toBe(true)
+    expect(actionsFor(asked, c)).toEqual([])
+  })
+
+  it('accepted, the new one has the same two buttons — and can pass it on again', () => {
+    const theirs = { ...t, stakeholder_id: 'b', handover: { status: 'accepted' as const, to_id: 'b' } }
+    expect(actionsFor(theirs, b)).toEqual(['received', 'hand_over'])
+    expect(actionsFor(theirs, a)).toEqual([])
+  })
+
+  it('declined or cancelled, it is as it was', () => {
+    for (const status of ['declined', 'cancelled'] as const) {
+      expect(actionsFor({ ...t, handover: { status, to_id: 'b' } }, a)).toEqual(['received', 'hand_over'])
+      expect(actionsFor({ ...t, handover: { status, to_id: 'b' } }, b)).toEqual([])
+    }
   })
 })
