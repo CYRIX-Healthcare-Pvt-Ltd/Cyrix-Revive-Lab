@@ -8,7 +8,7 @@ import {
   STATUS, STATUS_ORDER, TONE_CLASS, TONE_DOT, TONE_TEXT, canRaise, itemsSummary, parseTicketCode, statusGroups, ticketTabs,
   type TabId, type TicketStatus, type Tone,
 } from '@/lib/tickets'
-import { EmptyState, PageLoader, SortHeader, StatusBadge, WarehouseChip } from '@/components/ui'
+import { EmptyState, PageLoader, SectorTag, SortHeader, StatusBadge, WarehouseChip } from '@/components/ui'
 import { ClassTag } from '@/components/Classification'
 import { clockTime, dayDate } from '@/lib/when'
 
@@ -386,7 +386,7 @@ export default function Tickets() {
                             : <span className="text-ink-300">—</span>}
                         </td>
                         <td className="px-4 py-3">
-                          <p className="text-ink-900">{t.facility}</p>
+                          <p className="text-ink-900">{t.facility} <SectorTag ticket={t} className="ml-1" /></p>
                           {t.source === 'warehouse'
                             ? <WarehouseChip className="mt-0.5" />
                             : <p className="text-xs text-ink-500">{[t.district, t.bemmp_code].filter(Boolean).join(' · ')}</p>}
@@ -470,6 +470,7 @@ export default function Tickets() {
                       <div className="flex items-baseline justify-between gap-3">
                         <p className="min-w-0 text-sm text-ink-800">
                           {t.facility}
+                          <SectorTag ticket={t} className="ml-1.5" />
                           {t.source === 'warehouse' && <WarehouseChip className="ml-1.5 align-middle" />}
                         </p>
                         <p className="shrink-0 text-xs text-ink-500">{raised.date}, {raised.time}</p>

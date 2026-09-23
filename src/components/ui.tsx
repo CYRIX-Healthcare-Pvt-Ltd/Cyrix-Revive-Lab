@@ -178,6 +178,33 @@ export function SortHeader<K extends string>({
  * the ticket shows — dark on light and light on dark, so it never reads as
  * one of the status colours.
  */
+/**
+ * Whose equipment it is, after the hospital's name: Pvt — the private
+ * contract, whose customer can be billed — or Govt, every government
+ * programme (KL, AP, RJ, UP …). The user, 23 Sep: "DH Kannur - Pvt; except
+ * Pvt it should be Govt". A warehouse's spare has neither; it says Warehouse.
+ */
+export function SectorTag({ ticket: t, className }: {
+  ticket: { source?: string | null; bemmp_code?: string | null; asks_billing_estimate?: boolean | null }
+  className?: string
+}) {
+  if (t.source === 'warehouse' || !t.bemmp_code) return null
+  // The private BEMMP is the one that asks for a billing estimate; by its code until the list says (rl_0025).
+  const pvt = t.asks_billing_estimate ?? t.bemmp_code.toLowerCase() === 'pvt'
+  return (
+    <span
+      className={clsx(
+        'inline-block whitespace-nowrap rounded px-1.5 py-px align-middle text-[10px] font-semibold',
+        pvt ? 'bg-fuchsia-100 text-fuchsia-900' : 'bg-ink-100 text-ink-700',
+        className,
+      )}
+      title={`BEMMP ${t.bemmp_code}`}
+    >
+      {pvt ? 'Pvt' : 'Govt'}
+    </span>
+  )
+}
+
 export function WarehouseChip({ className }: { className?: string }) {
   return (
     <span className={clsx('badge inline-flex items-center gap-1 whitespace-nowrap bg-ink-800 text-ink-50', className)}>

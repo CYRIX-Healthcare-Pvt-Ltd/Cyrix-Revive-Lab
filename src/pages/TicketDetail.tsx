@@ -13,7 +13,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import {
   useAccept, useAddObservation, useApprove, useAssign, useCancelTransfer, useCloseTicket, useCompleteRepair,
   useDeclineApproval, useDiscard, useDispatch, useHops, useMarkReceived, useMembers, useRequestTransfer, useReroute,
-  useReturnToDesk, useScrap, useSend, useSetClassification, useSetExpectedDate, useStartRepair, useTickets, useTrail, useTrcs,
+  usePartRequests, useReturnToDesk, useScrap, useSend, useSetClassification, useSetExpectedDate, useStartRepair, useTickets, useTrail, useTrcs,
   useUpdateCourier,
   type Ticket, type TrailEvent,
 } from '@/lib/queries'
@@ -27,10 +27,10 @@ import {
 import { categoryTat, formatSpan, ticketTat, type Span } from '@/lib/tat'
 import { dateTime, dayDate, gapLabel, gapWords } from '@/lib/when'
 import { ClassificationFields, TatChip } from '@/components/Classification'
-import { Alert, EmptyState, PageLoader, Spinner, StatusBadge, WarehouseChip } from '@/components/ui'
+import { Alert, EmptyState, PageLoader, SectorTag, Spinner, StatusBadge, WarehouseChip } from '@/components/ui'
 import IconChip from '@/components/IconChip'
 import AttachmentsCard from '@/components/TicketAttachments'
-import PartsCard from '@/components/PartsCard'
+import PartsCard, { rupees } from '@/components/PartsCard'
 import { RequestPartForm, UseComponentForm } from '@/components/PartForms'
 import Dialog from '@/components/Dialog'
 import LabOptions from '@/components/LabOptions'
@@ -110,7 +110,7 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
               {t.source === 'warehouse' && <WarehouseChip />}
             </div>
             <p className="mt-1 text-sm text-ink-600">
-              {t.facility}{summary ? ` · ${summary}` : ''}
+              {t.facility} <SectorTag ticket={t} className="mx-0.5" />{summary ? ` · ${summary}` : ''}
             </p>
             <p className="mt-0.5 text-xs text-ink-500"><WhereItIs ticket={t} /></p>
             <Classification ticket={t} />
@@ -191,6 +191,12 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
                 <Row label="Billing spare">{t.billing_spare ? 'Yes' : 'No'}</Row>
               )}
               {t.contract_type && <Row label="Contract type">{t.contract_type}</Row>}
+              {t.billing_estimate !== null && t.billing_estimate !== undefined && (
+                <Row label="Estimated billing">
+                  <span className="font-medium tabular-nums">{rupees(Number(t.billing_estimate))}</span>
+                  <span className="text-xs text-ink-500"> · entered on dispatch</span>
+                </Row>
+              )}
               <Row label="Revive Lab">
                 {t.trc_name}
                 <span className="text-xs text-ink-500"> · {stateLabel(t.trc_state)}</span>
@@ -1015,6 +1021,11 @@ function ActionForm({
   const [criticality, setCriticality] = useState<Criticality | null>(camc ? 'critical' : t.criticality)
   // How it came: required when a spare arrives from the sender; a transfer's courier was recorded when it was sent.
   const courierRequired = action === 'accept' && t.status === 'pending_acceptance'
+  // Under Pvt the customer can be asked to pay for the repair: what to bill, before it goes (rl_0025).
+  const asksEstimate = action === 'dispatch' && !!t.asks_billing_estimate
+  const [estimate, setEstimate] = useState('')
+  const { data: requests } = usePartRequests(asksEstimate ? t.id : undefined)
+  const purchased = (requests ?? []).reduce((sum, r) => sum + (r.bill_amount ?? 0), 0)
 
   const engineers = (members ?? [])
     .filter(m => m.is_engineer && m.trc_ids.includes(t.trc_id) && m.employee_id !== t.engineer_id)
@@ -1072,8 +1083,15 @@ function ActionForm({
                 : `Closed as not repairable. The coordinator sends it back to ${t.stakeholder_name}, as you proposed.`
               : 'Closed: the customer denied service. The coordinator sends it back.')
           break
-        case 'dispatch':
-          await dispatch.mutateAsync({ id: t.id, courier, awb, on, note }); onDone('Dispatched back to the field.'); break
+        case 'dispatch': {
+          const amount = estimate.trim() === '' ? null : Number(estimate)
+          if (asksEstimate && (amount === null || !Number.isFinite(amount) || amount < 0)) {
+            onError('Enter the estimated billing cost — under Pvt the customer can be asked to pay it.'); return
+          }
+          await dispatch.mutateAsync({ id: t.id, courier, awb, on, note, estimate: asksEstimate ? amount : null })
+          onDone(asksEstimate ? `Dispatched back, with the estimated billing of ${rupees(amount!)}.` : 'Dispatched back to the field.')
+          break
+        }
         case 'received':
           if (damaged && blobs.length === 0) { onError('Photograph the damage — it is the only proof there will be.'); return }
           await received.mutateAsync({ id: t.id, note, damaged, photos: blobs })
@@ -1332,6 +1350,28 @@ function ActionForm({
             </span>
             <input className="input mt-1" type="date" value={on} max={action === 'accept' ? localToday() : undefined} onChange={e => setOn(e.target.value)} />
           </label>
+        </div>
+      )}
+
+      {asksEstimate && (
+        <div className="rounded-lg border border-fuchsia-200 bg-fuchsia-50/60 p-3">
+          <label className="block sm:max-w-xs">
+            <span className="label">Estimated billing cost (₹) <span className="text-cyrixRed-600">*</span></span>
+            <input
+              className="input mt-1 tabular-nums"
+              type="number"
+              inputMode="decimal"
+              min={0}
+              step="0.01"
+              value={estimate}
+              onChange={e => setEstimate(e.target.value)}
+              placeholder="0.00"
+            />
+          </label>
+          <p className="mt-1.5 text-xs text-ink-600">
+            {t.bemmp_code ?? 'Pvt'}{t.contract_type ? ` · ${t.contract_type}` : ''}: the customer can be asked to pay for this repair
+            {purchased > 0 ? <> — components purchased for it came to <span className="font-medium tabular-nums">{rupees(purchased)}</span></> : null}.
+          </p>
         </div>
       )}
 

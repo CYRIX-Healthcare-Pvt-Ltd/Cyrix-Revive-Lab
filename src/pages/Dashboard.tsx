@@ -11,7 +11,7 @@ import {
   REPAIRING, STATUS, STATUS_ORDER, TONE_DOT, TONE_FILL, TONE_TEXT, canRaise, itemsSummary, statusGroups, ticketTabs, waitingOnMe,
 } from '@/lib/tickets'
 import { asDays, formatSpan, ticketTat, type TatEvent } from '@/lib/tat'
-import { EmptyState, PageLoader, StatTile, WarehouseChip } from '@/components/ui'
+import { EmptyState, PageLoader, SectorTag, StatTile, WarehouseChip } from '@/components/ui'
 import IconChip from '@/components/IconChip'
 import { ClassTag } from '@/components/Classification'
 
@@ -194,7 +194,7 @@ export default function Dashboard() {
                             <span className="font-mono text-sm font-semibold text-ink-900">{t.code}</span>
                             {t.source === 'warehouse' && <WarehouseChip />}
                             <span className="min-w-0 flex-1 truncate text-sm text-ink-600">
-                              {t.facility}{itemsSummary(t) ? ` · ${itemsSummary(t)}` : ''}
+                              {t.facility} <SectorTag ticket={t} className="mx-0.5" />{itemsSummary(t) ? ` · ${itemsSummary(t)}` : ''}
                             </span>
                             <ClassTag ticket={t} />
                             <span className="text-xs text-ink-400">{t.trc_name}</span>

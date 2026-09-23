@@ -117,6 +117,10 @@ export interface Ticket {
   accepted_at: string | null
   /** When it was first dispatched back: the category TAT's end. */
   dispatched_at: string | null
+  /** Under Pvt, what the customer can be asked to pay, entered on dispatch (rl_0025). */
+  billing_estimate: number | null
+  /** Its BEMMP asks for that estimate — Pvt. */
+  asks_billing_estimate: boolean
 }
 
 export interface TrailEvent {
@@ -811,10 +815,11 @@ export const useCancelPart = () => useTicketMutation(
   (a: { id: string; reason?: string }) => rpc('revive_cancel_part', { p_request_id: a.id, p_reason: a.reason || null }))
 
 export const useDispatch = () => useTicketMutation(
-  (a: { id: string; courier: string; awb: string; on: string; note?: string }) =>
+  (a: { id: string; courier: string; awb: string; on: string; note?: string; estimate?: number | null }) =>
     rpc('revive_dispatch', {
       p_ticket_id: a.id, p_courier: a.courier, p_awb: a.awb,
       p_dispatched_on: a.on || null, p_note: a.note || null,
+      p_billing_estimate: a.estimate ?? null,
     }))
 
 /** It arrived back: the field engineer has it, and says whether the courier damaged it. */
