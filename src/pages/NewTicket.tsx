@@ -166,6 +166,8 @@ export default function NewTicket() {
     if (items.length === 0) { setError('Enter the spare name.'); return }
     if (items.some(i => i.name.length < 2)) { setError('Enter the name of each spare and accessory.'); return }
     if (form.issue.trim().length < 3) { setError('Describe the issue identified.'); return }
+    // One photo of the spare at least, whoever raises it — field engineer or the desk (the user, 24 Sep).
+    if (photos.length === 0) { setError('Add a photo of the spare — one at least.'); return }
     if (form.returnAddress.trim().length < 5) { setError('Enter the spare return address.'); return }
     if (atLab && !holder) {
       setError(fromWarehouse ? 'Name the warehouse in-charge this spare belongs to.' : 'Name the field engineer this spare belongs to.')
@@ -429,8 +431,9 @@ export default function NewTicket() {
 
           {/* Photos, the video and the voice note, side by side. */}
           <div>
-            <span className="label">Photos and recordings</span>
-            <div className="mt-1">
+            <span className="label">Photos and recordings <Req /></span>
+            <p className="mt-0.5 text-xs text-ink-500">One photo of the spare at least; a video and a voice note if they help.</p>
+            <div className="mt-1.5">
               <MediaCapture
                 photos={{ value: photos, onChange: setPhotos }}
                 video={{ value: video, onChange: setVideo }}

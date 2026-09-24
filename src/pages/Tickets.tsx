@@ -331,7 +331,7 @@ export default function Tickets() {
               <option value="">All Revive Labs</option>
               {facets.labs.map(f => <option key={f.value} value={f.value}>{f.label} ({f.n})</option>)}
             </select>
-            <select className="input !py-1.5 sm:w-48" value={status} onChange={e => setParam('status', e.target.value || null)} aria-label="Filter by status">
+            <select className="input !py-1.5 sm:w-44" value={status} onChange={e => setParam('status', e.target.value || null)} aria-label="Filter by status">
               <option value="">Any status</option>
               {facets.statuses.map(f => <option key={f.value} value={f.value}>{f.label} ({f.n})</option>)}
             </select>
@@ -341,7 +341,7 @@ export default function Tickets() {
                 {facets.sources.map(f => <option key={f.value} value={f.value}>{f.label} ({f.n})</option>)}
               </select>
             )}
-            <select className="input !py-1.5 sm:w-40" value={cat} onChange={e => setParam('cat', e.target.value || null)} aria-label="Filter by category">
+            <select className="input !py-1.5 sm:w-36" value={cat} onChange={e => setParam('cat', e.target.value || null)} aria-label="Filter by category">
               <option value="">Any category</option>
               {facets.cats.map(f => <option key={f.value} value={f.value}>{f.label} ({f.n})</option>)}
             </select>
@@ -356,12 +356,16 @@ export default function Tickets() {
               </select>
             )}
             {(desk || eng) && (
-              <select className="input !py-1.5 sm:w-48" value={eng} onChange={e => setParam('eng', e.target.value || null)} aria-label="Filter by Revive Lab engineer">
+              <select className="input !py-1.5 sm:w-52" value={eng} onChange={e => setParam('eng', e.target.value || null)} aria-label="Filter by Revive Lab engineer">
                 <option value="">Any Revive Lab engineer</option>
                 {facets.engineers.map(f => <option key={f.value} value={f.value}>{f.label} ({f.n})</option>)}
               </select>
             )}
-            <label className="relative min-w-0 flex-1 sm:w-56 sm:flex-none">
+            {/* The search and Excel as one: when the row runs out of room they move
+                down together, and Excel is never left on a line of its own (the
+                user, 24 Sep: "move excel button after search"). */}
+            <div className="flex min-w-0 flex-1 gap-2 sm:flex-none">
+            <label className="relative min-w-0 flex-1 sm:w-52 sm:flex-none">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
               <input
                 className="input !py-1.5 !pl-8"
@@ -383,6 +387,7 @@ export default function Tickets() {
             >
               {saving ? <Spinner className="h-4 w-4" /> : <Download className="h-4 w-4 text-green-600" />} Excel
             </button>
+            </div>
           </div>
         </div>
 
