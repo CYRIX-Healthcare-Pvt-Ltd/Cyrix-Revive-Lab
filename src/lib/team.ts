@@ -198,13 +198,6 @@ export function isLate(t: ReportTicket, now = Date.now()): boolean {
   return !!tat && tat.exceeded && tat.endedAt === null
 }
 
-/** Not late yet, but due within a day. */
-export function isDueSoon(t: ReportTicket, now = Date.now()): boolean {
-  if (t.status === 'closed') return false
-  const tat = categoryTat(t, now)
-  return !!tat && !tat.exceeded && tat.endedAt === null && tat.dueAt - now <= DAY
-}
-
 /**
  * Who has the next move, in a few words — for a manager reading down a list
  * of their team's spares, the one question the status alone does not answer.
@@ -312,47 +305,72 @@ export const inRange = (ms: number, r: Range) => ms >= r.from && ms < r.to
 /* The Revive Lab's own reports                                         */
 /* ------------------------------------------------------------------ */
 
-export interface EngineerRow {
-  id: string
-  name: string
-  /** Assigned, in repair or waiting for a component, with them now. */
-  withThem: number
-  late: number
-  dueSoon: number
-  /** Dispatched back (or scrapped) in the period. */
-  sent: number
-  /** Of those, how many went inside their category's time. */
-  onTime: number
-  /** With them now, by category; `none` has none yet. */
-  byCategory: Record<SpareCategory | 'none', number>
-  lateByCategory: Record<SpareCategory | 'none', number>
-  /** Sent back in the period, and inside the category's time, by category: the TAT met for A, B and C. */
-  sentByCategory: Record<SpareCategory, number>
-  onTimeByCategory: Record<SpareCategory, number>
-}
-
 const REPAIRING_NOW: readonly TicketStatus[] = ['assigned', 'in_repair', 'parts_requested', 'parts_ordered', 'parts_ready']
+/** The statuses a Revive Lab engineer closes a repair with. */
+const REPAIR_CLOSED = ['repaired', 'not_repairable', 'service_denied']
 
 /**
- * One row per Revive Lab engineer: what is with them now, what is late,
- * what they sent back in the period, and how much of that was inside its
- * category's time. Engineers named in `roster` appear even with nothing
- * assigned — an idle engineer is the one to give the next repair to.
+ * When this round of the repair was assigned, and when the engineer closed
+ * it — from the ticket's status history (only status steps). Assigned is the
+ * start of the latest run of "assigned", so an estimate or a reassignment
+ * inside it does not restart the clock; a spare sent back and assigned again
+ * starts a new round.
  */
-export function engineerReport(
+export function repairWindow(events: ReadonlyArray<{ status: string; at: string }>): { assignedAt: number | null; closedAt: number | null } {
+  let assignedAt: number | null = null
+  let closedAt: number | null = null
+  let prev: string | null = null
+  for (const e of [...events].sort((x, y) => Date.parse(x.at) - Date.parse(y.at))) {
+    if (e.status === 'assigned' && prev !== 'assigned') {
+      // A new round once the last one was closed; the first assignment otherwise.
+      if (assignedAt === null || closedAt !== null) { assignedAt = Date.parse(e.at); closedAt = null }
+    } else if (REPAIR_CLOSED.includes(e.status) && assignedAt !== null && closedAt === null) {
+      closedAt = Date.parse(e.at)
+    }
+    prev = e.status
+  }
+  return { assignedAt, closedAt }
+}
+
+export interface EngineerWork {
+  id: string
+  name: string
+  /** Closed in the period, and open now. */
+  total: number
+  /** Repairs they closed in the period: repaired, not repairable, or the customer denied it. */
+  closed: number
+  /** With them now: assigned, in repair, or waiting for a component. */
+  open: number
+  /** Closed less assigned, averaged over the closed. */
+  avgClosureMs: number | null
+  /** Today less assigned, averaged over the open. */
+  avgOpenMs: number | null
+  /** The same, by category. */
+  byCategory: Record<SpareCategory, { total: number; open: number }>
+}
+
+/**
+ * One row per Revive Lab engineer (the user, 24 Sep): total tickets, closed,
+ * closed %, the average closure TAT, open, and the average open TAT. Closed
+ * counts the period chosen; open is now, whenever it was assigned. Engineers
+ * named in `roster` appear with nothing too — an idle engineer is the one to
+ * give the next repair to.
+ */
+export function engineerWork(
   list: readonly ReportTicket[],
+  eventsOf: (ticketId: string) => ReadonlyArray<{ status: string; at: string }>,
   roster: ReadonlyArray<{ id: string; name: string }> = [],
   now = Date.now(),
   period: Range = { from: -Infinity, to: Infinity },
-): EngineerRow[] {
-  const rows = new Map<string, EngineerRow>()
-  const blank = () => ({ A: 0, B: 0, C: 0, none: 0 })
+): EngineerWork[] {
+  const rows = new Map<string, EngineerWork & { closure: number[]; age: number[] }>()
   const row = (id: string, name: string) => {
     let r = rows.get(id)
     if (!r) {
       r = {
-        id, name, withThem: 0, late: 0, dueSoon: 0, sent: 0, onTime: 0, byCategory: blank(), lateByCategory: blank(),
-        sentByCategory: { A: 0, B: 0, C: 0 }, onTimeByCategory: { A: 0, B: 0, C: 0 },
+        id, name, total: 0, closed: 0, open: 0, avgClosureMs: null, avgOpenMs: null,
+        byCategory: { A: { total: 0, open: 0 }, B: { total: 0, open: 0 }, C: { total: 0, open: 0 } },
+        closure: [], age: [],
       }
       rows.set(id, r)
     }
@@ -362,67 +380,54 @@ export function engineerReport(
   for (const t of list) {
     if (!t.engineer_id) continue
     const r = row(t.engineer_id, t.engineer_name ?? 'Engineer')
-    const cat = t.spare_category ?? 'none'
+    const { assignedAt, closedAt } = repairWindow(eventsOf(t.id))
+    const cat = t.spare_category
     if (REPAIRING_NOW.includes(t.status)) {
-      r.withThem++
-      r.byCategory[cat]++
-      if (isLate(t, now)) { r.late++; r.lateByCategory[cat]++ }
-      else if (isDueSoon(t, now)) r.dueSoon++
-    }
-    const tat = categoryTat(t, now)
-    if (tat && tat.endedAt !== null && inRange(tat.endedAt, period)) {
-      r.sent++
-      if (!tat.exceeded) r.onTime++
-      // A category is set whenever there is a TAT (categoryTat needs one).
-      const c = t.spare_category as SpareCategory
-      r.sentByCategory[c]++
-      if (!tat.exceeded) r.onTimeByCategory[c]++
+      r.open++
+      r.total++
+      if (assignedAt !== null) r.age.push(now - assignedAt)
+      if (cat) { r.byCategory[cat].open++; r.byCategory[cat].total++ }
+    } else if (closedAt !== null && inRange(closedAt, period)) {
+      r.closed++
+      r.total++
+      if (assignedAt !== null) r.closure.push(closedAt - assignedAt)
+      if (cat) r.byCategory[cat].total++
     }
   }
-  // The busiest first, then by name.
-  return [...rows.values()].sort((a, b) => b.withThem - a.withThem || b.late - a.late || a.name.localeCompare(b.name))
+  const mean = (xs: number[]) => (xs.length ? xs.reduce((a, x) => a + x, 0) / xs.length : null)
+  return [...rows.values()]
+    .map(({ closure, age, ...r }) => ({ ...r, avgClosureMs: mean(closure), avgOpenMs: mean(age) }))
+    // The busiest first, then by name.
+    .sort((a, b) => b.open - a.open || b.total - a.total || a.name.localeCompare(b.name))
 }
 
 export interface CategoryRow {
   category: SpareCategory
   days: number
-  /** Accepted, not dispatched: on the Revive Lab's clock now. */
+  /** Accepted, not dispatched: on the Revive Lab's clock now — inside its time, or above it. */
   atLab: number
-  dueSoon: number
-  late: number
-  /** Dispatched back (or scrapped) in the period, and of those, how many inside the category's time. */
-  sent: number
-  onTime: number
+  inTat: number
+  aboveTat: number
 }
 
-/** A, B and C: how many are on the clock, due, late — and how the period went. */
-export function categoryReport(
-  list: readonly ReportTicket[], now = Date.now(), period: Range = { from: -Infinity, to: Infinity },
-): { rows: CategoryRow[]; unclassified: number } {
+/** A, B and C: how many are on the Revive Lab's clock now, in TAT and above it. */
+export function categoryReport(list: readonly ReportTicket[], now = Date.now()): CategoryRow[] {
   const rows = (['A', 'B', 'C'] as const).map(category => ({
-    category, days: CATEGORY_TAT_DAYS[category], atLab: 0, dueSoon: 0, late: 0, sent: 0, onTime: 0,
+    category, days: CATEGORY_TAT_DAYS[category], atLab: 0, inTat: 0, aboveTat: 0,
   }))
-  let unclassified = 0
   for (const t of list) {
     if (t.status === 'closed' && !t.dispatched_at && !t.scrapped_at) continue
     const tat = categoryTat(t, now)
-    if (!t.spare_category || !tat) {
-      if (t.status !== 'closed' && stageOf(t.status)?.key === 'sent') unclassified++
-      continue
-    }
+    // Not accepted yet: no category, and no clock running.
+    if (!t.spare_category || !tat) continue
     const r = rows.find(x => x.category === t.spare_category)!
-    if (tat.endedAt === null) {
-      if (t.status === 'closed') continue
-      r.atLab++
-      if (tat.exceeded) r.late++
-      else if (tat.dueAt - now <= DAY) r.dueSoon++
-    } else if (inRange(tat.endedAt, period)) {
-      r.sent++
-      if (!tat.exceeded) r.onTime++
-    }
+    if (tat.endedAt !== null || t.status === 'closed') continue
+    r.atLab++
+    if (tat.exceeded) r.aboveTat++
+    else r.inTat++
   }
-  return { rows, unclassified }
+  return rows
 }
 
-/** "92%" of what finished, or a dash when nothing has. */
+/** "92%" of a whole, or a dash when there is none. */
 export const percent = (part: number, whole: number): string => (whole ? `${Math.round((part / whole) * 100)}%` : '—')

@@ -136,7 +136,7 @@ export default function Team() {
             <StatTile label="Being repaired" value={counts.byStage.repair} sub="with a Revive Lab engineer, or waiting for a component" />
             <StatTile label="Not yet accepted" value={counts.byStage.sent} sub="sent, the Revive Lab has not taken it in" />
             <StatTile
-              label="Late"
+              label="Above TAT"
               value={<span className={counts.late ? 'text-cyrixRed-600' : 'text-green-700'}>{counts.late}</span>}
               sub="past its time: A 3 days, B 2, C 1, from acceptance"
             />
@@ -163,7 +163,7 @@ export default function Team() {
                     <th className="py-1.5 pr-3 font-semibold">Team of</th>
                     <th className="px-3 py-1.5 text-right font-semibold" title="People under them, still with the company">People</th>
                     <th className="px-3 py-1.5 text-right font-semibold" title="Spares sent in and not back yet">Open</th>
-                    <th className="px-3 py-1.5 text-right font-semibold" title="Past their category's time at the Revive Lab">Late</th>
+                    <th className="px-3 py-1.5 text-right font-semibold" title="Past their category's time at the Revive Lab: A 3 days, B 2, C 1">Above TAT</th>
                     <th className="px-3 py-1.5 font-semibold" title="The spare open longest">Oldest open</th>
                     <th className="py-1.5 pl-3 text-right font-semibold" title="Fitted and closed since the 1st">Closed this month</th>
                   </tr>

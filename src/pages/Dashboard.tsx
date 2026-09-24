@@ -15,13 +15,15 @@ import { EmptyState, PageLoader, ReturnedTag, SectorTag, StatTile, TransferTag, 
 import IconChip from '@/components/IconChip'
 import { CATEGORY_CLASS, ClassTag } from '@/components/Classification'
 import {
-  PERIODS, categoryReport, countTickets, engineerReport, inRange, indexTeam, ownerOfTicket, percent, periodRange,
-  type CategoryRow, type EngineerRow, type Period,
+  PERIODS, categoryReport, countTickets, engineerWork, inRange, indexTeam, ownerOfTicket, percent, periodRange,
+  type CategoryRow, type EngineerWork, type Period,
 } from '@/lib/team'
 
 const TOOLTIP = { fontSize: 12, borderRadius: 8, border: '1px solid #d4d8e0' }
 const TICK = { fontSize: 11, fill: '#606b82' }
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+/** Revive Lab went live in September 2026; the trend has nothing to say before it. */
+const FIRST_MONTH = new Date(2026, 8, 1)
 
 /**
  * Where everything is, and how long it is taking.
@@ -84,9 +86,15 @@ export default function Dashboard() {
       Closed: all.filter(t => t.trc_id === trc.id && t.status === 'closed').length,
     })).filter(r => r.Open + r.Closed > 0)
 
-    // The last six months, by the month each ticket closed in.
-    const trend = Array.from({ length: 6 }, (_, i) => {
-      const d = new Date(now.getFullYear(), now.getMonth() - 5 + i, 1)
+    /*
+      Month by month, by the month each ticket closed in — from September
+      2026, when Revive Lab went live (the user, 24 Sep: "start tat trend
+      from sep 26"), to this month; the last twelve once there are more.
+    */
+    const first = Math.max(FIRST_MONTH.getTime(), new Date(now.getFullYear(), now.getMonth() - 11, 1).getTime())
+    const months: Date[] = []
+    for (let d = new Date(first); d.getTime() <= now.getTime(); d = new Date(d.getFullYear(), d.getMonth() + 1, 1)) months.push(d)
+    const trend = months.map(d => {
       const next = new Date(d.getFullYear(), d.getMonth() + 1, 1)
       const inMonth = closed.filter(t => {
         const c = Date.parse(t.closed_at!)
@@ -127,12 +135,21 @@ export default function Dashboard() {
   const lab = useMemo(() => {
     if (!desk) return null
     const all = tickets ?? []
+    const history = new Map<string, TatEvent[]>()
+    for (const e of events ?? []) {
+      const list = history.get(e.ticket_id) ?? []
+      list.push(e)
+      history.set(e.ticket_id, list)
+    }
     const roster = (members ?? [])
       .filter(m => m.is_engineer && (me!.is_admin || m.trc_ids.some(id => me!.trc_ids.includes(id))))
       .map(m => ({ id: m.employee_id, name: m.full_name }))
     const range = periodRange(period)
-    return { engineers: engineerReport(all, roster, Date.now(), range), categories: categoryReport(all, Date.now(), range) }
-  }, [desk, tickets, members, me, period])
+    return {
+      engineers: engineerWork(all, id => history.get(id) ?? [], roster, Date.now(), range),
+      categories: categoryReport(all),
+    }
+  }, [desk, tickets, events, members, me, period])
 
   // The viewer's team's spares, for the card that leads to My team (rl_0029).
   const teamCounts = useMemo(() => {
@@ -268,7 +285,7 @@ export default function Dashboard() {
               <span className="text-sm text-ink-600"><b className="tabular-nums text-ink-900">{teamCounts.byStage.repair}</b> being repaired</span>
               <span className="text-sm text-ink-600"><b className="tabular-nums text-ink-900">{teamCounts.byStage.sent}</b> not yet accepted</span>
               <span className={clsx('text-sm', teamCounts.late ? 'text-cyrixRed-700' : 'text-ink-600')}>
-                <b className="tabular-nums">{teamCounts.late}</b> late
+                <b className="tabular-nums">{teamCounts.late}</b> above TAT
               </span>
               <span className="ml-auto inline-flex items-center gap-1 text-sm font-medium text-ink-700">
                 Everyone under you, team by team <ArrowRight aria-hidden className="h-4 w-4" />
@@ -276,8 +293,9 @@ export default function Dashboard() {
             </Link>
           )}
 
-          {lab && <CategoryTat rows={lab.categories.rows} unclassified={lab.categories.unclassified} words={words} />}
+          {lab && <CategoryTat rows={lab.categories} />}
           {lab && <EngineerTable rows={lab.engineers} words={words} />}
+          {lab && <EngineerCategories rows={lab.engineers} words={words} />}
 
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="card p-4">
@@ -358,10 +376,10 @@ export default function Dashboard() {
 
 /**
  * A, B and C against their time — the Revive Lab's clock for each runs from
- * acceptance until the spare is dispatched back (rl_0024). On the clock now,
- * due within a day, late, and how the period went.
+ * acceptance until the spare is dispatched back (rl_0024). What is at the
+ * Revive Lab now: in TAT and above it, as counts and as a share.
  */
-function CategoryTat({ rows, unclassified, words }: { rows: CategoryRow[]; unclassified: number; words: string }) {
+function CategoryTat({ rows }: { rows: CategoryRow[] }) {
   return (
     <div className="card p-4">
       <h3 className="mb-1 flex items-center gap-2.5 text-sm font-semibold text-ink-800">
@@ -369,12 +387,11 @@ function CategoryTat({ rows, unclassified, words }: { rows: CategoryRow[]; uncla
       </h3>
       <p className="mb-3 text-xs text-ink-500">
         Each category has its own time at the Revive Lab, from acceptance until it is dispatched back:
-        A 3 days, B 2, C 1. Late is past that time and not dispatched yet. TAT met is how many of the
-        spares sent back {words} went inside their time.
+        A 3 days, B 2, C 1. In TAT is still inside it; above TAT is past it.
       </p>
       <div className="grid gap-3 sm:grid-cols-3">
         {rows.map(r => {
-          const onTime = r.sent ? r.onTime / r.sent : null
+          const inShare = r.atLab ? r.inTat / r.atLab : null
           return (
             <div key={r.category} className="rounded-xl border border-ink-200 p-3">
               <div className="flex items-center gap-2">
@@ -389,77 +406,62 @@ function CategoryTat({ rows, unclassified, words }: { rows: CategoryRow[]; uncla
                   <dd className="text-lg font-semibold tabular-nums text-ink-900">{r.atLab}</dd>
                 </div>
                 <div>
-                  <dt className="text-[11px] text-ink-500">Due in a day</dt>
-                  <dd className={clsx('text-lg font-semibold tabular-nums', r.dueSoon ? 'text-amber-600' : 'text-ink-300')}>{r.dueSoon}</dd>
+                  <dt className="text-[11px] text-ink-500">In TAT</dt>
+                  <dd className={clsx('text-lg font-semibold tabular-nums', r.inTat ? 'text-green-700' : 'text-ink-300')}>{r.inTat}</dd>
                 </div>
                 <div>
-                  <dt className="text-[11px] text-ink-500">Late</dt>
-                  <dd className={clsx('text-lg font-semibold tabular-nums', r.late ? 'text-cyrixRed-600' : 'text-ink-300')}>{r.late}</dd>
+                  <dt className="text-[11px] text-ink-500">Above TAT</dt>
+                  <dd className={clsx('text-lg font-semibold tabular-nums', r.aboveTat ? 'text-cyrixRed-600' : 'text-ink-300')}>{r.aboveTat}</dd>
                 </div>
               </dl>
               <div className="mt-3 border-t border-ink-100 pt-2">
                 <div className="flex items-baseline justify-between text-xs">
-                  <span className="text-ink-500">TAT met {words}</span>
-                  <span className="font-semibold tabular-nums text-ink-800">
-                    {r.sent ? `${r.onTime} of ${r.sent} · ${percent(r.onTime, r.sent)}` : `none sent back ${words}`}
+                  <span className={clsx('font-semibold tabular-nums', inShare === null ? 'text-ink-300' : 'text-green-700')}>
+                    In TAT {percent(r.inTat, r.atLab)}
+                  </span>
+                  <span className={clsx('font-semibold tabular-nums', inShare === null ? 'text-ink-300' : r.aboveTat ? 'text-cyrixRed-600' : 'text-ink-400')}>
+                    Above TAT {percent(r.aboveTat, r.atLab)}
                   </span>
                 </div>
-                <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-ink-100" aria-hidden>
-                  {onTime !== null && (
-                    <div className={clsx('h-full rounded-full', onTime >= 0.9 ? 'bg-green-500' : onTime >= 0.7 ? 'bg-amber-500' : 'bg-cyrixRed-500')}
-                         style={{ width: `${Math.round(onTime * 100)}%` }} />
-                  )}
+                <div className="mt-1.5 flex h-1.5 overflow-hidden rounded-full bg-ink-100" aria-hidden>
+                  {inShare !== null && <>
+                    <div className="h-full bg-green-500" style={{ width: `${Math.round(inShare * 100)}%` }} />
+                    <div className="h-full bg-cyrixRed-500" style={{ width: `${100 - Math.round(inShare * 100)}%` }} />
+                  </>}
                 </div>
               </div>
             </div>
           )
         })}
       </div>
-      {unclassified > 0 && (
-        <p className="mt-2 text-xs text-ink-400">
-          {unclassified} more {unclassified === 1 ? 'is' : 'are'} not accepted yet — a spare gets its category when it is accepted.
-        </p>
-      )}
     </div>
   )
 }
 
-/**
- * "4 of 5 · 80%": of what was sent back, how much inside its time — green
- * from 90%, amber from 70%, red below, as the category bars; a dash when
- * nothing went back.
- */
-function Met({ met, of }: { met: number; of: number }) {
-  if (!of) return <span className="text-ink-300">—</span>
-  const share = met / of
-  return (
-    <span className="tabular-nums">
-      <span className="text-ink-500">{met} of {of} · </span>
-      <span className={clsx('font-semibold', share >= 0.9 ? 'text-green-700' : share >= 0.7 ? 'text-amber-600' : 'text-cyrixRed-600')}>
-        {percent(met, of)}
-      </span>
-    </span>
-  )
+/** A heading cell, right-aligned; its title is what a hover explains. */
+const TH = 'px-3 py-2 text-right font-semibold'
+
+/** A count, grey at nought. */
+function Count({ n, strong = false }: { n: number; strong?: boolean }) {
+  return <span className={clsx('tabular-nums', n ? (strong ? 'font-semibold text-ink-900' : 'text-ink-700') : 'text-ink-300')}>{n}</span>
 }
 
+/** An average time, or a dash when there is nothing to average. */
+const avg = (ms: number | null) => (ms === null ? <span className="text-ink-300">—</span> : formatSpan(ms))
+
 /**
- * One row per Revive Lab engineer: what is with them now, what is late or
- * due within a day; and, for the period chosen at the top, what they sent
- * back and how much of it went inside its category's own time — A 3 days,
- * B 2, C 1 — for each category and altogether.
+ * The engineers, as the user laid it out (24 Sep): total tickets, closed,
+ * closed %, the average closure TAT, open, and the average open TAT. Closed
+ * is repairs they closed in the period; open is with them now.
  */
-function EngineerTable({ rows, words }: { rows: EngineerRow[]; words: string }) {
+function EngineerTable({ rows, words }: { rows: EngineerWork[]; words: string }) {
   return (
     <div className="card overflow-hidden">
       <div className="border-b border-ink-200 bg-ink-50 px-4 py-2.5">
         <h3 className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
           <IconChip icon={HardHat} tone="indigo" /> Revive Lab engineers
         </h3>
-        <p className="mt-1 text-xs text-ink-500">
-          With them now is assigned, in repair or waiting for a component; late is past its category&apos;s time.
-          TAT met is, of what they sent back {words}, how much went inside its category&apos;s time: A 3 days,
-          B 2, C 1. Open an engineer to see their tickets.
-        </p>
+        <p className="mt-1 text-xs text-ink-500">Closed is {words}; open is now. Open an engineer to see their tickets.</p>
       </div>
       {rows.length === 0 ? (
         <p className="px-4 py-6 text-center text-sm text-ink-400">No Revive Lab engineer has had a ticket yet.</p>
@@ -469,14 +471,12 @@ function EngineerTable({ rows, words }: { rows: EngineerRow[]; words: string }) 
             <thead>
               <tr className="border-b border-ink-200 text-left text-[11px] font-semibold uppercase tracking-label text-ink-400">
                 <th className="px-4 py-2 font-semibold">Engineer</th>
-                <th className="px-3 py-2 text-right font-semibold" title="Assigned, in repair, or waiting for a component">With them now</th>
-                <th className="px-3 py-2 text-right font-semibold" title="Past its category's time, still with them">Late</th>
-                <th className="px-3 py-2 text-right font-semibold" title="Not due yet, but due within a day">Due in a day</th>
-                <th className="px-3 py-2 text-right font-semibold" title={`Dispatched back, or scrapped, ${words}`}>Sent back {words}</th>
-                <th className="px-3 py-2 text-right font-semibold" title="Category A: inside 3 days">TAT met · A</th>
-                <th className="px-3 py-2 text-right font-semibold" title="Category B: inside 2 days">TAT met · B</th>
-                <th className="px-3 py-2 text-right font-semibold" title="Category C: inside 1 day">TAT met · C</th>
-                <th className="px-4 py-2 text-right font-semibold" title="All categories together">TAT met · all</th>
+                <th className={TH} title={`Closed ${words}, and open now`}>Total tickets</th>
+                <th className={TH} title={`Repairs they closed ${words}`}>Closed</th>
+                <th className={TH}>Closed %</th>
+                <th className={TH} title="Closed less assigned, on average">Average closure TAT</th>
+                <th className={TH} title="Assigned, in repair or waiting for a component">Open</th>
+                <th className="px-4 py-2 text-right font-semibold" title="Today less assigned, on average">Average open TAT</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-ink-100">
@@ -485,14 +485,73 @@ function EngineerTable({ rows, words }: { rows: EngineerRow[]; words: string }) 
                   <td className="px-4 py-2.5">
                     <Link to={`/tickets?eng=${r.id}`} className="font-medium text-ink-900 hover:underline">{r.name}</Link>
                   </td>
-                  <td className={clsx('px-3 py-2.5 text-right tabular-nums', r.withThem ? 'font-semibold text-ink-900' : 'text-ink-300')}>{r.withThem}</td>
-                  <td className={clsx('px-3 py-2.5 text-right tabular-nums', r.late ? 'font-semibold text-cyrixRed-600' : 'text-ink-300')}>{r.late}</td>
-                  <td className={clsx('px-3 py-2.5 text-right tabular-nums', r.dueSoon ? 'font-semibold text-amber-600' : 'text-ink-300')}>{r.dueSoon}</td>
-                  <td className={clsx('px-3 py-2.5 text-right tabular-nums', r.sent ? 'text-ink-700' : 'text-ink-300')}>{r.sent}</td>
-                  <td className="px-3 py-2.5 text-right"><Met met={r.onTimeByCategory.A} of={r.sentByCategory.A} /></td>
-                  <td className="px-3 py-2.5 text-right"><Met met={r.onTimeByCategory.B} of={r.sentByCategory.B} /></td>
-                  <td className="px-3 py-2.5 text-right"><Met met={r.onTimeByCategory.C} of={r.sentByCategory.C} /></td>
-                  <td className="px-4 py-2.5 text-right"><Met met={r.onTime} of={r.sent} /></td>
+                  <td className="px-3 py-2.5 text-right"><Count n={r.total} strong /></td>
+                  <td className="px-3 py-2.5 text-right"><Count n={r.closed} /></td>
+                  <td className="px-3 py-2.5 text-right tabular-nums">
+                    {r.total ? <span className="font-semibold text-ink-800">{percent(r.closed, r.total)}</span> : <span className="text-ink-300">—</span>}
+                  </td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-ink-700">{avg(r.avgClosureMs)}</td>
+                  <td className="px-3 py-2.5 text-right"><Count n={r.open} strong /></td>
+                  <td className="px-4 py-2.5 text-right tabular-nums text-ink-700">{avg(r.avgOpenMs)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * The same engineers by category (the user, 24 Sep): total and open, then A,
+ * B and C each as total and open.
+ */
+function EngineerCategories({ rows, words }: { rows: EngineerWork[]; words: string }) {
+  const shown = rows.filter(r => r.total > 0)
+  return (
+    <div className="card overflow-hidden">
+      <div className="border-b border-ink-200 bg-ink-50 px-4 py-2.5">
+        <h3 className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
+          <IconChip icon={HardHat} tone="violet" /> Engineers by category
+        </h3>
+        <p className="mt-1 text-xs text-ink-500">Total is closed {words} and open now; A 3 days, B 2, C 1.</p>
+      </div>
+      {shown.length === 0 ? (
+        <p className="px-4 py-6 text-center text-sm text-ink-400">No Revive Lab engineer has a ticket {words}.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full whitespace-nowrap text-sm">
+            <thead>
+              <tr className="text-[11px] font-semibold uppercase tracking-label text-ink-400">
+                <th rowSpan={2} className="border-b border-ink-200 px-4 py-2 text-left align-bottom font-semibold">Engineer</th>
+                <th rowSpan={2} className={clsx(TH, 'border-b border-ink-200 align-bottom')}>Total</th>
+                <th rowSpan={2} className={clsx(TH, 'border-b border-ink-200 align-bottom')}>Open</th>
+                {(['A', 'B', 'C'] as const).map(c => (
+                  <th key={c} colSpan={2} className="border-l border-ink-200 px-3 pt-2 text-center font-semibold">
+                    <span className={clsx('inline-block min-w-5 rounded px-1 py-px text-center text-[11px] font-bold normal-case', CATEGORY_CLASS[c])}>{c}</span>
+                  </th>
+                ))}
+              </tr>
+              <tr className="border-b border-ink-200 text-[11px] font-semibold uppercase tracking-label text-ink-400">
+                {(['A', 'B', 'C'] as const).flatMap(c => [
+                  <th key={`${c}-t`} className={clsx(TH, 'border-l border-ink-200')}>Total</th>,
+                  <th key={`${c}-o`} className={TH}>Open</th>,
+                ])}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-ink-100">
+              {shown.map(r => (
+                <tr key={r.id} className="hover:bg-ink-50">
+                  <td className="px-4 py-2.5">
+                    <Link to={`/tickets?eng=${r.id}`} className="font-medium text-ink-900 hover:underline">{r.name}</Link>
+                  </td>
+                  <td className="px-3 py-2.5 text-right"><Count n={r.total} strong /></td>
+                  <td className="px-3 py-2.5 text-right"><Count n={r.open} strong /></td>
+                  {(['A', 'B', 'C'] as const).flatMap(c => [
+                    <td key={`${c}-t`} className="border-l border-ink-100 px-3 py-2.5 text-right"><Count n={r.byCategory[c].total} /></td>,
+                    <td key={`${c}-o`} className="px-3 py-2.5 text-right"><Count n={r.byCategory[c].open} /></td>,
+                  ])}
                 </tr>
               ))}
             </tbody>

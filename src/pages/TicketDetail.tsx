@@ -1387,7 +1387,8 @@ function ActionForm({
         case 'complete':
           if (outcome === 'not_repairable' && !proposal) { onError('Say what should become of it: scrap, or back to the field engineer.'); return }
           if (note.trim().length < 3) { onError(outcome === 'repaired' ? 'Say what action was taken on it.' : 'Say why.'); return }
-          if (outcome === 'repaired' && shots.length === 0) { onError('Photograph the repaired spare — one photo at least.'); return }
+          // A photo or a video of it working, either will do; the voice note is extra (the user, 24 Sep).
+          if (outcome === 'repaired' && shots.length === 0 && !video) { onError('Add a photo or a video of the repaired spare working.'); return }
           await complete.mutateAsync({
             id: t.id, note, outcome,
             proposal: outcome === 'not_repairable' ? proposal : null,
@@ -1628,8 +1629,8 @@ function ActionForm({
         <div className="rounded-lg border border-lime-200 bg-lime-50/60 p-3">
           <p className="text-sm font-medium text-ink-900">The repaired spare</p>
           <p className="mt-0.5 text-xs text-ink-600">
-            A photo of it working is needed <span className="text-cyrixRed-600">*</span> — two at most. A video of up to
-            20 seconds and a voice note of up to a minute, if they help.
+            A photo or a video of it working is needed <span className="text-cyrixRed-600">*</span> — either one will do.
+            Up to two photos, a video of up to 20 seconds, and a voice note of up to a minute if it helps.
           </p>
           <div className="mt-2.5">
             <MediaCapture

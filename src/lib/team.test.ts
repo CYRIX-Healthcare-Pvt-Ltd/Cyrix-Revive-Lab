@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
-  STAGES, branchOf, categoryReport, countTickets, engineerReport, headcount, inTeamOf, indexTeam, isDueSoon, isLate,
-  nextMove, pathTo, percent, periodRange, stageOf, type MyTeam, type ReportTicket,
+  STAGES, branchOf, categoryReport, countTickets, engineerWork, headcount, inTeamOf, indexTeam, isLate,
+  nextMove, pathTo, percent, periodRange, repairWindow, stageOf, type MyTeam, type ReportTicket,
 } from './team'
 import { STATUS_ORDER } from './tickets'
 
@@ -98,11 +98,6 @@ describe('where a spare is', () => {
     expect(isLate(ticket({ status: 'closed', accepted_at: ago(100) }), NOW)).toBe(false)
   })
 
-  it('is due soon inside its last day', () => {
-    expect(isDueSoon(ticket({ accepted_at: ago(30) }), NOW)).toBe(true)
-    expect(isDueSoon(ticket({ accepted_at: ago(10) }), NOW)).toBe(false)
-  })
-
   it('says whose move it is', () => {
     expect(nextMove(ticket({ status: 'pending_acceptance' }))).toBe('Cochin Revive Lab, to accept it')
     expect(nextMove(ticket({ status: 'assigned' }))).toBe('Anu, to start the repair')
@@ -137,39 +132,55 @@ describe('the Revive Lab’s reports', () => {
     ticket({ id: 'f', status: 'pending_acceptance', engineer_id: null, engineer_name: null, spare_category: null, accepted_at: null }),
   ]
 
-  it('gives each engineer a row: with them now, late, sent back and on time', () => {
-    const rows = engineerReport(list, [{ id: 'E3', name: 'Cini' }], NOW)
+  // Status histories: assigned, then the repair closed or not.
+  const EVENTS: Record<string, Array<{ status: string; at: string }>> = {
+    a: [{ status: 'accepted', at: ago(12) }, { status: 'assigned', at: ago(10) }, { status: 'in_repair', at: ago(8) }],
+    b: [{ status: 'accepted', at: ago(31) }, { status: 'assigned', at: ago(30) }],
+    c: [{ status: 'assigned', at: ago(58) }, { status: 'in_repair', at: ago(50) }, { status: 'repaired', at: ago(28) }, { status: 'in_transit_return', at: ago(20) }],
+    d: [{ status: 'assigned', at: ago(98) }, { status: 'repaired', at: ago(92) }, { status: 'in_transit_return', at: ago(90) }, { status: 'closed', at: ago(2) }],
+  }
+  const eventsOf = (id: string) => EVENTS[id] ?? []
+
+  it('knows when a repair was assigned and when the engineer closed it', () => {
+    expect(repairWindow(EVENTS.c)).toEqual({ assignedAt: Date.parse(ago(58)), closedAt: Date.parse(ago(28)) })
+    expect(repairWindow(EVENTS.a)).toEqual({ assignedAt: Date.parse(ago(10)), closedAt: null })
+    // A reassignment inside the same run keeps the clock; a new round after a close starts it again.
+    expect(repairWindow([
+      { status: 'assigned', at: ago(40) }, { status: 'assigned', at: ago(35) }, { status: 'repaired', at: ago(30) },
+      { status: 'pending_acceptance', at: ago(20) }, { status: 'accepted', at: ago(19) }, { status: 'assigned', at: ago(18) },
+    ])).toEqual({ assignedAt: Date.parse(ago(18)), closedAt: null })
+  })
+
+  it('gives each engineer total, closed, open and the two averages', () => {
+    const rows = engineerWork(list, eventsOf, [{ id: 'E3', name: 'Cini' }], NOW)
     const anu = rows.find(r => r.id === 'E1')!
-    expect(anu).toMatchObject({ withThem: 2, late: 1, sent: 0 })
-    expect(anu.byCategory).toMatchObject({ A: 1, C: 1 })
-    expect(anu.lateByCategory.C).toBe(1)
+    // Two open: assigned 10 h and 30 h ago — 20 h on average.
+    expect(anu).toMatchObject({ total: 2, closed: 0, open: 2, avgClosureMs: null, avgOpenMs: 20 * H })
+    expect(anu.byCategory).toMatchObject({ A: { total: 1, open: 1 }, C: { total: 1, open: 1 } })
     const binu = rows.find(r => r.id === 'E2')!
-    // Both sent back; B's 2 days ended at 40 h in, on time; A's 3 days ended at 10 h in, on time.
-    expect(binu).toMatchObject({ withThem: 0, sent: 2, onTime: 2 })
-    // Each against its own category's days: one A and one B, both met.
-    expect(binu.sentByCategory).toEqual({ A: 1, B: 1, C: 0 })
-    expect(binu.onTimeByCategory).toEqual({ A: 1, B: 1, C: 0 })
+    // Two closed: 30 h and 6 h after assignment — 18 h on average.
+    expect(binu).toMatchObject({ total: 2, closed: 2, open: 0, avgClosureMs: 18 * H, avgOpenMs: null })
+    expect(binu.byCategory).toMatchObject({ A: { total: 1, open: 0 }, B: { total: 1, open: 0 } })
     // Somebody with nothing yet still has a row, last.
-    expect(rows[rows.length - 1]).toMatchObject({ id: 'E3', withThem: 0 })
+    expect(rows[rows.length - 1]).toMatchObject({ id: 'E3', total: 0 })
     expect(rows[0].id).toBe('E1')
   })
 
-  it('counts each category on the clock, due, late, and what went back in the period', () => {
-    const { rows, unclassified } = categoryReport(list, NOW)
+  it('counts each category on the Revive Lab\u2019s clock now, in TAT and above it', () => {
+    const rows = categoryReport(list, NOW)
     const a = rows.find(r => r.category === 'A')!
-    expect(a).toMatchObject({ days: 3, atLab: 2, late: 0, sent: 1, onTime: 1 })
+    expect(a).toEqual({ category: 'A', days: 3, atLab: 2, inTat: 2, aboveTat: 0 })
     const c = rows.find(r => r.category === 'C')!
-    expect(c).toMatchObject({ days: 1, atLab: 1, late: 1 })
-    expect(unclassified).toBe(1)
+    expect(c).toMatchObject({ days: 1, atLab: 1, inTat: 0, aboveTat: 1 })
   })
 
-  it('counts what was sent back in the period asked for, by the calendar', () => {
-    // NOW is 24 Sep: RL "c" went back on 23 Sep, "d" on 20 Sep — both this month, neither last month.
-    const thisMonth = engineerReport(list, [], NOW, periodRange('month', NOW)).find(r => r.id === 'E2')!
-    expect(thisMonth.sent).toBe(2)
-    const lastMonth = engineerReport(list, [], NOW, periodRange('last_month', NOW)).find(r => r.id === 'E2')!
-    expect(lastMonth.sent).toBe(0)
-    expect(categoryReport(list, NOW, periodRange('last_month', NOW)).rows.every(r => r.sent === 0)).toBe(true)
+  it('counts what was closed in the period asked for, by the calendar; open is always now', () => {
+    // NOW is 24 Sep: "c" and "d" were closed by the engineer this month, neither last month.
+    const thisMonth = engineerWork(list, eventsOf, [], NOW, periodRange('month', NOW)).find(r => r.id === 'E2')!
+    expect(thisMonth.closed).toBe(2)
+    const lastMonth = engineerWork(list, eventsOf, [], NOW, periodRange('last_month', NOW))
+    expect(lastMonth.find(r => r.id === 'E2')!.closed).toBe(0)
+    expect(lastMonth.find(r => r.id === 'E1')!.open).toBe(2)
   })
 
   it('knows a month from its 1st to the next 1st', () => {
