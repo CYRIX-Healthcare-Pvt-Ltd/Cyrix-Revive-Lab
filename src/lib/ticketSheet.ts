@@ -11,7 +11,7 @@
  * 10:49 AM.
  */
 import type { Ticket } from './queries'
-import { CRITICALITY_LABEL, ITEM_KIND_LABEL, OUTCOME_LABEL, statusLook } from './tickets'
+import { CRITICALITY_LABEL, ITEM_KIND_LABEL, OUTCOME_LABEL, awaitingManager, statusLook } from './tickets'
 import { categoryTat, formatSpan } from './tat'
 
 export type Cell = string | number | null
@@ -90,7 +90,7 @@ export const TICKET_COLUMNS: readonly Column[] = [
   { heading: 'Ticket', width: 9, kind: 'text', value: t => t.code },
   { heading: 'Ticket ID', width: 14, kind: 'text', value: t => t.source_ticket_no },
   { heading: 'Raised on', width: 22, kind: 'datetime', value: t => excelDateTime(t.created_at) },
-  { heading: 'Status', width: 22, kind: 'text', value: t => statusLook(t.status, t.closure, t.proposal).short },
+  { heading: 'Status', width: 22, kind: 'text', value: t => statusLook(t.status, t.closure, t.proposal, awaitingManager(t)).short },
   { heading: 'Returned not working (times)', width: 12, kind: 'number', value: t => (t.field_returns?.length || null) },
   { heading: 'Category', width: 9, kind: 'text', value: t => t.spare_category },
   { heading: 'Criticality', width: 12, kind: 'text', value: t => (t.criticality ? CRITICALITY_LABEL[t.criticality] : null) },

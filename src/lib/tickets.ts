@@ -162,14 +162,27 @@ export type Closure = 'returned' | 'scrapped' | 'discarded'
  */
 export function statusLook(
   status: TicketStatus, closure?: Closure | null, proposal?: Proposal | null,
+  /** Not repairable and no manager has approved it yet (rl_0034). */
+  awaitingManager = false,
 ): { label: string; short: string; tone: Tone } {
   if (status === 'closed' && closure === 'scrapped') return { label: 'Scrapped — closed', short: 'Scrapped', tone: 'slate' }
   if (status === 'closed' && closure === 'discarded') return { label: 'Discarded — never sent', short: 'Discarded', tone: 'slate' }
+  // Its own group in Waiting on you: the manager's, before the coordinator's.
+  if (status === 'not_repairable' && awaitingManager) {
+    return { label: 'Not repairable — waiting for a Revive Lab manager to approve', short: 'Manager approval', tone: 'rose' }
+  }
   if (status === 'not_repairable' && proposal) {
-    return { ...STATUS.not_repairable, label: proposal === 'scrap' ? 'Not repairable — to scrap' : 'Not repairable — to send back' }
+    return {
+      ...STATUS.not_repairable,
+      label: proposal === 'scrap' ? 'Not repairable — to scrap' : proposal === 'oem' ? 'Not repairable — to send to the OEM' : 'Not repairable — to send back',
+    }
   }
   return STATUS[status] ?? { label: status, short: status, tone: 'slate' }
 }
+
+/** Not repairable, and waiting for a manager of its Revive Lab to approve that (rl_0034). */
+export const awaitingManager = (t: { status: TicketStatus; nr_approved_at?: string | null }): boolean =>
+  t.status === 'not_repairable' && !t.nr_approved_at
 
 /** Badge colours per tone, light and dark both — the tokens flip underneath. */
 export const TONE_CLASS: Record<Tone, string> = {
@@ -373,11 +386,12 @@ export interface Approval {
 }
 
 /** Not repairable: what the engineer proposes becomes of it. */
-export type Proposal = 'scrap' | 'return'
+export type Proposal = 'scrap' | 'return' | 'oem'
 
 export const PROPOSAL_LABEL: Record<Proposal, string> = {
   scrap: 'Move to scrap',
   return: 'Send back to the field engineer',
+  oem: 'Send to OEM',
 }
 
 /* ------------------------------------------------------------------ */
@@ -468,6 +482,8 @@ export interface TicketLike {
   stock?: readonly StockUseSummary[] | null
   closure?: Closure | null
   proposal?: Proposal | null
+  /** Not repairable: when a manager approved it (rl_0034). */
+  nr_approved_at?: string | null
   approval?: Pick<Approval, 'kind' | 'status'> | null
   /** Its latest transfer to another field engineer (rl_0028). */
   handover?: { status: 'pending' | 'accepted' | 'declined' | 'cancelled'; to_id: string } | null
@@ -476,6 +492,11 @@ export interface TicketLike {
 /** A coordinator or manager of that lab: the desk. */
 export function runsTrc(me: Me | null | undefined, trcId: string): boolean {
   return !!me && (me.is_coordinator || me.is_manager) && me.trc_ids.includes(trcId)
+}
+
+/** A manager of that Revive Lab: approves a spare as not repairable (rl_0034). */
+export function managesTrc(me: Me | null | undefined, trcId: string): boolean {
+  return !!me && me.is_manager && me.trc_ids.includes(trcId)
 }
 
 /** Holds the Purchase role for that Revive Lab. */
@@ -516,6 +537,7 @@ export type Action =
   | 'use_part' | 'request_part' | 'expect' | 'scrap'
   | 'approve' | 'decline_approval' | 'send' | 'cancel_transfer' | 'reroute' | 'discard'
   | 'hand_over' | 'accept_handover' | 'decline_handover' | 'cancel_handover'
+  | 'approve_nr' | 'decline_nr'
 
 /**
  * What this person may do to this ticket now, in the order the buttons
@@ -550,11 +572,17 @@ export function actionsFor(t: TicketLike, me: Me | null | undefined): Action[] {
   if (mine && REPAIRING.includes(t.status)) out.push('use_part', 'request_part', 'observe', 'expect')
   if (desk && (t.status === 'accepted' || t.status === 'assigned')) out.push('assign')
   if (desk && (t.status === 'repaired' || t.status === 'service_denied')) out.push('dispatch')
-  // Not repairable: the one move the engineer proposed. A repair closed by
-  // an app from before the proposal leaves the desk both (rl_0014).
-  if (desk && t.status === 'not_repairable') {
+  // Not repairable waits for a manager of its Revive Lab — any of them, the
+  // engineer too when they are one (rl_0035: "if only 1 manager in trc then
+  // what happens") — before the coordinator moves it (rl_0034).
+  const waits = awaitingManager(t)
+  if (waits && managesTrc(me, t.trc_id)) out.push('approve_nr', 'decline_nr')
+  // Approved: the one move the engineer proposed — dispatched back, or to
+  // the OEM (rl_0033), or scrapped. A repair closed by an app from before
+  // the proposal leaves the desk both (rl_0014).
+  if (desk && t.status === 'not_repairable' && !waits) {
     if (t.proposal !== 'scrap') out.push('dispatch')
-    if (t.proposal !== 'return') out.push('scrap')
+    if (t.proposal !== 'return' && t.proposal !== 'oem') out.push('scrap')
   }
   // Only the field engineer it was sent back to: the Revive Lab dispatched
   // it and cannot know it has landed (rl_0005). Not going to be there, they
@@ -593,7 +621,7 @@ export function partsWaitingOn(t: TicketLike, me: Me | null | undefined): number
 
 const SIDE_STEPS: readonly Action[] = [
   'transfer', 'return', 'observe', 'courier', 'use_part', 'request_part', 'expect',
-  'decline_approval', 'cancel_transfer', 'discard', 'hand_over', 'cancel_handover', 'decline_handover',
+  'decline_approval', 'cancel_transfer', 'discard', 'hand_over', 'cancel_handover', 'decline_handover', 'decline_nr',
 ]
 
 /**
@@ -604,7 +632,16 @@ const SIDE_STEPS: readonly Action[] = [
  */
 export function waitingOnMe(t: TicketLike, me: Me | null | undefined): boolean {
   const forward = (a: Action) => !SIDE_STEPS.includes(a) && !(a === 'assign' && t.status !== 'accepted')
-  return actionsFor(t, me).some(forward) || partsWaitingOn(t, me) > 0
+  /*
+    A manager can do the desk's work when the coordinator is out, and keeps
+    the buttons for it — but the desk's queue is the coordinator's. What
+    waits on a manager who is not a coordinator is what only they do:
+    approving a spare as not repairable, and any repair of their own (the
+    user, 29 Sep: "why in manager the pending of coordinator role showing?").
+  */
+  const asWaiting = me && me.is_manager && !me.is_coordinator ? { ...me, is_manager: false } : me
+  return actionsFor(t, asWaiting).some(forward) || partsWaitingOn(t, asWaiting) > 0
+    || actionsFor(t, me).includes('approve_nr')
 }
 
 /**
@@ -645,9 +682,11 @@ export function canClassify(
 export function statusGroups<T extends TicketLike>(rows: readonly T[]): Array<{ key: string; label: string; tone: Tone; rows: T[] }> {
   const groups = new Map<string, { key: string; label: string; tone: Tone; order: number; rows: T[] }>()
   for (const t of rows) {
-    const look = statusLook(t.status, t.closure, t.proposal)
+    const waits = awaitingManager(t)
+    const look = statusLook(t.status, t.closure, t.proposal, waits)
     const key = look.short
-    const g = groups.get(key) ?? { key, label: look.short, tone: look.tone, order: STATUS[t.status]?.order ?? 99, rows: [] }
+    // The manager's approval comes just before the coordinator's not-repairable moves.
+    const g = groups.get(key) ?? { key, label: look.short, tone: look.tone, order: waits ? 5.1 : STATUS[t.status]?.order ?? 99, rows: [] }
     g.rows.push(t)
     groups.set(key, g)
   }

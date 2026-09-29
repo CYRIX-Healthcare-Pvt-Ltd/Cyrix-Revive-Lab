@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  ticketCode, parseTicketCode, actionsFor, runsTrc, waitingOnMe, cleanItems, itemsSummary,
+  ticketCode, parseTicketCode, actionsFor, awaitingManager, runsTrc, waitingOnMe, cleanItems, itemsSummary,
   partsWaitingOn, ticketTabs, serves, approversOf, orList, statusLook, canRaise, partActor, partStatusLook,
   ITEM_KIND_LABEL, PART_PROGRESS, PART_STATUS, poLabel, canClassify, statusGroups, roundOf, ordinal, mergeDeskRaise,
   type Me, type TicketLike,
@@ -158,8 +158,9 @@ describe('components and how a repair ends (rl_0013)', () => {
   it('sends every closed repair to the desk for dispatch, and offers scrap only for not repairable', () => {
     expect(actionsFor(ticket({ status: 'repaired' }), desk)).toEqual(['dispatch'])
     expect(actionsFor(ticket({ status: 'service_denied' }), desk)).toEqual(['dispatch'])
-    expect(actionsFor(ticket({ status: 'not_repairable' }), desk)).toEqual(['dispatch', 'scrap'])
-    expect(actionsFor(ticket({ status: 'not_repairable' }), engineer)).toEqual([])
+    // Once a manager has approved it as not repairable (rl_0034).
+    expect(actionsFor(ticket({ status: 'not_repairable', nr_approved_at: '2026-09-29T10:00:00Z' }), desk)).toEqual(['dispatch', 'scrap'])
+    expect(actionsFor(ticket({ status: 'not_repairable', nr_approved_at: '2026-09-29T10:00:00Z' }), engineer)).toEqual([])
   })
 
   it('puts a component request in the queue of whoever has to move it', () => {
@@ -278,10 +279,39 @@ describe('states, approval and the proposal (rl_0014)', () => {
   })
 
   it('offers the desk only the move the engineer proposed for a spare that cannot be repaired', () => {
-    expect(actionsFor(ticket({ status: 'not_repairable', proposal: 'scrap' }), desk)).toEqual(['scrap'])
-    expect(actionsFor(ticket({ status: 'not_repairable', proposal: 'return' }), desk)).toEqual(['dispatch'])
+    expect(actionsFor(ticket({ status: 'not_repairable', proposal: 'scrap', nr_approved_at: '2026-09-29T10:00:00Z' }), desk)).toEqual(['scrap'])
+    expect(actionsFor(ticket({ status: 'not_repairable', proposal: 'return', nr_approved_at: '2026-09-29T10:00:00Z' }), desk)).toEqual(['dispatch'])
+    // Sent to its maker: dispatched too, to the OEM's address — never scrapped (rl_0033).
+    expect(actionsFor(ticket({ status: 'not_repairable', proposal: 'oem', nr_approved_at: '2026-09-29T10:00:00Z' }), desk)).toEqual(['dispatch'])
     // Closed by an app from before the proposal: the desk chooses, as it did.
-    expect(actionsFor(ticket({ status: 'not_repairable', proposal: null }), desk)).toEqual(['dispatch', 'scrap'])
+    expect(actionsFor(ticket({ status: 'not_repairable', proposal: null, nr_approved_at: '2026-09-29T10:00:00Z' }), desk)).toEqual(['dispatch', 'scrap'])
+  })
+
+  it('waits for a manager of its Revive Lab before the desk may move a spare that cannot be repaired (rl_0034)', () => {
+    const manager = me({ employee_id: 'mgr', is_manager: true, trc_ids: [REG] })
+    const t = ticket({ status: 'not_repairable', proposal: 'oem', engineer_id: 'eng' })
+    expect(actionsFor(t, desk)).toEqual([])
+    expect(actionsFor(t, manager)).toEqual(['approve_nr', 'decline_nr'])
+    expect(waitingOnMe(t, manager)).toBe(true)
+    expect(waitingOnMe(t, desk)).toBe(false)
+    // A manager who repaired it himself approves his own call too — a Revive Lab may have one manager (rl_0035).
+    expect(actionsFor({ ...t, engineer_id: 'mgr' }, manager)).toEqual(['approve_nr', 'decline_nr'])
+    // Nor does a manager of another Revive Lab.
+    expect(actionsFor(t, me({ employee_id: 'mgr2', is_manager: true, trc_ids: ['other'] }))).toEqual([])
+    expect(statusLook('not_repairable', null, 'oem', awaitingManager(t)).short).toBe('Manager approval')
+    expect(statusLook('not_repairable', null, 'oem').label).toBe('Not repairable — to send to the OEM')
+  })
+
+  it('leaves the desk’s queue to the coordinator: a manager waits only on what only a manager does', () => {
+    const manager = me({ employee_id: 'mgr', is_manager: true, trc_ids: [REG] })
+    const arrived = ticket({ status: 'pending_acceptance' })
+    // The manager can still accept it, covering the desk…
+    expect(actionsFor(arrived, manager)).toContain('accept')
+    // …but it waits on the coordinator, not on them.
+    expect(waitingOnMe(arrived, manager)).toBe(false)
+    expect(waitingOnMe(arrived, desk)).toBe(true)
+    // One who is both still has the desk's queue.
+    expect(waitingOnMe(arrived, me({ is_manager: true, is_coordinator: true, trc_ids: [REG] }))).toBe(true)
   })
 
   it('says how a closed ticket ended when it did not come back', () => {

@@ -121,6 +121,11 @@ export interface Ticket {
   dispatched_at: string | null
   /** When the Revive Lab engineer closed the repair, this round: the category TAT's end (rl_0030). */
   repaired_at: string | null
+  /** Not repairable and returned to the OEM: its name and address (rl_0033). */
+  oem_address: string | null
+  /** Not repairable: when a manager of its Revive Lab approved it, and who (rl_0034). */
+  nr_approved_at: string | null
+  nr_approved_by_name: string | null
   /** Under Pvt, what the customer can be asked to pay, entered on dispatch (rl_0025). */
   billing_estimate: number | null
   /** Its BEMMP asks for that estimate — Pvt. */
@@ -219,7 +224,7 @@ export interface TrailEvent {
    * the courier details added after the ticket was raised (rl_0011). Only a
    * move changes the status.
    */
-  kind: 'status' | 'observation' | 'courier' | 'component' | 'eta' | 'classify' | 'handover'
+  kind: 'status' | 'observation' | 'courier' | 'component' | 'eta' | 'classify' | 'handover' | 'review'
   /**
    * The button that made the step, where the status alone does not say:
    * used, requested, accepted, declined, purchased, confirmed, cancelled,
@@ -957,12 +962,22 @@ export const useCancelPart = () => useTicketMutation(
   (a: { id: string; reason?: string }) => rpc('revive_cancel_part', { p_request_id: a.id, p_reason: a.reason || null }))
 
 export const useDispatch = () => useTicketMutation(
-  (a: { id: string; courier: string; awb: string; on: string; note?: string; estimate?: number | null }) =>
+  (a: { id: string; courier: string; awb: string; on: string; note?: string; estimate?: number | null; oemAddress?: string | null }) =>
     rpc('revive_dispatch', {
       p_ticket_id: a.id, p_courier: a.courier, p_awb: a.awb,
       p_dispatched_on: a.on || null, p_note: a.note || null,
       p_billing_estimate: a.estimate ?? null,
+      // Not repairable and proposed for the OEM: where it goes (rl_0033).
+      p_oem_address: a.oemAddress ?? null,
     }))
+
+/** A manager of its Revive Lab agrees it cannot be repaired; the coordinator then moves it (rl_0034). */
+export const useApproveNotRepairable = () => useTicketMutation(
+  (a: { id: string; note?: string }) => rpc('revive_approve_not_repairable', { p_ticket_id: a.id, p_note: a.note || null }))
+
+/** A manager of its Revive Lab does not agree: back to the engineer, to repair, with why (rl_0034). */
+export const useDeclineNotRepairable = () => useTicketMutation(
+  (a: { id: string; reason: string }) => rpc('revive_decline_not_repairable', { p_ticket_id: a.id, p_reason: a.reason }))
 
 /** It arrived back: the field engineer has it, and says whether the courier damaged it. */
 export const useMarkReceived = () => useTicketMutation(

@@ -4,7 +4,7 @@ import clsx from 'clsx'
 import { ChevronRight, Clock3, Route, Search, Users } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useMyTeam, useTickets, type Ticket } from '@/lib/queries'
-import { TONE_DOT, TONE_TEXT, parseTicketCode } from '@/lib/tickets'
+import { TONE_DOT, TONE_TEXT, awaitingManager, parseTicketCode } from '@/lib/tickets'
 import {
   STAGES, branchOf, countTickets, headcount, inTeamOf, indexTeam, isLate, nextMove, openFor, ownerOfTicket, pathTo,
   type TeamCounts, type TeamPerson,
@@ -212,7 +212,7 @@ export default function Team() {
                         <span className="text-ink-400"> · {teamOfLabel(owner)}</span>
                       </span>
                       <span className="col-span-2 flex flex-wrap items-center gap-1.5 sm:col-span-1">
-                        <StatusBadge status={t.status} closure={t.closure} proposal={t.proposal} />
+                        <StatusBadge status={t.status} closure={t.closure} proposal={t.proposal} awaiting={awaitingManager(t)} />
                         <ClassTag ticket={t} />
                       </span>
                       <span className={clsx('col-span-2 min-w-0 truncate text-xs sm:col-span-1', isLate(t) ? 'font-medium text-cyrixRed-700' : 'text-ink-500')}>

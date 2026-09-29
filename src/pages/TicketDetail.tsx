@@ -4,14 +4,14 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import clsx from 'clsx'
 import {
   ArrowLeft, ArrowRightLeft, BadgeCheck, Ban, Boxes, CalendarClock, Camera, CheckCircle2, CircleCheck, CircleX, ClipboardCheck,
-  ClipboardList, Forward, Hand, History as HistoryIcon, PackageCheck, PackagePlus, PackageX, PlayCircle, Receipt, RotateCcw, ScanSearch, Tag,
+  ClipboardList, Factory, Forward, Hand, History as HistoryIcon, PackageCheck, PackagePlus, PackageX, PlayCircle, Receipt, RotateCcw, ScanSearch, Tag,
   Send, ShieldQuestion, ShieldX, ShoppingCart, Signpost, Timer, Trash2, TriangleAlert, Truck, Undo2, UserCheck, UserCog, UserPlus,
   UserX, Wrench, X,
   type LucideIcon,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import {
-  useAccept, useAddObservation, useAnswerHandover, useApprove, useAssign, useCancelHandover, useCancelTransfer, useCloseTicket, useCompleteRepair,
+  useAccept, useAddObservation, useAnswerHandover, useApprove, useApproveNotRepairable, useAssign, useDeclineNotRepairable, useCancelHandover, useCancelTransfer, useCloseTicket, useCompleteRepair,
   useFindPeople, useHandOver, usePhoneOf,
   useDeclineApproval, useDiscard, useDispatch, useHops, useMarkReceived, useMembers, useRequestTransfer, useReroute,
   usePartRequests, useReturnToDesk, useReturnToLab, useScrap, useSend, useSetClassification, useSetExpectedDate, useStartRepair, useTickets,
@@ -19,7 +19,7 @@ import {
   type FieldReturn, type PastRound, type Person, type Ticket, type TrailEvent,
 } from '@/lib/queries'
 import {
-  actionsFor, approversOf, canClassify, itemsSummary, mergeDeskRaise, orList, ordinal, parseTicketCode, roundOf, serves, stateLabel,
+  actionsFor, approversOf, awaitingManager, canClassify, itemsSummary, mergeDeskRaise, orList, ordinal, parseTicketCode, roundOf, serves, stateLabel,
   CATEGORY_TAT_DAYS, CRITICALITY_LABEL,
   ITEM_KIND_LABEL, OUTCOME_LABEL, REPAIRING, STATUS, TONE_DOT, TONE_SOFT, TONE_TEXT, TRC_KIND_LABEL, statusLook,
   type Action, type Approval, type Criticality, type Outcome, type Proposal, type SpareCategory, type TicketItem,
@@ -111,12 +111,12 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
       <div className="card overflow-hidden">
         {/* The status, along the top of the card: the page says where the
             spare is before a word of it is read. */}
-        <div aria-hidden className={clsx('h-1', TONE_DOT[statusLook(t.status, t.closure, t.proposal).tone])} />
+        <div aria-hidden className={clsx('h-1', TONE_DOT[statusLook(t.status, t.closure, t.proposal, awaitingManager(t)).tone])} />
         <div className="flex flex-wrap items-start justify-between gap-3 p-4 sm:p-5">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="font-mono text-2xl font-semibold text-ink-900">{t.code}</h1>
-              <StatusBadge status={t.status} closure={t.closure} proposal={t.proposal} full />
+              <StatusBadge status={t.status} closure={t.closure} proposal={t.proposal} awaiting={awaitingManager(t)} full />
               {t.source === 'warehouse' && <WarehouseChip />}
             </div>
             <p className="mt-1 text-sm text-ink-600">
@@ -286,6 +286,12 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
                 <Row label="Spare return address">
                   {t.return_address && <span className="whitespace-pre-wrap">{t.return_address}</span>}
                 </Row>
+                {/* Not repairable, sent to its maker instead (rl_0033). */}
+                {t.oem_address && t.proposal === 'oem' && (
+                  <Row label="Sent to the OEM">
+                    <span className="whitespace-pre-wrap">{t.oem_address}</span>
+                  </Row>
+                )}
                 <Courier name={t.out_courier} awb={t.out_awb} on={t.out_dispatched_on} empty="Not dispatched yet" />
               </div>
             </Section>
@@ -350,10 +356,13 @@ function WhereItIs({ ticket: t }: { ticket: Ticket }) {
     case 'not_approved':
       return <>{t.trc_name} not approved · waiting on {t.stakeholder_name} to send it elsewhere or discard it</>
     case 'not_repairable':
+      // First a manager of the Revive Lab agrees it cannot be repaired (rl_0034).
+      if (awaitingManager(t)) return <>{at} · waiting on a manager of {t.trc_name} to approve it as not repairable</>
       return (
         <>
-          {at} · waiting on the coordinator to {t.proposal === 'scrap' ? 'move it to scrap, as the engineer proposed'
+          {at} · approved{t.nr_approved_by_name ? <> by {t.nr_approved_by_name}</> : null} · waiting on the coordinator to {t.proposal === 'scrap' ? 'move it to scrap, as the engineer proposed'
             : t.proposal === 'return' ? 'dispatch it back, as the engineer proposed'
+              : t.proposal === 'oem' ? 'dispatch it to the OEM, as the engineer proposed'
               : 'move it to scrap or dispatch it back'}
         </>
       )
@@ -756,11 +765,14 @@ function stepLook(
   if (e.action === 'repaired') return { title: 'Repaired', tone, icon: ClipboardCheck }
   if (e.action === 'not_repairable') {
     return {
-      title: proposal ? `Closed as not repairable — proposes ${proposal === 'scrap' ? 'scrap' : 'sending it back'}` : 'Closed as not repairable',
+      title: proposal ? `Closed as not repairable — proposes ${proposal === 'scrap' ? 'scrap' : proposal === 'oem' ? 'sending it to the OEM' : 'sending it back'}` : 'Closed as not repairable',
       tone, icon: PackageX,
     }
   }
   if (e.action === 'customer_denied') return { title: 'Customer denied service', tone, icon: UserX }
+  // A manager's word on not repairable (rl_0034).
+  if (e.kind === 'review' && e.action === 'nr_approved') return { title: 'Approved as not repairable', tone: 'rose', icon: BadgeCheck }
+  if (e.action === 'nr_declined') return { title: 'Not approved as not repairable — back to repair', tone: 'indigo', icon: Wrench }
   if (e.action === 'scrapped') return { title: 'Moved to scrap — closed', tone: 'slate', icon: Trash2 }
   if (e.kind === 'observation') {
     // Numbered, so "Observation 2" can be talked about on the phone.
@@ -1015,6 +1027,9 @@ const ACTION_META: Record<Action, { label: string; icon: LucideIcon; tone: Tone;
   accept_handover: { label: 'Accept ticket', icon: UserCheck, tone: 'violet', weight: 'main', primary: true },
   decline_handover: { label: 'Decline', icon: UserX, tone: 'slate', weight: 'aside' },
   cancel_handover: { label: 'Cancel transfer', icon: Undo2, tone: 'slate', weight: 'aside' },
+  // Not repairable waits for a manager of its Revive Lab (rl_0034).
+  approve_nr: { label: 'Approve as not repairable', icon: BadgeCheck, tone: 'rose', weight: 'main', primary: true },
+  decline_nr: { label: 'Send back to repair', icon: Wrench, tone: 'indigo', weight: 'main' },
 }
 
 /** The field engineer's answer once it is fitted, in the colours of the two ways it can end. */
@@ -1038,6 +1053,8 @@ function actionMeta(action: Action, t: Ticket) {
   }
   if (action === 'reroute' && t.state) return { ...m, label: `Send to a ${t.state} or Regional Revive Lab` }
   if (action === 'cancel_handover' && t.handover) return { ...m, label: `Cancel transfer to ${t.handover.to_name}` }
+  // Not repairable, and the engineer proposed its maker: the same dispatch, to the OEM (rl_0033).
+  if (action === 'dispatch' && t.status === 'not_repairable' && t.proposal === 'oem') return { ...m, label: 'Dispatch to the OEM', icon: Factory }
   return m
 }
 
@@ -1360,6 +1377,9 @@ function ActionForm({
   // Under Pvt the customer can be asked to pay for the repair: what to bill, before it goes (rl_0025).
   const asksEstimate = action === 'dispatch' && !!t.asks_billing_estimate
   const [estimate, setEstimate] = useState('')
+  // Not repairable, going to its maker: where to, as a return goes to the facility's address (rl_0033).
+  const toOem = action === 'dispatch' && t.status === 'not_repairable' && t.proposal === 'oem'
+  const [oemAddress, setOemAddress] = useState(toOem && t.equipment_make ? `${t.equipment_make}\n` : '')
   const { data: requests } = usePartRequests(asksEstimate ? t.id : undefined)
   const purchased = (requests ?? []).reduce((sum, r) => sum + (r.bill_amount ?? 0), 0)
 
@@ -1421,9 +1441,8 @@ function ActionForm({
           })
           onDone(outcome === 'repaired' ? 'Repair closed. It is with the coordinator for dispatch.'
             : outcome === 'not_repairable'
-              ? proposal === 'scrap'
-                ? 'Closed as not repairable. The coordinator moves it to scrap, as you proposed.'
-                : `Closed as not repairable. The coordinator sends it back to ${t.stakeholder_name}, as you proposed.`
+              ? `Closed as not repairable. A manager of ${t.trc_name} approves it, then the coordinator ${
+                proposal === 'scrap' ? 'moves it to scrap' : proposal === 'oem' ? 'sends it to the OEM' : `sends it back to ${t.stakeholder_name}`}, as you proposed.`
               : 'Closed: the customer denied service. The coordinator sends it back.')
           break
         case 'dispatch': {
@@ -1431,8 +1450,10 @@ function ActionForm({
           if (asksEstimate && (amount === null || !Number.isFinite(amount) || amount < 0)) {
             onError('Enter the estimated billing cost — under Pvt the customer can be asked to pay it.'); return
           }
-          await dispatch.mutateAsync({ id: t.id, courier, awb, on, note, estimate: asksEstimate ? amount : null })
-          onDone(asksEstimate ? `Dispatched back, with the estimated billing of ${rupees(amount!)}.` : 'Dispatched back to the field.')
+          if (toOem && oemAddress.trim().length < 5) { onError('Enter the OEM’s name and address — where it is going.'); return }
+          await dispatch.mutateAsync({ id: t.id, courier, awb, on, note, estimate: asksEstimate ? amount : null, oemAddress: toOem ? oemAddress.trim() : null })
+          onDone(toOem ? 'Dispatched to the OEM.'
+            : asksEstimate ? `Dispatched back, with the estimated billing of ${rupees(amount!)}.` : 'Dispatched back to the field.')
           break
         }
         case 'received':
@@ -1596,8 +1617,9 @@ function ActionForm({
       {action === 'complete' && outcome === 'not_repairable' && (
         <div>
           <span className="label">What should become of it? <span className="text-cyrixRed-600">*</span></span>
-          <div className="mt-1 grid gap-2 sm:grid-cols-2">
-            {(['scrap', 'return'] as const).map(p => (
+          <div className="mt-1 grid gap-2 sm:grid-cols-3">
+            {/* Sending it to its maker goes the same way as sending it back, to the OEM's address (rl_0033) — "Send to OEM", the user's term. */}
+            {(['scrap', 'return', 'oem'] as const).map(p => (
               <button
                 key={p}
                 type="button"
@@ -1606,16 +1628,20 @@ function ActionForm({
                 className={clsx(
                   'flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm font-medium transition-colors',
                   proposal === p
-                    ? p === 'scrap' ? 'border-slate-300 bg-slate-50 text-slate-900' : 'border-teal-300 bg-teal-50 text-teal-900'
+                    ? p === 'scrap' ? 'border-slate-300 bg-slate-50 text-slate-900'
+                      : p === 'oem' ? 'border-violet-300 bg-violet-50 text-violet-900'
+                        : 'border-teal-300 bg-teal-50 text-teal-900'
                     : 'border-ink-200 text-ink-700 hover:border-ink-400',
                 )}
               >
-                {p === 'scrap' ? <Trash2 className="h-4 w-4 text-slate-500" /> : <Undo2 className="h-4 w-4 text-teal-600" />}
-                {p === 'scrap' ? 'Propose scrap' : `Send back to ${t.stakeholder_name}`}
+                {p === 'scrap' ? <Trash2 className="h-4 w-4 shrink-0 text-slate-500" />
+                  : p === 'oem' ? <Factory className="h-4 w-4 shrink-0 text-violet-600" />
+                    : <Undo2 className="h-4 w-4 shrink-0 text-teal-600" />}
+                {p === 'scrap' ? 'Propose scrap' : p === 'oem' ? 'Send to OEM' : `Send back to ${t.stakeholder_name}`}
               </button>
             ))}
           </div>
-          <p className="mt-1 text-xs text-ink-500">The coordinator closes it the way you propose.</p>
+          <p className="mt-1 text-xs text-ink-500">A manager of {t.trc_name} approves it first; then the coordinator closes it the way you propose.</p>
         </div>
       )}
 
@@ -1756,6 +1782,23 @@ function ActionForm({
             <input className="input mt-1" type="date" value={on} min={floor} max={action === 'accept' || returning ? localToday() : undefined} onChange={e => setOn(e.target.value)} />
           </label>
         </div>
+      )}
+
+      {toOem && (
+        <label className="block">
+          <span className="label">OEM name and address <span className="text-cyrixRed-600">*</span></span>
+          <textarea
+            className="input mt-1"
+            rows={3}
+            maxLength={500}
+            value={oemAddress}
+            onChange={e => setOemAddress(e.target.value)}
+            placeholder={'e.g. Mindray Medical India Pvt Ltd\nPlot 9, Andheri East, Mumbai 400093'}
+          />
+          <span className="mt-1 block text-xs text-ink-500">
+            {t.engineer_name ?? 'The engineer'} proposed sending it to the OEM{t.equipment_make ? ` — ${t.equipment_make}, on the route card` : ''}.
+          </span>
+        </label>
       )}
 
       {asksEstimate && (
@@ -1943,7 +1986,7 @@ function ClassifyDialog({ ticket: t, onClose, onDone }: {
 /** The moves that ask one small question over the page instead of a form under the buttons. */
 const POP_UP: Action[] = [
   'start', 'expect', 'scrap', 'approve', 'decline_approval', 'cancel_transfer', 'discard',
-  'accept_handover', 'decline_handover', 'cancel_handover',
+  'accept_handover', 'decline_handover', 'cancel_handover', 'approve_nr', 'decline_nr',
 ]
 
 /** Today in the reader's own time, as the date inputs write it. */
@@ -1974,6 +2017,8 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
   const discard = useDiscard()
   const answer = useAnswerHandover()
   const cancelHandover = useCancelHandover()
+  const approveNr = useApproveNotRepairable()
+  const declineNr = useDeclineNotRepairable()
   const navigate = useNavigate()
   const { data: trcs } = useTrcs()
   const a = t.approval
@@ -1984,7 +2029,7 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
   const [note, setNote] = useState('')
   const [toTrc, setToTrc] = useState(action === 'approve' ? a?.to_trc_id ?? '' : '')
   const [error, setError] = useState<string | null>(null)
-  const busy = [start, expect, scrap, approve, decline, cancelTransfer, discard, answer, cancelHandover].some(m => m.isPending)
+  const busy = [start, expect, scrap, approve, decline, cancelTransfer, discard, answer, cancelHandover, approveNr, declineNr].some(m => m.isPending)
   const meta = actionMeta(action, t)
   // Approving a transfer for the Revive Lab it is already at would be no transfer.
   const approvable = (trcs ?? []).filter(x => x.is_active && !(a?.kind === 'transfer' && x.id === a.from_trc_id))
@@ -2037,6 +2082,14 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
       } else if (action === 'cancel_handover') {
         await cancelHandover.mutateAsync({ id: t.id })
         onDone(`Transfer cancelled. ${t.code} stays with you.`)
+      } else if (action === 'approve_nr') {
+        await approveNr.mutateAsync({ id: t.id, note })
+        onDone(`Approved as not repairable. The coordinator now ${
+          t.proposal === 'scrap' ? 'moves it to scrap' : t.proposal === 'oem' ? 'sends it to the OEM' : `sends it back to ${t.stakeholder_name}`}.`)
+      } else if (action === 'decline_nr') {
+        if (note.trim().length < 5) { setError('Say why it should be repaired — what to try.'); return }
+        await declineNr.mutateAsync({ id: t.id, reason: note })
+        onDone(`Back with ${t.engineer_name ?? 'the engineer'} to repair. They see why.`)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'That did not go through.')
@@ -2132,6 +2185,22 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
         <p className="text-sm text-ink-600">{h.to_name} is no longer asked to take it over. It stays with you.</p>
       )}
 
+      {/* A manager's word on the engineer's call (rl_0034): what they found, and what they propose. */}
+      {(action === 'approve_nr' || action === 'decline_nr') && (
+        <div className="space-y-2">
+          <p className="text-sm text-ink-600">
+            {t.engineer_name ?? 'The engineer'} closed {t.code} ({itemsSummary(t) ?? 'the spare'}) as not repairable, and proposes to{' '}
+            {t.proposal === 'scrap' ? 'move it to scrap' : t.proposal === 'oem' ? 'send it to the OEM' : `send it back to ${t.stakeholder_name}`}.
+          </p>
+          <NotRepairableReason ticketId={t.id} />
+          <p className="text-sm text-ink-600">
+            {action === 'approve_nr'
+              ? <>Approved, the coordinator {t.proposal === 'scrap' ? 'moves it to scrap' : t.proposal === 'oem' ? 'sends it to the OEM' : 'dispatches it back'}.</>
+              : <>It goes back to {t.engineer_name ?? 'the engineer'}, in repair, with what you say.</>}
+          </p>
+        </div>
+      )}
+
       {action === 'discard' && (
         <p className="text-sm text-ink-600">
           {t.code} has not been sent to any Revive Lab. Discarding it closes the ticket; it stays in the list as Discarded.
@@ -2141,8 +2210,9 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
       {!noteless && (
         <label className="block">
           <span className="label">
-            {action === 'expect' ? 'Why it moved' : action === 'decline_approval' ? 'Why not' : action === 'discard' ? 'Why' : 'Note'}
-            {action === 'decline_approval' && <span className="text-cyrixRed-600"> *</span>}
+            {action === 'expect' ? 'Why it moved' : action === 'decline_approval' ? 'Why not' : action === 'discard' ? 'Why'
+              : action === 'decline_nr' ? 'Why it should be repaired — what to try' : 'Note'}
+            {(action === 'decline_approval' || action === 'decline_nr') && <span className="text-cyrixRed-600"> *</span>}
           </span>
           <textarea className="input mt-1" rows={2} value={note} onChange={e => setNote(e.target.value)} maxLength={action === 'discard' || action === 'cancel_transfer' ? 300 : 500}
             placeholder={
@@ -2151,6 +2221,8 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
                   : action === 'decline_approval' ? 'e.g. Send it to the Regional Revive Lab instead'
                     : action === 'discard' ? 'e.g. Repaired on site after all'
                       : action === 'approve' ? 'e.g. Go ahead — they are expecting it'
+                        : action === 'approve_nr' ? 'e.g. Agreed — the controller cannot be sourced'
+                          : action === 'decline_nr' ? 'e.g. Try the spare board from RL-40 first'
                         : ''
             } />
         </label>
@@ -2168,4 +2240,12 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
       </div>
     </Dialog>
   )
+}
+
+/** What the engineer wrote when they closed it as not repairable — the latest such step — for the manager deciding (rl_0034). */
+function NotRepairableReason({ ticketId }: { ticketId: string }) {
+  const { data: trail } = useTrail(ticketId)
+  const step = [...(trail ?? [])].reverse().find(e => e.action === 'not_repairable')
+  if (!step?.note) return null
+  return <p className="whitespace-pre-wrap rounded-lg bg-ink-50 px-3 py-2 text-sm text-ink-800">{step.note}</p>
 }

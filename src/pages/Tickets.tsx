@@ -6,7 +6,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useMyTeam, useTickets, type Ticket } from '@/lib/queries'
 import { branchOf, indexTeam, ownerOfTicket } from '@/lib/team'
 import {
-  STATUS, STATUS_ORDER, TONE_CLASS, TONE_DOT, TONE_TEXT, canRaise, itemsSummary, parseTicketCode, statusGroups, ticketTabs,
+  STATUS, STATUS_ORDER, TONE_CLASS, TONE_DOT, TONE_TEXT, awaitingManager, canRaise, itemsSummary, parseTicketCode, statusGroups, ticketTabs,
   type TabId, type TicketStatus, type Tone,
 } from '@/lib/tickets'
 import { EmptyState, PageLoader, ReturnedTag, SectorTag, SortHeader, Spinner, StatusBadge, TransferTag, WarehouseChip } from '@/components/ui'
@@ -461,7 +461,7 @@ export default function Tickets() {
                           <p className="text-xs text-ink-500">{raised.time}</p>
                         </td>
                         <td className="px-4 py-3">
-                          <StatusBadge status={t.status} closure={t.closure} />
+                          <StatusBadge status={t.status} closure={t.closure} awaiting={awaitingManager(t)} />
                           <ReturnedTag ticket={t} className="mt-1 flex w-fit" />
                           <TransferTag ticket={t} className="mt-1 flex w-fit" />
                         </td>
@@ -558,7 +558,7 @@ export default function Tickets() {
                         <span className="flex shrink-0 items-center gap-1.5">
                           <ReturnedTag ticket={t} />
                           <TransferTag ticket={t} />
-                          <StatusBadge status={t.status} closure={t.closure} />
+                          <StatusBadge status={t.status} closure={t.closure} awaiting={awaitingManager(t)} />
                         </span>
                       </div>
                       <div className="flex items-baseline justify-between gap-3">

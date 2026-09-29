@@ -259,14 +259,16 @@ export function WarehouseChip({ className }: { className?: string }) {
 
 /** A ticket's status, in the colour of where it is in the journey. */
 /** A closed ticket that did not come back says so: Scrapped, Discarded. */
-export function StatusBadge({ status, closure, proposal, full = false }: {
+export function StatusBadge({ status, closure, proposal, awaiting = false, full = false }: {
   status: TicketStatus
   closure?: Closure | null
   proposal?: Proposal | null
+  /** Not repairable, waiting for a manager to approve it (rl_0034). */
+  awaiting?: boolean
   full?: boolean
 }) {
   if (!STATUS[status]) return <span className="badge bg-ink-100 text-ink-700">{status}</span>
-  const look = statusLook(status, closure, proposal)
+  const look = statusLook(status, closure, proposal, awaiting)
   return (
     <span className={clsx('badge whitespace-nowrap', TONE_CLASS[look.tone])}>
       {full ? look.label : look.short}
