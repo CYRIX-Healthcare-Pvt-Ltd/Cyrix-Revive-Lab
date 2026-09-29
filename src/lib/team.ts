@@ -187,15 +187,23 @@ export interface ReportTicket {
   engineer_name: string | null
   spare_category: SpareCategory | null
   accepted_at: string | null
+  repaired_at?: string | null
   dispatched_at: string | null
   scrapped_at: string | null
 }
 
-/** Past its category's repair time and still at the Revive Lab (rl_0024: A 3 days, B 2, C 1, from acceptance). */
+/** Accepted and not yet dispatched back, scrapped or closed: the Revive Lab has it. */
+const atReviveLab = (t: ReportTicket): boolean =>
+  !!t.accepted_at && !t.dispatched_at && !t.scrapped_at && t.status !== 'closed'
+
+/**
+ * At the Revive Lab and above its category's TAT — still being repaired
+ * past it, or repaired later than it and not yet dispatched (rl_0030: A 3
+ * days, B 2, C 1, from acceptance until the repair is closed).
+ */
 export function isLate(t: ReportTicket, now = Date.now()): boolean {
-  if (t.status === 'closed') return false
-  const tat = categoryTat(t, now)
-  return !!tat && tat.exceeded && tat.endedAt === null
+  if (!atReviveLab(t)) return false
+  return !!categoryTat(t, now)?.exceeded
 }
 
 /**
@@ -404,24 +412,29 @@ export function engineerWork(
 export interface CategoryRow {
   category: SpareCategory
   days: number
-  /** Accepted, not dispatched: on the Revive Lab's clock now — inside its time, or above it. */
+  /** Accepted, not yet dispatched back: at the Revive Lab now — being repaired, or repaired and waiting to go. */
   atLab: number
+  /** Repaired inside its time, or still being repaired inside it. */
   inTat: number
+  /** Repaired after its time, or still being repaired past it. */
   aboveTat: number
 }
 
-/** A, B and C: how many are on the Revive Lab's clock now, in TAT and above it. */
+/**
+ * A, B and C: what the Revive Lab has now, and how each stands against its
+ * category's time — from acceptance until the repair was closed, or until
+ * now while it is still being repaired (rl_0030).
+ */
 export function categoryReport(list: readonly ReportTicket[], now = Date.now()): CategoryRow[] {
   const rows = (['A', 'B', 'C'] as const).map(category => ({
     category, days: CATEGORY_TAT_DAYS[category], atLab: 0, inTat: 0, aboveTat: 0,
   }))
   for (const t of list) {
-    if (t.status === 'closed' && !t.dispatched_at && !t.scrapped_at) continue
+    if (!atReviveLab(t)) continue
     const tat = categoryTat(t, now)
-    // Not accepted yet: no category, and no clock running.
+    // No category yet: no clock to count against.
     if (!t.spare_category || !tat) continue
     const r = rows.find(x => x.category === t.spare_category)!
-    if (tat.endedAt !== null || t.status === 'closed') continue
     r.atLab++
     if (tat.exceeded) r.aboveTat++
     else r.inTat++

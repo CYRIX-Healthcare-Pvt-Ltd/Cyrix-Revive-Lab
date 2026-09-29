@@ -267,7 +267,24 @@ describe('the category TAT (rl_0024)', () => {
     expect(categoryTat({ spare_category: 'C', accepted_at: accepted }, t0 + 20 * H)!.exceeded).toBe(false)
   })
 
-  it('stops at dispatch, or at scrap, whatever the clock says now', () => {
+  it('stops when the engineer closes the repair — waiting for dispatch after that does not count (rl_0030)', () => {
+    const repaired = new Date(t0 + 20 * H).toISOString()
+    const sent = new Date(t0 + 30 * H).toISOString()
+    const tat = categoryTat({ spare_category: 'C', accepted_at: accepted, repaired_at: repaired, dispatched_at: sent }, t0 + 99 * H)!
+    expect(tat.exceeded).toBe(false)
+    expect(tat.endedAt).toBe(t0 + 20 * H)
+    // Repaired in time, still waiting to be dispatched days later: in TAT.
+    expect(categoryTat({ spare_category: 'C', accepted_at: accepted, repaired_at: repaired }, t0 + 99 * H)!.exceeded).toBe(false)
+  })
+
+  it('stays above its time when the repair was closed after it', () => {
+    const late = new Date(t0 + 50 * H).toISOString()
+    const tat = categoryTat({ spare_category: 'B', accepted_at: accepted, repaired_at: late }, t0 + 99 * H)!
+    expect(tat.exceeded).toBe(true)
+    expect(tat.overMs).toBe(2 * H)
+  })
+
+  it('takes dispatch or scrap as the end only where the repair’s close is not known', () => {
     const sent = new Date(t0 + 20 * H).toISOString()
     expect(categoryTat({ spare_category: 'C', accepted_at: accepted, dispatched_at: sent }, t0 + 99 * H)!.exceeded).toBe(false)
     const late = new Date(t0 + 50 * H).toISOString()

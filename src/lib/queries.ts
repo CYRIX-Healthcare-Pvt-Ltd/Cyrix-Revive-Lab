@@ -116,8 +116,10 @@ export interface Ticket {
   contract_type: ContractType | null
   /** When a Revive Lab first accepted it: the category TAT's start. */
   accepted_at: string | null
-  /** When it was first dispatched back: the category TAT's end. */
+  /** When it was first dispatched back, this round. */
   dispatched_at: string | null
+  /** When the Revive Lab engineer closed the repair, this round: the category TAT's end (rl_0030). */
+  repaired_at: string | null
   /** Under Pvt, what the customer can be asked to pay, entered on dispatch (rl_0025). */
   billing_estimate: number | null
   /** Its BEMMP asks for that estimate — Pvt. */
@@ -171,7 +173,9 @@ export interface PastRound {
   out_courier: string | null
   out_awb: string | null
   out_dispatched_on: string | null
-  /** When it went back to the field: that round's category TAT ended here. */
+  /** When its repair was closed: that round's category TAT ended here (rl_0030). */
+  repaired_at?: string | null
+  /** When it went back to the field. */
   dispatched_at: string | null
   billing_estimate: number | null
   received_at: string | null
@@ -189,6 +193,10 @@ export interface FieldReturn {
   courier: string
   awb: string
   dispatched_on: string
+  /** What it looked like going back, as a raise does: one photo at least (rl_0030); none on returns before that. */
+  photos?: string[]
+  video?: string | null
+  voice?: string | null
   before: PastRound
 }
 
@@ -717,7 +725,7 @@ export const useSetClassification = () => useTicketMutation(
     rpc('revive_set_classification', { p_ticket_id: a.id, p_category: a.category, p_criticality: a.criticality }))
 
 /** arrival-1, arrival-2, return-1 … uploaded in order, and their paths — arrival-1-r2 in a second round (rl_0027). */
-async function uploadStage(ticketId: string, name: 'arrival' | 'return' | 'done', blobs?: Blob[], round = 1): Promise<string[]> {
+async function uploadStage(ticketId: string, name: 'arrival' | 'return' | 'done' | 'resend', blobs?: Blob[], round = 1): Promise<string[]> {
   const paths: string[] = []
   for (const [i, blob] of (blobs ?? []).entries()) {
     paths.push(await uploadStageFile(ticketId, inRound(`${name}-${i + 1}` as StageName, round), blob))
@@ -952,12 +960,26 @@ export function usePhoneOf(employeeId: string | null | undefined) {
  * Fitted, and not working: back to the Revive Lab on the same ticket, with
  * why and the courier it went with. Its coordinator accepts it, and the
  * flow runs again (rl_0027).
+ *
+ * With what a raise carries (rl_0030): photographs — one at least — and a
+ * video and a voice note if they help. They go up first, named for the
+ * round the return starts (resend-1-r2 …), and their paths go with the call.
  */
 export const useReturnToLab = () => useTicketMutation(
-  (a: { id: string; reason: string; courier: string; awb: string; on: string }) =>
-    rpc('revive_return_to_lab', {
+  async (a: {
+    id: string; reason: string; courier: string; awb: string; on: string
+    photos: Blob[]; video?: Blob | null; voice?: Blob | null
+    /** The round this return starts: the ticket's round, plus one. */
+    round: number
+  }) => {
+    const photos = await uploadStage(a.id, 'resend', a.photos, a.round)
+    const video = a.video ? await uploadStageFile(a.id, inRound('resend-video', a.round), a.video) : null
+    const voice = a.voice ? await uploadStageFile(a.id, inRound('resend-voice', a.round), a.voice) : null
+    return rpc('revive_return_to_lab', {
       p_ticket_id: a.id, p_reason: a.reason, p_courier: a.courier, p_awb: a.awb, p_dispatched_on: a.on || null,
-    }))
+      p_photos: photos, p_video: video, p_voice: voice,
+    })
+  })
 
 /** A transfer is asked for; the Regional Revive Lab admins approve it before it is sent (rl_0014). */
 export const useRequestTransfer = () => useTicketMutation(

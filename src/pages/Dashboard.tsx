@@ -6,7 +6,8 @@ import {
 } from 'recharts'
 import { AlarmClock, ArrowRight, BellRing, Building2, ChartColumn, HardHat, Inbox, PackagePlus, TrendingUp, Users } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { useMembers, useMyTeam, useTickets, useTrcs, useVisibleEvents } from '@/lib/queries'
+import { useMembers, useMyTeam, useTickets, useTrcs, useVisibleEvents, type Ticket } from '@/lib/queries'
+import { dateTime as dateTimeOf, dayDate } from '@/lib/when'
 import {
   REPAIRING, STATUS, STATUS_ORDER, TONE_DOT, TONE_FILL, TONE_TEXT, canRaise, itemsSummary, statusGroups, ticketTabs, waitingOnMe,
 } from '@/lib/tickets'
@@ -246,7 +247,7 @@ export default function Dashboard() {
                     {stats.mine.length}
                   </Link>
                 </div>
-                {statusGroups(stats.mine).map(g => (
+                {statusGroups(stats.mine).map(g => ({ ...g, rows: longestWaitFirst(g.rows) })).map(g => (
                   <section key={g.key} aria-label={`${g.label}: ${g.rows.length}`}>
                     <h4 className="flex items-center gap-2 border-b border-ink-100 bg-ink-50/60 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-label">
                       <span aria-hidden className={clsx('h-2 w-2 rounded-full', TONE_DOT[g.tone])} />
@@ -264,8 +265,11 @@ export default function Dashboard() {
                             <span className="min-w-0 flex-1 truncate text-sm text-ink-600">
                               {t.facility} <SectorTag ticket={t} className="mx-0.5" />{itemsSummary(t) ? ` · ${itemsSummary(t)}` : ''}
                             </span>
-                            <ClassTag ticket={t} />
-                            <span className="text-xs text-ink-400">{t.trc_name}</span>
+                            {/* From the right, each the same width on every row: the days, the
+                                Revive Lab, then category and criticality — so each makes a column. */}
+                            <ClassTag ticket={t} column />
+                            <span className="truncate text-xs text-ink-400 sm:w-32 sm:shrink-0 sm:text-right" title={t.trc_name}>{t.trc_name}</span>
+                            <WaitedFor ticket={t} />
                           </Link>
                         </li>
                       ))}
@@ -375,9 +379,62 @@ export default function Dashboard() {
 }
 
 /**
- * A, B and C against their time — the Revive Lab's clock for each runs from
- * acceptance until the spare is dispatched back (rl_0024). What is at the
- * Revive Lab now: in TAT and above it, as counts and as a share.
+ * What waits on the coordinator, and since when (the user, 29 Sep): a spare
+ * pending acceptance from the day it was raised — or sent back, which is
+ * when its wait began — and one pending dispatch from the day its repair
+ * was closed, "so that he can see easily which is long pending".
+ */
+function waitingSince(t: Ticket): { label: string; at: string } | null {
+  if (t.status === 'pending_acceptance') {
+    const back = t.field_returns?.[t.field_returns.length - 1]
+    return back ? { label: 'Returned', at: back.at } : { label: 'Raised', at: t.created_at }
+  }
+  if (t.repaired_at && (t.status === 'repaired' || t.status === 'not_repairable' || t.status === 'service_denied')) {
+    return { label: t.status === 'repaired' ? 'Repaired' : 'Repair closed', at: t.repaired_at }
+  }
+  return null
+}
+
+/** Whole days by the calendar, from that day to today: 0 today, 1 yesterday. */
+function daysSince(at: string, now = new Date()): number {
+  const d = new Date(at)
+  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  return Math.round((day(now) - day(d)) / 86_400_000)
+}
+
+/** Within a group, the one waiting longest first; one without a date keeps its place after them. */
+function longestWaitFirst<T extends Ticket>(rows: readonly T[]): T[] {
+  const at = (t: T) => { const s = waitingSince(t); return s ? Date.parse(s.at) : Infinity }
+  return [...rows].sort((a, b) => at(a) - at(b))
+}
+
+/**
+ * "Raised 12 Sept 2026 · 17 days": the day it started waiting, and how many
+ * days that is — last on the row and the same width on every row, so the
+ * days make one column down the card (the user, 29 Sep: "misaligned").
+ */
+function WaitedFor({ ticket: t }: { ticket: Ticket }) {
+  const since = waitingSince(t)
+  if (!since) return null
+  const days = daysSince(since.at)
+  return (
+    <span
+      className="inline-flex items-center justify-end gap-1.5 whitespace-nowrap text-xs text-ink-500 sm:w-60"
+      title={`${since.label} ${dateTimeOf(since.at)}`}
+    >
+      <span>{since.label} {dayDate(since.at)}</span>
+      <span className={clsx('w-16 shrink-0 rounded-full py-0.5 text-center font-semibold tabular-nums',
+        days > 0 ? 'bg-ink-100 text-ink-900' : 'bg-ink-50 text-ink-500')}>
+        {days === 0 ? 'today' : `${days} ${days === 1 ? 'day' : 'days'}`}
+      </span>
+    </span>
+  )
+}
+
+/**
+ * A, B and C against their time — from the coordinator's acceptance until
+ * the Revive Lab engineer closes the repair (rl_0030). What the Revive Lab
+ * has now, repaired or not: in TAT and above it, as counts and as a share.
  */
 function CategoryTat({ rows }: { rows: CategoryRow[] }) {
   return (
@@ -386,8 +443,9 @@ function CategoryTat({ rows }: { rows: CategoryRow[] }) {
         <IconChip icon={AlarmClock} tone="red" /> TAT by category
       </h3>
       <p className="mb-3 text-xs text-ink-500">
-        Each category has its own time at the Revive Lab, from acceptance until it is dispatched back:
-        A 3 days, B 2, C 1. In TAT is still inside it; above TAT is past it.
+        Each category has its own repair time, from the coordinator's acceptance until the Revive Lab engineer
+        closes the repair: A 3 days, B 2, C 1. In TAT is inside it; above TAT is past it. Waiting for dispatch after
+        the repair does not count.
       </p>
       <div className="grid gap-3 sm:grid-cols-3">
         {rows.map(r => {
@@ -400,17 +458,19 @@ function CategoryTat({ rows }: { rows: CategoryRow[] }) {
                 </span>
                 <span className="text-sm font-medium text-ink-800">{r.days} {r.days === 1 ? 'day' : 'days'}</span>
               </div>
+              {/* Each column stands on its number: a label that wraps on a
+                  narrow card grows upward, and the three numbers stay level. */}
               <dl className="mt-3 grid grid-cols-3 gap-2 text-center">
-                <div>
-                  <dt className="text-[11px] text-ink-500">At the lab</dt>
+                <div className="flex flex-col justify-end">
+                  <dt className="text-[11px] leading-tight text-ink-500">At the Revive Lab</dt>
                   <dd className="text-lg font-semibold tabular-nums text-ink-900">{r.atLab}</dd>
                 </div>
-                <div>
-                  <dt className="text-[11px] text-ink-500">In TAT</dt>
+                <div className="flex flex-col justify-end">
+                  <dt className="text-[11px] leading-tight text-ink-500">In TAT</dt>
                   <dd className={clsx('text-lg font-semibold tabular-nums', r.inTat ? 'text-green-700' : 'text-ink-300')}>{r.inTat}</dd>
                 </div>
-                <div>
-                  <dt className="text-[11px] text-ink-500">Above TAT</dt>
+                <div className="flex flex-col justify-end">
+                  <dt className="text-[11px] leading-tight text-ink-500">Above TAT</dt>
                   <dd className={clsx('text-lg font-semibold tabular-nums', r.aboveTat ? 'text-cyrixRed-600' : 'text-ink-300')}>{r.aboveTat}</dd>
                 </div>
               </dl>

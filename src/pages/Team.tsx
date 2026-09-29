@@ -138,7 +138,7 @@ export default function Team() {
             <StatTile
               label="Above TAT"
               value={<span className={counts.late ? 'text-cyrixRed-600' : 'text-green-700'}>{counts.late}</span>}
-              sub="past its time: A 3 days, B 2, C 1, from acceptance"
+              sub="repair past its time: A 3 days, B 2, C 1, from acceptance"
             />
           </div>
 

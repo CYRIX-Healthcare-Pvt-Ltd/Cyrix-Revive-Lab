@@ -98,6 +98,13 @@ describe('where a spare is', () => {
     expect(isLate(ticket({ status: 'closed', accepted_at: ago(100) }), NOW)).toBe(false)
   })
 
+  it('counts the repair, not the wait for dispatch (rl_0030)', () => {
+    // B is 2 days. Repaired 10 hours after acceptance, still waiting to be dispatched days on: not late.
+    expect(isLate(ticket({ status: 'repaired', accepted_at: ago(100), repaired_at: ago(90) }), NOW)).toBe(false)
+    // Repaired 80 hours after acceptance, and still at the Revive Lab: above its time.
+    expect(isLate(ticket({ status: 'repaired', accepted_at: ago(100), repaired_at: ago(20) }), NOW)).toBe(true)
+  })
+
   it('says whose move it is', () => {
     expect(nextMove(ticket({ status: 'pending_acceptance' }))).toBe('Cochin Revive Lab, to accept it')
     expect(nextMove(ticket({ status: 'assigned' }))).toBe('Anu, to start the repair')
@@ -172,6 +179,18 @@ describe('the Revive Lab’s reports', () => {
     expect(a).toEqual({ category: 'A', days: 3, atLab: 2, inTat: 2, aboveTat: 0 })
     const c = rows.find(r => r.category === 'C')!
     expect(c).toMatchObject({ days: 1, atLab: 1, inTat: 0, aboveTat: 1 })
+  })
+
+  it('keeps a repaired spare waiting for dispatch at the Revive Lab, by when its repair was closed (rl_0030)', () => {
+    const rows = categoryReport([
+      // B, 2 days: repaired in 20 hours, waiting 40 hours since for dispatch — in TAT.
+      ticket({ id: 'g', status: 'repaired', spare_category: 'B', accepted_at: ago(60), repaired_at: ago(40) }),
+      // Repaired 90 hours after acceptance — above it.
+      ticket({ id: 'h', status: 'repaired', spare_category: 'B', accepted_at: ago(100), repaired_at: ago(10) }),
+      // Dispatched: it has left the Revive Lab.
+      ticket({ id: 'i', status: 'in_transit_return', spare_category: 'B', accepted_at: ago(100), repaired_at: ago(95), dispatched_at: ago(5) }),
+    ], NOW)
+    expect(rows.find(r => r.category === 'B')).toEqual({ category: 'B', days: 2, atLab: 2, inTat: 1, aboveTat: 1 })
   })
 
   it('counts what was closed in the period asked for, by the calendar; open is always now', () => {

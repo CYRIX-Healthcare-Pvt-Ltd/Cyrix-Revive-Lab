@@ -10,7 +10,8 @@ import { dateTime } from '@/lib/when'
 /**
  * A spare's category and criticality (rl_0024): what the Revive Lab says it
  * is on arrival, and changes until it is dispatched back. The category sets
- * how long the Revive Lab may keep it — A 3 days, B 2, C 1 — from acceptance.
+ * how long the Revive Lab has to repair it — A 3 days, B 2, C 1 — from
+ * acceptance until the engineer closes the repair (rl_0030).
  */
 
 const CATEGORY_TONE = { A: 'sky', B: 'violet', C: 'amber' } as const
@@ -62,7 +63,7 @@ export function TatChip({ tat }: { tat: CategoryTat }) {
     return (
       <span className={clsx(CHIP, 'bg-cyrixRed-100 text-cyrixRed-900')}>
         <AlarmClock aria-hidden className="h-3.5 w-3.5" />
-        TAT exceeded by {formatSpan(tat.overMs)}{tat.endedAt !== null ? ' at dispatch' : ''}
+        TAT exceeded by {formatSpan(tat.overMs)}{tat.endedAt !== null ? ' at repair' : ''}
       </span>
     )
   }
@@ -94,22 +95,35 @@ export const CATEGORY_CLASS: Record<SpareCategory, string> = {
  * category and type"), and "TAT exceeded" in red when it is — the one thing
  * a list must not hide.
  */
-export function ClassTag({ ticket: t, className, oneLine = false }: {
+export function ClassTag({ ticket: t, className, oneLine = false, column = false }: {
   ticket: {
     spare_category: SpareCategory | null
     criticality: Criticality | null
     accepted_at: string | null
+    repaired_at?: string | null
     dispatched_at: string | null
     scrapped_at: string | null
   }
   className?: string
   /** In a table cell: all on one line, the table scrolls rather than the row growing. */
   oneLine?: boolean
+  /**
+   * Down a card of rows ending on the right: "TAT exceeded" goes to the left,
+   * and the criticality takes one width, so the category and criticality make
+   * one column down the card (the user, 29 Sep).
+   */
+  column?: boolean
 }) {
   const tat = categoryTat(t)
   if (!t.spare_category && !t.criticality) return null
+  const exceeded = tat?.exceeded && (
+    <span className="inline-flex items-center gap-0.5 rounded bg-cyrixRed-600 px-1.5 py-px text-[10px] font-semibold text-white">
+      <AlarmClock aria-hidden className="h-2.5 w-2.5" /> TAT exceeded
+    </span>
+  )
   return (
-    <span className={clsx('inline-flex items-center gap-1', oneLine ? 'flex-nowrap whitespace-nowrap' : 'flex-wrap', className)}>
+    <span className={clsx('inline-flex items-center gap-1', oneLine || column ? 'flex-nowrap whitespace-nowrap' : 'flex-wrap', className)}>
+      {column && exceeded}
       {t.spare_category && (
         // The letter alone, in its own square — "Cat A" read as old (the user, 23 Sep); the word stays for a hover and a screen reader.
         <span
@@ -123,16 +137,13 @@ export function ClassTag({ ticket: t, className, oneLine = false }: {
       {t.criticality && (
         <span className={clsx(
           'rounded px-1.5 py-px text-[10px] font-semibold',
+          column && 'w-[4.75rem] text-center',
           t.criticality === 'critical' ? 'bg-cyrixRed-100 text-cyrixRed-900' : 'bg-green-100 text-green-900',
         )}>
           {CRITICALITY_LABEL[t.criticality]}
         </span>
       )}
-      {tat?.exceeded && (
-        <span className="inline-flex items-center gap-0.5 rounded bg-cyrixRed-600 px-1.5 py-px text-[10px] font-semibold text-white">
-          <AlarmClock aria-hidden className="h-2.5 w-2.5" /> TAT exceeded
-        </span>
-      )}
+      {!column && exceeded}
     </span>
   )
 }

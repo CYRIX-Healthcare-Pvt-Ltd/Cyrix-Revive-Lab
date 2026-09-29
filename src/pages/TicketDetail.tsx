@@ -16,7 +16,7 @@ import {
   useDeclineApproval, useDiscard, useDispatch, useHops, useMarkReceived, useMembers, useRequestTransfer, useReroute,
   usePartRequests, useReturnToDesk, useReturnToLab, useScrap, useSend, useSetClassification, useSetExpectedDate, useStartRepair, useTickets,
   useTrail, useTrcs, useUpdateCourier,
-  type PastRound, type Person, type Ticket, type TrailEvent,
+  type FieldReturn, type PastRound, type Person, type Ticket, type TrailEvent,
 } from '@/lib/queries'
 import {
   actionsFor, approversOf, canClassify, itemsSummary, mergeDeskRaise, orList, ordinal, parseTicketCode, roundOf, serves, stateLabel,
@@ -451,17 +451,24 @@ function ApprovalNote({ ticket: t, approval: a }: { ticket: Ticket; approval: Ap
  */
 /** One round's photographs and recordings: the ticket's own for the round it is on, a return's for the one before (rl_0027). */
 type RoundMedia = Pick<PastRound,
-  'arrival_photos' | 'arrival_damaged' | 'done_photos' | 'done_video' | 'done_voice' | 'return_photos' | 'return_damaged'>
+  'arrival_photos' | 'arrival_damaged' | 'done_photos' | 'done_video' | 'done_voice' | 'return_photos' | 'return_damaged'> & {
+  /** What the field engineer sent it back with, for a round a return started (rl_0030). */
+  sent?: Pick<FieldReturn, 'photos' | 'video' | 'voice'>
+}
 
 function StageMedia({ ticket: t }: { ticket: Ticket }) {
-  // Newest first: the round it is on, then each one before it came back not working.
+  const returns = t.field_returns ?? []
+  // Newest first: the round it is on, then each one before it came back not
+  // working. A round after the first began with a return, and opens with it.
   const rounds: Array<{ n: number; media: RoundMedia }> = [
-    ...(t.field_returns ?? []).map((r, i) => ({ n: i + 1, media: r.before })),
-    { n: roundOf(t), media: t },
+    ...returns.map((r, i) => ({ n: i + 1, media: { ...r.before, sent: returns[i - 1] } })),
+    { n: roundOf(t), media: { ...t, sent: returns[returns.length - 1] } },
   ].reverse()
   const several = rounds.length > 1
   const pathsOf = (m: RoundMedia) => [
+    ...(m.sent?.photos ?? []),
     ...(m.arrival_photos ?? []), ...(m.done_photos ?? []), ...(m.return_photos ?? []),
+    ...(m.sent?.video ? [m.sent.video] : []), ...(m.sent?.voice ? [m.sent.voice] : []),
     ...(m.done_video ? [m.done_video] : []), ...(m.done_voice ? [m.done_voice] : []),
   ]
   const paths = rounds.flatMap(r => pathsOf(r.media))
@@ -477,6 +484,7 @@ function StageMedia({ ticket: t }: { ticket: Ticket }) {
   const shots = rounds.flatMap(({ n, media: m }) => {
     const of = several ? ` — round ${n}` : ''
     return [
+      ...(m.sent?.photos ?? []).map(p => ({ path: p, alt: `Sent back not working${of}` })),
       ...(m.arrival_photos ?? []).map(p => ({ path: p, alt: `As it arrived at the Revive Lab${of}` })),
       ...(m.done_photos ?? []).map(p => ({ path: p, alt: `The repaired spare${of}` })),
       ...(m.return_photos ?? []).map(p => ({ path: p, alt: `As it arrived back${of}` })),
@@ -508,6 +516,19 @@ function StageMedia({ ticket: t }: { ticket: Ticket }) {
 
   const round = (m: RoundMedia) => (
     <>
+      {m.sent && group('Sent back not working', 'bg-rose-100 text-rose-900', m.sent.photos ?? [], false)}
+      {m.sent?.video && links?.[m.sent.video] && (
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-label text-ink-400">Sent back — the fault, on video</p>
+          <video src={links[m.sent.video]} controls playsInline className="mt-1.5 max-h-72 w-full rounded-lg border border-ink-200 bg-shade" />
+        </div>
+      )}
+      {m.sent?.voice && links?.[m.sent.voice] && (
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-label text-ink-400">Sent back — the field engineer on it</p>
+          <audio src={links[m.sent.voice]} controls onLoadedMetadata={revealLength} className="mt-1.5 h-10 w-full" />
+        </div>
+      )}
       {group('On arrival', 'bg-amber-100 text-amber-900', m.arrival_photos ?? [], !!m.arrival_damaged)}
       {group('Repaired', 'bg-lime-100 text-lime-900', m.done_photos ?? [], false)}
       {m.done_video && links?.[m.done_video] && (
@@ -528,7 +549,8 @@ function StageMedia({ ticket: t }: { ticket: Ticket }) {
 
   return (
     <Section
-      title={rounds.some(r => r.media.done_video || r.media.done_voice) ? 'Arrival, repair and return — photos and recordings' : 'Arrival, repair and return photos'}
+      title={rounds.some(r => r.media.done_video || r.media.done_voice || r.media.sent?.video || r.media.sent?.voice)
+        ? 'Arrival, repair and return — photos and recordings' : 'Arrival, repair and return photos'}
       icon={Camera}
       tone="sky"
     >
@@ -573,7 +595,7 @@ function ReturnsCard({ ticket: t }: { ticket: Ticket }) {
       <ol className="space-y-3">
         {returns.map((r, i) => {
           const b = r.before
-          const tat = categoryTat({ spare_category: b.spare_category, accepted_at: b.accepted_at, dispatched_at: b.dispatched_at })
+          const tat = categoryTat({ spare_category: b.spare_category, accepted_at: b.accepted_at, repaired_at: b.repaired_at, dispatched_at: b.dispatched_at })
           const went = [
             b.engineer_name && `Repaired by ${b.engineer_name}${b.engineer_ecode ? ` ${b.engineer_ecode}` : ''}`,
             b.outcome && b.outcome !== 'repaired' && `closed as ${OUTCOME_LABEL[b.outcome].toLowerCase()}`,
@@ -1425,10 +1447,16 @@ function ActionForm({
           if (working === 'no' && !afterwards) { onError(`Say what happens to it now: close the ticket, or return it to ${t.trc_name}.`); return }
           if (returning) {
             if (note.trim().length < 5) { onError('Say why it is going back — what is not working.'); return }
+            if (shots.length === 0) { onError('Add a photo of the spare — one at least.'); return }
             if (!courier.trim()) { onError('Enter the courier it is going back with.'); return }
             if (!awb.trim()) { onError('Enter the tracking / AWB number.'); return }
             if (!on) { onError('Enter the date of dispatch.'); return }
-            await returnToLab.mutateAsync({ id: t.id, reason: note, courier, awb, on })
+            await returnToLab.mutateAsync({
+              id: t.id, reason: note, courier, awb, on,
+              photos: shots.map(p => p.blob), video, voice,
+              // The round this return starts: its files are named for it.
+              round: round + 1,
+            })
             onDone(`${t.code} is on its way back to ${t.trc_name}. Its coordinator accepts it when it arrives, and it is repaired again — the first time stays in the history.`)
             break
           }
@@ -1690,6 +1718,21 @@ function ActionForm({
             placeholder="e.g. Fitted; no output after 10 minutes, same fault as before"
           />
         </label>
+      )}
+
+      {/* As when it was first sent: a photo of it at least, and a video and a voice note if they help (rl_0030). */}
+      {returning && (
+        <div>
+          <span className="label">Photos and recordings <span className="text-cyrixRed-600">*</span></span>
+          <p className="mt-0.5 text-xs text-ink-500">One photo of the spare at least; a video and a voice note if they help.</p>
+          <div className="mt-1.5">
+            <MediaCapture
+              photos={{ value: shots, onChange: setShots, max: 2 }}
+              video={{ value: video, onChange: setVideo }}
+              voice={{ value: voice, onChange: setVoice }}
+            />
+          </div>
+        </div>
       )}
 
       {needsCourier && (

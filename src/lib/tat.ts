@@ -260,13 +260,16 @@ export function formatSpan(ms: number | null | undefined): string {
 
 /**
  * The Revive Lab's TAT for the spare's category (rl_0024): A 3 days, B 2,
- * C 1, from when it was accepted until it was dispatched back — or moved
- * to scrap. Null until there is a category and an acceptance to count from.
+ * C 1, from when the coordinator accepted it until the Revive Lab engineer
+ * closed the repair — repaired, not repairable or customer denied (the
+ * user, 29 Sep: "trc engineer repaired date - trc coord accept from field
+ * date"; rl_0030). Waiting to be dispatched after that is not the repair's
+ * time. Null until there is a category and an acceptance to count from.
  */
 export interface CategoryTat {
   days: number
   dueAt: number
-  /** When the Revive Lab let go of it; null while it still has it. */
+  /** When the repair was closed; null while it is still being repaired. */
   endedAt: number | null
   exceeded: boolean
   /** Past the due time when positive, still left when negative — at the end, or now. */
@@ -277,6 +280,7 @@ export function categoryTat(
   t: {
     spare_category?: SpareCategory | null
     accepted_at?: string | null
+    repaired_at?: string | null
     dispatched_at?: string | null
     scrapped_at?: string | null
   },
@@ -285,7 +289,10 @@ export function categoryTat(
   if (!t.spare_category || !t.accepted_at) return null
   const days = CATEGORY_TAT_DAYS[t.spare_category]
   const dueAt = Date.parse(t.accepted_at) + days * DAY
-  const endedAt = t.dispatched_at ? Date.parse(t.dispatched_at) : t.scrapped_at ? Date.parse(t.scrapped_at) : null
+  // A spare cannot be dispatched or scrapped before its repair is closed; they
+  // stand in only where the close is not known.
+  const end = t.repaired_at ?? t.dispatched_at ?? t.scrapped_at
+  const endedAt = end ? Date.parse(end) : null
   const at = endedAt ?? now
   return { days, dueAt, endedAt, exceeded: at > dueAt, overMs: at - dueAt }
 }

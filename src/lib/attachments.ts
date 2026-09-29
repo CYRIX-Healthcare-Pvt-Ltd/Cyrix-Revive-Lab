@@ -24,12 +24,14 @@ export type Slot = 'image-1' | 'image-2' | 'video' | 'voice'
  *
  * A spare the field engineer sent back, not working, goes round again, and
  * that round's files carry it — arrival-1-r2, done-voice-r2 — beside the
- * first round's and never over them (rl_0027).
+ * first round's and never over them (rl_0027). Sending it back carries its
+ * own, as the route card does: resend-1-r2, resend-video-r2 … (rl_0030).
  */
 export type StageName =
   | 'arrival-1' | 'arrival-2'
   | 'done-1' | 'done-2' | 'done' | 'done-voice'
   | 'return-1' | 'return-2'
+  | 'resend-1' | 'resend-2' | 'resend-video' | 'resend-voice'
 export type StageFile = StageName | `${StageName}-r${number}` | `voice-${number}`
 
 /** A step's file in its round. The first round's has no suffix: everything uploaded before keeps its name. */

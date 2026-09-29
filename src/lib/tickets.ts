@@ -619,7 +619,7 @@ export type ContractType = 'AMC' | 'CAMC'
 
 export const SPARE_CATEGORIES: readonly SpareCategory[] = ['A', 'B', 'C']
 
-/** Days the Revive Lab has it, from acceptance until it is dispatched back. */
+/** Days the Revive Lab has to repair it, from acceptance until the engineer closes the repair (rl_0030). */
 export const CATEGORY_TAT_DAYS: Record<SpareCategory, number> = { A: 3, B: 2, C: 1 }
 
 export const CRITICALITY_LABEL: Record<Criticality, string> = { critical: 'Critical', non_critical: 'Non-critical' }
