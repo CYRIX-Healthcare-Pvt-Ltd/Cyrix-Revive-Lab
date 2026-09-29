@@ -7,6 +7,7 @@ import type {
 import { uploadPartFile } from './partFiles'
 import { inRound, uploadStageFile, type StageName } from './attachments'
 import type { MyTeam } from './team'
+import type { StockRow } from './stockSheet'
 
 // ---------------------------------------------------------------------
 // Shapes
@@ -447,6 +448,9 @@ export interface Component {
   item: string | null
   /** TH, SMD … */
   package: string | null
+  /** Where it is kept: the bin, and the place in it (rl_0031). */
+  bin: string | null
+  location: string | null
   qty: number
   updated_at: string
 }
@@ -467,7 +471,7 @@ export function useComponents(trcId: string | null | undefined) {
       for (let from = 0; ; from += PAGE) {
         const rows = unwrap<Component[]>(
           await supabase.from('revive_components')
-            .select('id, trc_id, part_no, value, item, package, qty, updated_at')
+            .select('id, trc_id, part_no, value, item, package, bin, location, qty, updated_at')
             .eq('trc_id', trcId!)
             .order('part_no')
             .range(from, from + PAGE - 1),
@@ -500,6 +504,9 @@ export interface ComponentUse {
   decided_by_name: string | null
   decided_at: string | null
   decision_note: string | null
+  /** Where the part is kept, so the coordinator can go and get it (rl_0031). */
+  bin: string | null
+  location: string | null
 }
 
 /** What one ticket took from stock. */
@@ -586,6 +593,9 @@ export interface StockUseRow {
   decided_by_name: string | null
   decided_at: string | null
   decision_note: string | null
+  /** Where the part is kept, so the coordinator can go and get it (rl_0031). */
+  bin: string | null
+  location: string | null
 }
 
 /**
@@ -820,9 +830,48 @@ export function usePartNo(trcId: string | undefined, value: string, item: string
 export function useUploadStock() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (a: { trcId: string; rows: Array<{ part_no: string; value: string | null; item: string | null; package: string | null; qty: number }> }) =>
-      rpc('revive_upload_stock', { p_trc_id: a.trcId, p_rows: a.rows }) as Promise<{ added: number; changed: number; same: number; not_in_sheet: number }>,
+    /** existing: parts already in stock are brought to the sheet (replace), or left as they are (skip) — rl_0031. */
+    mutationFn: async (a: { trcId: string; rows: StockRow[]; existing: 'replace' | 'skip' }) =>
+      rpc('revive_upload_stock', { p_trc_id: a.trcId, p_rows: a.rows, p_existing: a.existing }) as Promise<{
+        added: number; changed: number; same: number; skipped: number; not_in_sheet: number
+      }>,
     onSuccess: () => qc.invalidateQueries({ queryKey: ['revive', 'components'] }),
+  })
+}
+
+/** One part, as the Add stock and Edit forms have it. */
+export interface PartFields {
+  part_no: string
+  value: string
+  item: string
+  package: string
+  bin: string
+  location: string
+  qty: number
+}
+
+const partArgs = (p: PartFields) => ({
+  p_part_no: p.part_no, p_value: p.value, p_item: p.item, p_package: p.package,
+  p_bin: p.bin, p_location: p.location, p_qty: p.qty,
+})
+
+/** One part added to a Revive Lab's stock; its number must be free there (rl_0031). */
+export function useAddComponent() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (a: { trcId: string; part: PartFields }) =>
+      rpc('revive_add_component', { p_trc_id: a.trcId, ...partArgs(a.part) }) as Promise<string>,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['revive', 'components'] }),
+  })
+}
+
+/** One part changed — its number too, while no other part has it (rl_0031). */
+export function useEditComponent() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (a: { id: string; part: PartFields }) =>
+      rpc('revive_edit_component', { p_component_id: a.id, ...partArgs(a.part) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['revive'] }),
   })
 }
 
@@ -1042,5 +1091,30 @@ export function useSaveTrc() {
         p_id: a.id, p_name: a.name, p_kind: a.kind, p_active: a.active, p_state: a.state ?? 'Regional',
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['revive'] }),
+  })
+}
+
+/** One line of a stock part's history (rl_0032), newest first. */
+export interface PartHistoryLine {
+  at: string
+  /** added, edited, sheet_added, sheet_replaced: the part itself. counted: a stock sheet before the log.
+   *  requested, approved, declined, cancelled: taken for a repair. purchased: bought and put into it. */
+  kind: 'added' | 'edited' | 'sheet_added' | 'sheet_replaced' | 'counted' | 'requested' | 'approved' | 'declined' | 'cancelled' | 'purchased'
+  who: string | null
+  who_ecode: string | null
+  ticket_code: string | null
+  qty: number | null
+  qty_after: number | null
+  /** Each field that changed: { bin: ['B1', 'B2'] } — from, to. */
+  changes: Record<string, [unknown, unknown]> | null
+  note: string | null
+}
+
+/** Everything that happened to one part: who added it, changed it, counted it, took it, bought it. */
+export function usePartHistory(componentId: string | null | undefined) {
+  return useQuery({
+    enabled: !!componentId,
+    queryKey: ['revive', 'part-history', componentId],
+    queryFn: async () => unwrap<PartHistoryLine[]>(await supabase.rpc('revive_component_history', { p_component_id: componentId })),
   })
 }

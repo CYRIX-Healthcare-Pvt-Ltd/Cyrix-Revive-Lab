@@ -22,6 +22,7 @@ import { readBillAmount } from '@/lib/billOcr'
 import { Alert, Spinner } from '@/components/ui'
 import IconChip from '@/components/IconChip'
 import Dialog from '@/components/Dialog'
+import { WhereTag } from '@/components/StockPart'
 import Lightbox from '@/components/Lightbox'
 import PhotoPick, { type PickedPhoto } from '@/components/PhotoPick'
 
@@ -215,6 +216,8 @@ function StockUseItem({ use: u, desk, isAsker, onDecline, onNotice }: {
         <span className="text-ink-900">{u.value ?? u.item ?? u.part_no}</span>
         <span className="font-mono text-xs text-ink-500">{u.part_no}</span>
         {(u.item || u.package) && <span className="text-xs text-ink-400">{[u.item, u.package].filter(Boolean).join(' · ')}</span>}
+        {/* Where it is kept: for the engineer asking, and the coordinator going to get it (the user, 29 Sep). */}
+        <WhereTag bin={u.bin} location={u.location} missing={waiting} />
         <span className={clsx('badge', TONE_CLASS[status.tone])}>{status.label}</span>
         {u.source === 'bought' && <span className="badge bg-ink-100 text-ink-600">From what was purchased</span>}
       </div>

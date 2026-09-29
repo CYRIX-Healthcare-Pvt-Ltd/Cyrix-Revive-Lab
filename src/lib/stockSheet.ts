@@ -1,11 +1,13 @@
 /**
  * The component stock sheet, read.
  *
- * The sheet the Revive Labs keep has six columns — SL:NO, Cyrix- Part No,
- * Mfr Pt No./Value, Item, Type, Available QTY — and a thousand-odd rows,
- * some of them reserved part numbers marked EMPTY. The columns are found by
- * their headings rather than their places, so a sheet with a column moved
- * or added still reads.
+ * The sheet the Revive Labs keep: Cyrix- Part No, Value, Item, Type, BIN,
+ * Location, Qty (the counting sheet of 29 Sep, which added where each part
+ * is kept) — and before it SL:NO, Mfr Pt No./Value and Available QTY, which
+ * still read. A thousand-odd rows, some of them reserved part numbers
+ * marked EMPTY. The columns are found by their headings rather than their
+ * places, so a sheet with a column moved or added still reads; one without
+ * BIN or Location leaves those as they are in the stock.
  *
  * Nothing here talks to the database: this turns the grid into rows the
  * upload can send, says what it left out and why, and — against the stock
@@ -18,8 +20,14 @@ export interface StockRow {
   value: string | null
   item: string | null
   package: string | null
+  /** Only from a sheet with the column: without it, what the stock has stays. */
+  bin?: string | null
+  location?: string | null
   qty: number
 }
+
+/** The template: what Download writes and Upload reads first (the user's counting sheet, 29 Sep). */
+export const STOCK_SHEET_HEADINGS = ['Cyrix- Part No', 'Value', 'Item', 'Type', 'BIN', 'Location', 'Qty'] as const
 
 export interface SheetRead {
   rows: StockRow[]
@@ -38,6 +46,8 @@ const HEADINGS: Array<[Col, RegExp]> = [
   ['value', /mfr|manufacturer|value/i],
   ['item', /^\s*item\s*$|description|component/i],
   ['package', /^\s*type\s*$|package|mount/i],
+  ['bin', /^\s*bin(\s*no\.?)?\s*$/i],
+  ['location', /location|rack|shelf/i],
   ['qty', /qty|quantity|stock|available/i],
 ]
 
@@ -116,6 +126,8 @@ export function readStockGrid(grid: unknown[][]): SheetRead {
       value: meaningful(cell(row, 'value'))?.slice(0, 160) ?? null,
       item: meaningful(item)?.slice(0, 80) ?? null,
       package: meaningful(cell(row, 'package'))?.slice(0, 40) ?? null,
+      ...(cols.bin !== undefined ? { bin: meaningful(cell(row, 'bin'))?.slice(0, 40) ?? null } : {}),
+      ...(cols.location !== undefined ? { location: meaningful(cell(row, 'location'))?.slice(0, 40) ?? null } : {}),
       qty,
     })
   }
@@ -124,7 +136,8 @@ export function readStockGrid(grid: unknown[][]): SheetRead {
 
 export interface StockDiff {
   added: StockRow[]
-  changed: Array<{ row: StockRow; before: StockRow }>
+  /** Already in the stock, and the sheet says otherwise: what would change, if replaced. */
+  changed: Array<{ row: StockRow; before: StockRow; fields: string[] }>
   same: number
   /** In the stock but not in the sheet — left as they are. */
   notInSheet: number
@@ -140,11 +153,60 @@ export function stockDiff(rows: readonly StockRow[], current: readonly StockRow[
     const before = byPart.get(row.part_no.toLowerCase())
     if (!before) { added.push(row); continue }
     byPart.delete(row.part_no.toLowerCase())
-    if (before.value !== row.value || before.item !== row.item || before.package !== row.package || before.qty !== row.qty) {
-      changed.push({ row, before })
+    const fields = changes(row, before)
+    if (fields.length) {
+      changed.push({ row, before, fields })
     } else {
       same++
     }
   }
   return { added, changed, same, notInSheet: byPart.size }
+}
+
+const LABEL: Record<Exclude<keyof StockRow, 'part_no'>, string> = {
+  value: 'Value', item: 'Item', package: 'Type', bin: 'BIN', location: 'Location', qty: 'Qty',
+}
+
+/** "Qty 4 → 6", "BIN — → B1": what a row would change in the part as it stands. */
+function changes(row: StockRow, before: StockRow): string[] {
+  const out: string[] = []
+  const show = (v: unknown) => (v === null || v === undefined || v === '' ? '—' : String(v))
+  for (const k of ['value', 'item', 'package', 'bin', 'location', 'qty'] as const) {
+    // A sheet without BIN or Location says nothing about them.
+    if ((k === 'bin' || k === 'location') && !(k in row)) continue
+    const now = row[k] ?? null
+    const was = before[k] ?? null
+    if (now !== was) out.push(`${LABEL[k]} ${show(was)} → ${show(now)}`)
+  }
+  return out
+}
+
+const numbered = /^([A-Za-z]*-?)(\d+)$/
+
+/**
+ * Part numbers to offer for a new part: the next after the highest — C-1330
+ * after C-1329 — then the free ones in between, which the series has (the
+ * user, 29 Sep: "in between of series some numbers are not there").
+ */
+export function partNoSuggestions(parts: readonly { part_no: string }[], limit = 25): string[] {
+  const taken = new Set<number>()
+  let prefix = 'C-'
+  let max = 0
+  for (const p of parts) {
+    const m = numbered.exec(p.part_no.trim())
+    if (!m) continue
+    const n = Number(m[2])
+    taken.add(n)
+    if (n > max) { max = n; prefix = m[1] || prefix }
+  }
+  const name = (n: number) => `${prefix}${n < 1000 ? String(n).padStart(3, '0') : n}`
+  const out = [name(max + 1)]
+  for (let n = 1; n < max && out.length < limit; n++) if (!taken.has(n)) out.push(name(n))
+  return out
+}
+
+/** The part with this number already, spaces and case aside — or none. */
+export function partNamed<T extends { part_no: string }>(parts: readonly T[], partNo: string, except?: T | null): T | undefined {
+  const key = partNo.trim().toLowerCase()
+  return key ? parts.find(p => p !== except && p.part_no.trim().toLowerCase() === key) : undefined
 }

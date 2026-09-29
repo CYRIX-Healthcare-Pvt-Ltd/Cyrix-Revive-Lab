@@ -2,8 +2,8 @@ import { useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import {
-  Boxes, CheckCircle2, Download, FileSpreadsheet, IndianRupee, PackageMinus, Receipt, Search, ShoppingCart, Trash2,
-  Upload, X,
+  Boxes, CheckCircle2, Download, FileSpreadsheet, IndianRupee, PackageMinus, Pencil, Plus, Receipt, Search, ShoppingCart, Trash2,
+  TriangleAlert, Upload, X,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import {
@@ -14,7 +14,8 @@ import {
   buysFor, itemsSummary, partOpen, partStatusLook, poLabel, PART_PROGRESS, PART_ROUTE_LABEL, runsTrc, STOCK_USE_STATUS, TONE_CLASS,
   type PartRoute,
 } from '@/lib/tickets'
-import { readStockGrid, stockDiff, type SheetRead, type StockDiff } from '@/lib/stockSheet'
+import { readStockGrid, stockDiff, STOCK_SHEET_HEADINGS, type SheetRead, type StockDiff } from '@/lib/stockSheet'
+import { PartHistoryDialog, StockPartDialog, UploadMenu, WhereTag } from '@/components/StockPart'
 import { Alert, EmptyState, PageLoader, Spinner, StatTile } from '@/components/ui'
 import IconChip from '@/components/IconChip'
 import { rupees, DeclineUseDialog } from '@/components/PartsCard'
@@ -100,8 +101,6 @@ function LabPicker({ labs, value, onChange }: { labs: Array<{ id: string; name: 
   )
 }
 
-const SHEET_HEADINGS = ['SL:NO', 'Cyrix- Part No', 'Mfr Pt No./Value', 'Item', 'Type', 'Available QTY']
-
 function StockTab({ labs }: { labs: Array<{ id: string; name: string }> }) {
   const { me } = useAuth()
   const [labId, setLabId] = useState(labs[0]?.id ?? '')
@@ -116,6 +115,9 @@ function StockTab({ labs }: { labs: Array<{ id: string; name: string }> }) {
   const [reading, setReading] = useState(false)
   const [pending, setPending] = useState<{ name: string; read: SheetRead; diff: StockDiff } | null>(null)
   const [notice, setNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
+  // Add stock (null part) or Edit one (the part): the one-at-a-time form (the user, 29 Sep).
+  const [editing, setEditing] = useState<{ part: Component | null } | null>(null)
+  const [historyOf, setHistoryOf] = useState<Component | null>(null)
 
   const canUpload = !!me && (runsTrc(me, labId) || me.is_admin)
 
@@ -123,7 +125,7 @@ function StockTab({ labs }: { labs: Array<{ id: string; name: string }> }) {
     const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean)
     return (stock ?? []).filter(c =>
       (!outOnly || c.qty === 0)
-      && words.every(w => [c.part_no, c.value, c.item, c.package].filter(Boolean).join(' ').toLowerCase().includes(w)))
+      && words.every(w => [c.part_no, c.value, c.item, c.package, c.bin, c.location].filter(Boolean).join(' ').toLowerCase().includes(w)))
   }, [stock, q, outOnly])
   const outOfStock = (stock ?? []).filter(c => c.qty === 0).length
 
@@ -148,27 +150,33 @@ function StockTab({ labs }: { labs: Array<{ id: string; name: string }> }) {
     }
   }
 
-  const apply = async () => {
+  /** existing: what to do with part numbers already in stock that the sheet says otherwise about. */
+  const apply = async (existing: 'replace' | 'skip') => {
     if (!pending) return
     try {
-      const res = await upload.mutateAsync({ trcId: labId, rows: pending.read.rows })
+      const res = await upload.mutateAsync({ trcId: labId, rows: pending.read.rows, existing })
       setPending(null)
       setNotice({
         kind: 'success',
-        text: `Stock updated at ${lab?.name}: ${res.added} added, ${res.changed} changed, ${res.same} unchanged${res.not_in_sheet ? `, ${res.not_in_sheet} not in the sheet left as they were` : ''}.`,
+        text: `Stock updated at ${lab?.name}: ${res.added} added, ${res.changed} replaced${res.skipped ? `, ${res.skipped} skipped — already in stock, kept as they were` : ''}, ${res.same} unchanged${res.not_in_sheet ? `, ${res.not_in_sheet} not in the sheet left as they were` : ''}.`,
       })
     } catch (err) {
       setNotice({ kind: 'error', text: err instanceof Error ? err.message : 'The upload did not go through.' })
     }
   }
 
-  const download = async () => {
+  // The template's own columns, so what is downloaded uploads as it is.
+  /** The stock as it is — or, as a template, its headings alone to fill in. */
+  const download = async (template = false) => {
     const XLSX = await import('xlsx')
-    const rows = (stock ?? []).map((c, i) => [i + 1, c.part_no, c.value ?? '', c.item ?? '', c.package ?? '', c.qty])
-    const ws = XLSX.utils.aoa_to_sheet([SHEET_HEADINGS, ...rows])
+    const rows = template ? [] : (stock ?? []).map(c => [c.part_no, c.value ?? '', c.item ?? '', c.package ?? '', c.bin ?? '', c.location ?? '', c.qty])
+    const ws = XLSX.utils.aoa_to_sheet([[...STOCK_SHEET_HEADINGS], ...rows])
+    ws['!cols'] = [{ wch: 14 }, { wch: 24 }, { wch: 20 }, { wch: 10 }, { wch: 8 }, { wch: 10 }, { wch: 6 }]
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Stock')
-    XLSX.writeFile(wb, `Component stock - ${lab?.name ?? 'Revive Lab'} - ${new Date().toISOString().slice(0, 10)}.xlsx`)
+    XLSX.writeFile(wb, template
+      ? 'Component stock sheet - template.xlsx'
+      : `Component stock - ${lab?.name ?? 'Revive Lab'} - ${new Date().toISOString().slice(0, 10)}.xlsx`)
   }
 
   if (labs.length === 0) {
@@ -185,8 +193,8 @@ function StockTab({ labs }: { labs: Array<{ id: string; name: string }> }) {
             <IconChip icon={FileSpreadsheet} tone="green" /> {pending.name} → {lab?.name}
           </p>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <StatTile label="New parts" value={pending.diff.added.length} />
-            <StatTile label="Changed" value={pending.diff.changed.length} sub="quantity or details" />
+            <StatTile label="New parts" value={pending.diff.added.length} sub="added" />
+            <StatTile label="Already in stock" value={pending.diff.changed.length} sub="the sheet says otherwise" />
             <StatTile label="Unchanged" value={pending.diff.same} />
             <StatTile label="Not in the sheet" value={pending.diff.notInSheet} sub="left as they are" />
           </div>
@@ -201,34 +209,54 @@ function StockTab({ labs }: { labs: Array<{ id: string; name: string }> }) {
               <ul className="list-disc pl-4">{pending.read.problems.slice(0, 10).map(p => <li key={p}>{p}</li>)}</ul>
             </Alert>
           )}
+          {/* Part numbers already in stock: replace them with the sheet, or skip them (the user, 29 Sep). */}
           {pending.diff.changed.length > 0 && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-ink-200 text-left text-xs font-semibold uppercase tracking-wide text-ink-500">
-                    <th className="py-1.5 pr-3 font-medium">Part</th>
-                    <th className="px-3 py-1.5 text-right font-medium">Was</th>
-                    <th className="py-1.5 pl-3 text-right font-medium">Now</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-ink-100">
-                  {pending.diff.changed.slice(0, 10).map(({ row, before }) => (
-                    <tr key={row.part_no}>
-                      <td className="py-1.5 pr-3"><span className="font-mono text-xs">{row.part_no}</span> {row.value}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums text-ink-500">{before.qty}</td>
-                      <td className="py-1.5 pl-3 text-right font-medium tabular-nums">{row.qty}</td>
+            <div className="rounded-lg border border-amber-300 bg-amber-50/70 p-3">
+              <p className="flex items-start gap-2 text-sm font-semibold text-amber-900">
+                <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                {pending.diff.changed.length} part number{pending.diff.changed.length === 1 ? ' is' : 's are'} already in stock, and the sheet says otherwise.
+                Replace {pending.diff.changed.length === 1 ? 'it' : 'them'} with the sheet, or skip {pending.diff.changed.length === 1 ? 'it' : 'them'} and keep what is in stock?
+              </p>
+              <div className="mt-2 max-h-64 overflow-auto rounded-md border border-amber-200 bg-surface">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-surface">
+                    <tr className="border-b border-ink-200 text-left text-xs font-semibold uppercase tracking-wide text-ink-500">
+                      <th className="px-3 py-1.5 font-medium">Part</th>
+                      <th className="px-3 py-1.5 font-medium">What would change</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-              {pending.diff.changed.length > 10 && <p className="mt-1 text-xs text-ink-400">and {pending.diff.changed.length - 10} more</p>}
+                  </thead>
+                  <tbody className="divide-y divide-ink-100">
+                    {pending.diff.changed.map(({ row, before, fields }) => (
+                      <tr key={row.part_no}>
+                        <td className="whitespace-nowrap px-3 py-1.5 align-top">
+                          <span className="font-mono text-xs text-ink-700">{row.part_no}</span>{' '}
+                          <span className="text-ink-900">{before.value ?? before.item}</span>
+                        </td>
+                        <td className="px-3 py-1.5 text-xs text-ink-600">{fields.join(' · ')}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
-          <p className="text-xs text-ink-500">Each quantity is set to the sheet&rsquo;s count. What engineers took since the sheet was counted is not added back.</p>
-          <div className="flex gap-2">
-            <button type="button" className="btn-primary" onClick={apply} disabled={upload.isPending}>
-              {upload.isPending ? <Spinner className="h-4 w-4" /> : <Upload className="h-4 w-4" />} Update stock
-            </button>
+          <p className="text-xs text-ink-500">A part replaced takes the sheet&rsquo;s count. What engineers took since the sheet was counted is not added back.</p>
+          <div className="flex flex-wrap gap-2">
+            {pending.diff.changed.length > 0 ? (
+              <>
+                <button type="button" className="btn-primary" onClick={() => void apply('replace')} disabled={upload.isPending}>
+                  {upload.isPending ? <Spinner className="h-4 w-4" /> : <Upload className="h-4 w-4" />}
+                  Replace {pending.diff.changed.length}{pending.diff.added.length ? ` and add ${pending.diff.added.length}` : ''}
+                </button>
+                <button type="button" className="btn-secondary" onClick={() => void apply('skip')} disabled={upload.isPending}>
+                  Skip them{pending.diff.added.length ? ` — add only the ${pending.diff.added.length} new` : ''}
+                </button>
+              </>
+            ) : (
+              <button type="button" className="btn-primary" onClick={() => void apply('replace')} disabled={upload.isPending}>
+                {upload.isPending ? <Spinner className="h-4 w-4" /> : <Upload className="h-4 w-4" />} Update stock
+              </button>
+            )}
             <button type="button" className="btn-secondary" onClick={() => setPending(null)}>Cancel</button>
           </div>
         </div>
@@ -239,22 +267,30 @@ function StockTab({ labs }: { labs: Array<{ id: string; name: string }> }) {
           <LabPicker labs={labs} value={labId} onChange={id => { setLabId(id); setPending(null) }} />
           <label className="relative min-w-0 flex-1 sm:w-64 sm:flex-none">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
-            <input className="input !py-1.5 !pl-8" placeholder="Part no, value or type" value={q}
+            <input className="input !py-1.5 !pl-8" placeholder="Part no, value, type or BIN" value={q}
               onChange={e => { setQ(e.target.value); setLimit(200) }} aria-label="Search stock" />
           </label>
           <label className="inline-flex items-center gap-2 text-sm text-ink-600">
             <input type="checkbox" checked={outOnly} onChange={e => setOutOnly(e.target.checked)} /> Out of stock ({outOfStock})
           </label>
-          <div className="ml-auto flex gap-2">
+          <div className="ml-auto flex flex-wrap gap-2">
+            {canUpload && (
+              <button type="button" className="btn-secondary !py-1.5 text-sm" onClick={() => { setNotice(null); setEditing({ part: null }) }}>
+                <Plus className="h-4 w-4 text-indigo-600" /> Add stock
+              </button>
+            )}
             {(stock ?? []).length > 0 && (
               <button type="button" className="btn-secondary !py-1.5 text-sm" onClick={() => void download()}>
                 <Download className="h-4 w-4 text-green-600" /> Download
               </button>
             )}
+            {/* Two ways in: the empty template to fill, or a filled sheet to upload (the user, 29 Sep). */}
             {canUpload && (
-              <button type="button" className="btn-primary !py-1.5 text-sm" onClick={() => file.current?.click()} disabled={reading}>
-                {reading ? <Spinner className="h-4 w-4" /> : <Upload className="h-4 w-4" />} Upload stock sheet
-              </button>
+              <UploadMenu
+                busy={reading}
+                onTemplate={() => void download(true)}
+                onUpload={() => file.current?.click()}
+              />
             )}
             <input ref={file} type="file" className="hidden"
               accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
@@ -267,7 +303,9 @@ function StockTab({ labs }: { labs: Array<{ id: string; name: string }> }) {
         ) : (stock ?? []).length === 0 ? (
           <div className="p-4">
             <EmptyState icon={Boxes} title={`No stock at ${lab?.name ?? 'this Revive Lab'} yet`}>
-              {canUpload ? 'Upload the component stock sheet — the Excel with Cyrix Part No, Mfr Pt No./Value, Item, Type and Available QTY.' : 'The coordinator uploads it from the stock sheet.'}
+              {canUpload
+                ? `Upload the component stock sheet — the Excel with ${STOCK_SHEET_HEADINGS.join(', ')} — or add parts one at a time.`
+                : 'The coordinator uploads it from the stock sheet.'}
             </EmptyState>
           </div>
         ) : (
@@ -283,22 +321,47 @@ function StockTab({ labs }: { labs: Array<{ id: string; name: string }> }) {
                     <th className="px-4 py-2 font-medium">Value</th>
                     <th className="hidden px-4 py-2 font-medium sm:table-cell">Item</th>
                     <th className="hidden px-4 py-2 font-medium sm:table-cell">Type</th>
+                    <th className="hidden px-4 py-2 font-medium md:table-cell">BIN</th>
+                    <th className="hidden px-4 py-2 font-medium md:table-cell">Location</th>
                     <th className="px-4 py-2 text-right font-medium">Qty</th>
+                    {canUpload && <th className="w-12 px-2 py-2"><span className="sr-only">Edit</span></th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-ink-100">
                   {shown.slice(0, limit).map((c: Component) => (
                     <tr key={c.id} className="hover:bg-ink-50">
-                      <td className="px-4 py-2 font-mono text-xs text-ink-700">{c.part_no}</td>
+                      <td className="px-4 py-2">
+                        {/* Its history: who added it, who changed what (the user, 29 Sep). */}
+                        <button type="button" className="link-accent font-mono text-xs" onClick={() => setHistoryOf(c)} title={`History of ${c.part_no}`}>
+                          {c.part_no}
+                        </button>
+                      </td>
                       <td className="px-4 py-2 text-ink-900">
                         {c.value ?? <span className="text-ink-300">—</span>}
                         <span className="block text-xs text-ink-400 sm:hidden">{[c.item, c.package].filter(Boolean).join(' · ')}</span>
+                        {/* On a narrow screen, where it is kept goes under the value. */}
+                        <WhereTag bin={c.bin} location={c.location} className="mt-0.5 md:hidden" />
                       </td>
                       <td className="hidden px-4 py-2 text-ink-600 sm:table-cell">{c.item ?? '—'}</td>
                       <td className="hidden px-4 py-2 text-ink-600 sm:table-cell">{c.package ?? '—'}</td>
+                      <td className="hidden px-4 py-2 font-medium text-ink-800 md:table-cell">{c.bin ?? <span className="font-normal text-ink-300">—</span>}</td>
+                      <td className="hidden px-4 py-2 font-medium text-ink-800 md:table-cell">{c.location ?? <span className="font-normal text-ink-300">—</span>}</td>
                       <td className="px-4 py-2 text-right">
                         <span className={clsx('badge tabular-nums', c.qty === 0 ? 'bg-rose-100 text-rose-900' : 'bg-green-100 text-green-900')}>{c.qty}</span>
                       </td>
+                      {canUpload && (
+                        <td className="px-2 py-1 text-right">
+                          <button
+                            type="button"
+                            className="rounded-md p-1.5 text-ink-400 hover:bg-ink-100 hover:text-ink-800"
+                            onClick={() => { setNotice(null); setEditing({ part: c }) }}
+                            title={`Edit ${c.part_no}`}
+                            aria-label={`Edit ${c.part_no}`}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -314,6 +377,20 @@ function StockTab({ labs }: { labs: Array<{ id: string; name: string }> }) {
           </>
         )}
       </div>
+
+      {editing && lab && (
+        <StockPartDialog
+          labId={labId}
+          labName={lab.name}
+          stock={stock ?? []}
+          part={editing.part}
+          onClose={() => setEditing(null)}
+          onDone={text => { setEditing(null); setNotice({ kind: 'success', text }) }}
+        />
+      )}
+      {historyOf && (
+        <PartHistoryDialog part={(stock ?? []).find(c => c.id === historyOf.id) ?? historyOf} onClose={() => setHistoryOf(null)} />
+      )}
     </div>
   )
 }
@@ -364,6 +441,7 @@ function TakenTab() {
                 className={clsx('rounded-md px-3 py-1.5 text-sm font-medium', show === v ? 'bg-surface text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800')}>
                 {v === 'open' ? 'Waiting' : 'All'}
                 {v === 'open' && waiting > 0 && <span className="ml-1.5 tabular-nums text-orange-600">{waiting}</span>}
+                {v === 'all' && (rows ?? []).length > 0 && <span className="ml-1.5 tabular-nums text-ink-400">{(rows ?? []).length}</span>}
               </button>
             ))}
           </div>
@@ -371,10 +449,18 @@ function TakenTab() {
 
         {shown.length === 0 ? (
           <div className="p-4">
-            <EmptyState icon={PackageMinus} title={show === 'open' ? 'Nothing waiting' : 'Nothing taken from stock yet'}>
-              An engineer repairing a spare takes what they need from this Revive Lab’s stock, and it comes off the
-              count once you approve it.
-            </EmptyState>
+            {/* Waiting empty is not nothing recorded: say where the rest are (the user, 29 Sep: "still data not showing"). */}
+            {show === 'open' && (rows ?? []).length > 0 ? (
+              <EmptyState icon={PackageMinus} title="Nothing waiting for approval">
+                All {(rows ?? []).length} taken from stock so far {(rows ?? []).length === 1 ? 'has' : 'have'} been approved or declined.{' '}
+                <button type="button" className="link-accent font-medium" onClick={() => setShow('all')}>Show all {(rows ?? []).length}</button>
+              </EmptyState>
+            ) : (
+              <EmptyState icon={PackageMinus} title={show === 'open' ? 'Nothing waiting' : 'Nothing taken from stock yet'}>
+                An engineer repairing a spare takes what they need from this Revive Lab’s stock, and it comes off the
+                count once you approve it.
+              </EmptyState>
+            )}
           </div>
         ) : (
           <ul className="divide-y divide-ink-100">
@@ -390,6 +476,8 @@ function TakenTab() {
                     <span className="min-w-0 flex-1 text-sm text-ink-800">
                       <span className="tabular-nums">{u.qty} ×</span> {u.value ?? u.item ?? u.part_no}
                       <span className="ml-1.5 font-mono text-xs text-ink-500">{u.part_no}</span>
+                      {/* Where to go and get it (the user, 29 Sep). */}
+                      <WhereTag bin={u.bin} location={u.location} missing={u.status === 'requested'} className="ml-2 align-middle" />
                       <span className="block text-xs text-ink-500">
                         {u.facility} · {u.trc_name} · requested by {u.requested_by_name} {day(u.requested_at)}
                         {u.status === 'requested' && <> · {u.in_stock} in stock</>}

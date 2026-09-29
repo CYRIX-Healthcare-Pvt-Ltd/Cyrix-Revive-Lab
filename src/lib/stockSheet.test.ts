@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { readStockGrid, stockDiff, type StockRow } from './stockSheet'
+import { partNamed, partNoSuggestions, readStockGrid, stockDiff, STOCK_SHEET_HEADINGS, type StockRow } from './stockSheet'
 
 // The first rows of the Revive Labs' own sheet, and the odd ones in it.
 const HEAD = ['SL:NO', 'Cyrix- Part No', 'Mfr Pt No./Value', 'Item', 'Type', 'Available QTY']
@@ -66,8 +66,54 @@ describe('what an upload would change', () => {
 
   it('tells new parts, changed counts, unchanged ones and parts the sheet leaves out apart', () => {
     expect(diff.added.map(r => r.part_no)).toEqual(['C-004', 'C-031'])
-    expect(diff.changed).toEqual([{ row: expect.objectContaining({ part_no: 'C-001', qty: 8 }), before: current[0] }])
+    expect(diff.changed).toEqual([{ row: expect.objectContaining({ part_no: 'C-001', qty: 8 }), before: current[0], fields: ['Qty 5 → 8'] }])
     expect(diff.same).toBe(1)
     expect(diff.notInSheet).toBe(1)
+  })
+})
+
+describe('the counting sheet of 29 Sep: BIN and Location', () => {
+  // The Revive Lab's own sheet, as it came: " BIN" with a space before it.
+  const sheet = readStockGrid([
+    ['Cyrix- Part No', 'Value', 'Item', 'Type', ' BIN', 'Location', 'Qty'],
+    ['C-001', 'IRF 640', 'MOSFET', 'TH', 'B1', 'A', 4],
+    ['C-923', '3.6V 60mAH', 'NI MH BATTERY RECH', 'TH', 'B1', 'A2', 1],
+    ['C-924', 'FUSE 3.15A ', 'GLASS FUSE', 'EXT', '', '', 10],
+  ])
+
+  it('reads its seven columns, the template the screen downloads', () => {
+    expect([...STOCK_SHEET_HEADINGS]).toEqual(['Cyrix- Part No', 'Value', 'Item', 'Type', 'BIN', 'Location', 'Qty'])
+    expect(sheet.rows[0]).toEqual({ part_no: 'C-001', value: 'IRF 640', item: 'MOSFET', package: 'TH', bin: 'B1', location: 'A', qty: 4 })
+    expect(sheet.rows[2]).toMatchObject({ value: 'FUSE 3.15A', bin: null, location: null })
+  })
+
+  it('an older sheet, without them, says nothing about them', () => {
+    expect('bin' in readStockGrid(grid).rows[0]).toBe(false)
+  })
+
+  it('says what replacing would change, BIN and Location with the rest', () => {
+    const current: StockRow[] = [
+      { part_no: 'C-001', value: 'IRF 640', item: 'MOSFET', package: 'TH', bin: null, location: null, qty: 5 },
+      { part_no: 'C-923', value: '3.6V 60mAH', item: 'NI MH BATTERY RECH', package: 'TH', bin: 'B1', location: 'A2', qty: 1 },
+    ]
+    const diff = stockDiff(sheet.rows, current)
+    expect(diff.changed).toEqual([expect.objectContaining({ fields: ['BIN — → B1', 'Location — → A', 'Qty 5 → 4'] })])
+    expect(diff.same).toBe(1)
+    expect(diff.added.map(r => r.part_no)).toEqual(['C-924'])
+  })
+})
+
+describe('part numbers for a new part', () => {
+  const parts = ['C-001', 'C-002', 'C-004', 'C-007', 'C-1329', 'X-99 odd'].map(part_no => ({ part_no }))
+
+  it('offers the next after the highest, then the free ones in between', () => {
+    expect(partNoSuggestions(parts, 4)).toEqual(['C-1330', 'C-003', 'C-005', 'C-006'])
+    expect(partNoSuggestions([])).toEqual(['C-001'])
+  })
+
+  it('finds the part a number already belongs to, spaces and case aside — but not the one being edited', () => {
+    expect(partNamed(parts, ' c-004 ')?.part_no).toBe('C-004')
+    expect(partNamed(parts, 'C-003')).toBeUndefined()
+    expect(partNamed(parts, 'C-004', parts[2])).toBeUndefined()
   })
 })

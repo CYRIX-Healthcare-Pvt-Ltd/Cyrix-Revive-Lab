@@ -1,8 +1,8 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import {
-  Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Bar, BarChart, CartesianGrid, Cell, LabelList, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import { AlarmClock, ArrowRight, BellRing, Building2, ChartColumn, HardHat, Inbox, PackagePlus, TrendingUp, Users } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
@@ -11,7 +11,7 @@ import { dateTime as dateTimeOf, dayDate } from '@/lib/when'
 import {
   REPAIRING, STATUS, STATUS_ORDER, TONE_DOT, TONE_FILL, TONE_TEXT, canRaise, itemsSummary, statusGroups, ticketTabs, waitingOnMe,
 } from '@/lib/tickets'
-import { asDays, formatSpan, ticketTat, type TatEvent } from '@/lib/tat'
+import { formatSpan, ticketTat, type TatEvent } from '@/lib/tat'
 import { EmptyState, PageLoader, ReturnedTag, SectorTag, StatTile, TransferTag, WarehouseChip } from '@/components/ui'
 import IconChip from '@/components/IconChip'
 import { CATEGORY_CLASS, ClassTag } from '@/components/Classification'
@@ -23,8 +23,58 @@ import {
 const TOOLTIP = { fontSize: 12, borderRadius: 8, border: '1px solid #d4d8e0' }
 const TICK = { fontSize: 11, fill: '#606b82' }
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-/** Revive Lab went live in September 2026; the trend has nothing to say before it. */
-const FIRST_MONTH = new Date(2026, 8, 1)
+/** Revive Lab has been in use since 26 September 2026; the trend starts there (the user, 29 Sep). */
+const TREND_START = new Date(2026, 8, 26)
+
+type TrendBy = 'day' | 'week' | 'month' | 'year'
+const TREND_BY: ReadonlyArray<{ id: TrendBy; label: string; each: string }> = [
+  { id: 'day', label: 'Day', each: 'day' },
+  { id: 'week', label: 'Week', each: 'week' },
+  { id: 'month', label: 'Month', each: 'month' },
+  { id: 'year', label: 'Year', each: 'year' },
+]
+
+/**
+ * The stretches the trend is drawn over, oldest first: the last 30 days,
+ * the last 12 weeks (Monday to Sunday), the last 12 months, or every year —
+ * none before 26 Sep 2026, and the first cut to begin there, so nothing
+ * closed before it counts.
+ */
+function trendBuckets(by: TrendBy, now: Date): Array<{ label: string; from: number; to: number }> {
+  const start = TREND_START.getTime()
+  const at = (y: number, m: number, d: number) => new Date(y, m, d)
+  const dayLabel = (d: Date) => `${d.getDate()} ${MONTHS[d.getMonth()]}`
+  const raw: Array<{ from: Date; to: Date; label: (from: Date) => string }> = []
+  if (by === 'day') {
+    for (let i = 29; i >= 0; i--) {
+      const d = at(now.getFullYear(), now.getMonth(), now.getDate() - i)
+      raw.push({ from: d, to: at(d.getFullYear(), d.getMonth(), d.getDate() + 1), label: dayLabel })
+    }
+  } else if (by === 'week') {
+    // This week's Monday.
+    const monday = at(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7))
+    for (let i = 11; i >= 0; i--) {
+      const d = at(monday.getFullYear(), monday.getMonth(), monday.getDate() - 7 * i)
+      raw.push({ from: d, to: at(d.getFullYear(), d.getMonth(), d.getDate() + 7), label: dayLabel })
+    }
+  } else if (by === 'month') {
+    // "Sep 2026", in full: "Sep 26" read as the 26th.
+    for (let i = 11; i >= 0; i--) {
+      const d = at(now.getFullYear(), now.getMonth() - i, 1)
+      raw.push({ from: d, to: at(d.getFullYear(), d.getMonth() + 1, 1), label: f => `${MONTHS[f.getMonth()]} ${f.getFullYear()}` })
+    }
+  } else {
+    for (let y = TREND_START.getFullYear(); y <= now.getFullYear(); y++) {
+      raw.push({ from: at(y, 0, 1), to: at(y + 1, 0, 1), label: f => String(f.getFullYear()) })
+    }
+  }
+  return raw
+    .filter(b => b.to.getTime() > start)
+    .map(b => {
+      const from = b.from.getTime() < start ? TREND_START : b.from
+      return { label: b.label(from), from: from.getTime(), to: b.to.getTime() }
+    })
+}
 
 /**
  * Where everything is, and how long it is taking.
@@ -46,6 +96,8 @@ export default function Dashboard() {
   const [params, setParams] = useSearchParams()
   const period: Period = PERIODS.some(p => p.id === params.get('period')) ? params.get('period') as Period : 'month'
   const words = PERIODS.find(p => p.id === period)!.words
+  // The TAT trend by the day, week, month or year tickets closed in (the user, 29 Sep).
+  const [trendBy, setTrendBy] = useState<TrendBy>('month')
 
   const stats = useMemo(() => {
     /*
@@ -88,25 +140,22 @@ export default function Dashboard() {
     })).filter(r => r.Open + r.Closed > 0)
 
     /*
-      Month by month, by the month each ticket closed in — from September
-      2026, when Revive Lab went live (the user, 24 Sep: "start tat trend
-      from sep 26"), to this month; the last twelve once there are more.
+      By the day, week, month or year each ticket closed in, as chosen on
+      the card (the user, 29 Sep) — from September 2026, when Revive Lab
+      went live ("start tat trend from sep 26"), to now.
     */
-    const first = Math.max(FIRST_MONTH.getTime(), new Date(now.getFullYear(), now.getMonth() - 11, 1).getTime())
-    const months: Date[] = []
-    for (let d = new Date(first); d.getTime() <= now.getTime(); d = new Date(d.getFullYear(), d.getMonth() + 1, 1)) months.push(d)
-    const trend = months.map(d => {
-      const next = new Date(d.getFullYear(), d.getMonth() + 1, 1)
+    const trend = trendBuckets(trendBy, now).map(({ label, from, to }) => {
       const inMonth = closed.filter(t => {
         const c = Date.parse(t.closed_at!)
-        return c >= d.getTime() && c < next.getTime()
+        return c >= from && c < to
       })
       const avg = (pick: 'total' | 'repair' | 'reach') => {
         const vals = inMonth.map(t => tatOf(t.id, t.trc_id)[pick].ms).filter((v): v is number => v !== null)
-        return vals.length ? asDays(vals.reduce((a, v) => a + v, 0) / vals.length) : null
+        // Days, unrounded: a label under a day reads in hours, and 0.1 of a day hid which (the user, 29 Sep).
+        return vals.length ? Math.round((vals.reduce((a, v) => a + v, 0) / vals.length / 86_400_000) * 1000) / 1000 : null
       }
       return {
-        month: `${MONTHS[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`,
+        month: label,
         'End to end': avg('total'),
         Repair: avg('repair'),
         'Reach Revive Lab': avg('reach'),
@@ -130,7 +179,7 @@ export default function Dashboard() {
       trend,
       total: all.length,
     }
-  }, [tickets, events, trcs, me, period])
+  }, [tickets, events, trcs, me, period, trendBy])
 
   // Every Revive Lab engineer at this person's Revive Labs (all of them for an admin), and the reports on them.
   const lab = useMemo(() => {
@@ -348,32 +397,158 @@ export default function Dashboard() {
           </div>
 
           <div className="card p-4">
-            <h3 className="mb-1 flex items-center gap-2.5 text-sm font-semibold text-ink-800">
-              <IconChip icon={TrendingUp} tone="indigo" /> TAT trend
-            </h3>
-            <p className="mb-3 text-xs text-ink-500">
-              Average days, for tickets closed in each month: end to end, repair time with the Revive Lab engineer, and time to reach the Revive Lab.
-            </p>
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={stats.trend} margin={{ left: -10, right: 16 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#eceef2" vertical={false} />
-                  <XAxis dataKey="month" tick={TICK} />
-                  <YAxis tick={TICK} />
-                  <Tooltip
-                    contentStyle={TOOLTIP}
-                    formatter={(v: unknown) => (typeof v === 'number' ? `${v} days` : '—')}
-                  />
-                  <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Line type="monotone" dataKey="End to end" stroke="#11141c" strokeWidth={2} dot={{ r: 3 }} connectNulls />
-                  <Line type="monotone" dataKey="Repair" stroke="#4f46e5" strokeWidth={2} dot={{ r: 3 }} connectNulls />
-                  <Line type="monotone" dataKey="Reach Revive Lab" stroke="#d97706" strokeWidth={2} dot={{ r: 3 }} connectNulls />
-                </LineChart>
-              </ResponsiveContainer>
+            <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+              <h3 className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
+                <IconChip icon={TrendingUp} tone="indigo" /> TAT trend
+              </h3>
+              <div className="inline-flex rounded-lg border border-ink-200 bg-ink-50 p-0.5" role="radiogroup" aria-label="Trend by">
+                {TREND_BY.map(b => (
+                  <button
+                    key={b.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={trendBy === b.id}
+                    onClick={() => setTrendBy(b.id)}
+                    className={clsx('rounded-md px-3 py-1 text-xs font-medium transition-colors',
+                      trendBy === b.id ? 'bg-surface text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800')}
+                  >
+                    {b.label}
+                  </button>
+                ))}
+              </div>
             </div>
+            <p className="mb-3 text-xs text-ink-500">
+              Average days, for tickets closed in each {TREND_BY.find(b => b.id === trendBy)!.each}: end to end, repair time with the Revive Lab engineer, and time to reach the Revive Lab — since 26 Sep 2026, when Revive Lab came into use.
+            </p>
+            <TrendChart data={stats.trend} />
           </div>
         </>
       )}
+    </div>
+  )
+}
+
+/** The three lines, in the order their labels win a place. Teal, not near-black: that was invisible on the dark theme. */
+const TREND_LINES = [
+  { key: 'End to end', color: '#0d9488' },
+  { key: 'Repair', color: '#4f46e5' },
+  { key: 'Reach Revive Lab', color: '#d97706' },
+] as const
+
+type TrendPoint = Record<string, string | number | null>
+
+/**
+ * The axis: four even steps to a top a quarter above the highest point, so
+ * the highest label has room and the ticks read 0, 2, 4, 6, 8 — not 0, 2, 5.
+ */
+function trendAxis(data: readonly TrendPoint[]): { top: number; ticks: number[] } {
+  const max = Math.max(0, ...data.flatMap(d => TREND_LINES.map(l => d[l.key])).filter((v): v is number => typeof v === 'number'))
+  const want = Math.max(max * 1.25, 0.4)
+  const step = [0.1, 0.25, 0.5, 1, 2, 5, 10, 25, 50, 100].find(s => s * 4 >= want) ?? Math.ceil(want / 4)
+  return { top: step * 4, ticks: [0, 1, 2, 3, 4].map(i => Math.round(i * step * 100) / 100) }
+}
+
+/**
+ * Which points carry their value (the user, 29 Sep: "show data labels
+ * beautifully also, but if congested dont show … in mobile we dont need").
+ * None on a phone. Otherwise each label is placed where it would sit —
+ * above its point, in the chart's own geometry — and kept only if it
+ * touches no label already placed and no point: End to end first, then
+ * repair, then reaching the Revive Lab.
+ */
+function trendLabels(data: readonly TrendPoint[], width: number, top: number): Set<string> {
+  const show = new Set<string>()
+  if (width < 640 || data.length === 0) return show
+  // The LineChart's layout: 50px of axis on the left, 16 on the right; 190px of plot under a 5px margin.
+  const x0 = 50
+  const plotW = width - x0 - 16
+  const plotH = 190
+  const xAt = (i: number) => x0 + (data.length === 1 ? plotW / 2 : (i * plotW) / (data.length - 1))
+  const yAt = (v: number) => 5 + plotH * (1 - v / top)
+  type Box = { l: number; r: number; t: number; b: number }
+  const placed: Box[] = []
+  // Every point is somewhere a label may not cover.
+  for (const line of TREND_LINES) {
+    data.forEach((d, i) => {
+      const v = d[line.key]
+      if (typeof v === 'number') placed.push({ l: xAt(i) - 4, r: xAt(i) + 4, t: yAt(v) - 4, b: yAt(v) + 4 })
+    })
+  }
+  for (const line of TREND_LINES) {
+    data.forEach((d, i) => {
+      const v = d[line.key]
+      if (typeof v !== 'number') return
+      const w = labelWidth(v)
+      const box = { l: xAt(i) - w / 2, r: xAt(i) + w / 2, t: yAt(v) - 26, b: yAt(v) - 10 }
+      if (box.t < 0 || placed.some(p => box.l < p.r + 2 && box.r > p.l - 2 && box.t < p.b + 2 && box.b > p.t - 2)) return
+      placed.push(box)
+      show.add(`${line.key}:${i}`)
+    })
+  }
+  return show
+}
+
+/** 1.2d; under a day in hours, 10h; under an hour, <1h (the user, 29 Sep: "if less that day can we show as hours?"). */
+const spanLabel = (days: number): string =>
+  days >= 1 ? `${Math.round(days * 10) / 10}d` : days * 24 >= 1 ? `${Math.round(days * 24)}h` : '<1h'
+
+/** The same, in words, for the tooltip. */
+const spanWords = (days: number): string =>
+  days >= 1 ? `${Math.round(days * 10) / 10} days` : days * 24 >= 1 ? `${Math.round(days * 24)} hours` : 'under an hour'
+
+const labelWidth = (v: number) => 10 + 6 * spanLabel(v).length
+
+/** The value above its point, in a pill of its line's colour. */
+function TrendLabel({ x, y, value, index, name, color, show }: {
+  x?: number | string; y?: number | string; value?: unknown; index?: number; name: string; color: string; show: Set<string>
+}) {
+  if (typeof value !== 'number' || typeof x !== 'number' || typeof y !== 'number' || !show.has(`${name}:${index}`)) return null
+  const w = labelWidth(value)
+  return (
+    <g pointerEvents="none">
+      <rect x={x - w / 2} y={y - 26} width={w} height={16} rx={8} fill={color} fillOpacity={0.16} stroke={color} strokeOpacity={0.45} />
+      <text x={x} y={y - 14.5} textAnchor="middle" fontSize={10.5} fontWeight={600} fill={color}>{spanLabel(value)}</text>
+    </g>
+  )
+}
+
+/** The chart's width as it is drawn, for placing labels. */
+function useWidth<T extends HTMLElement>(): [React.RefObject<T>, number] {
+  const ref = useRef<T>(null)
+  const [width, setWidth] = useState(0)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const ro = new ResizeObserver(([e]) => setWidth(Math.round(e.contentRect.width)))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  return [ref, width]
+}
+
+function TrendChart({ data }: { data: TrendPoint[] }) {
+  const [ref, width] = useWidth<HTMLDivElement>()
+  const { top, ticks } = useMemo(() => trendAxis(data), [data])
+  const show = useMemo(() => trendLabels(data, width, top), [data, width, top])
+  return (
+    <div ref={ref} className="h-64">
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data} margin={{ left: -10, right: 16 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#eceef2" vertical={false} />
+          <XAxis dataKey="month" tick={TICK} />
+          <YAxis tick={TICK} domain={[0, top]} ticks={ticks} />
+          <Tooltip
+            contentStyle={TOOLTIP}
+            formatter={(v: unknown) => (typeof v === 'number' ? spanWords(v) : '—')}
+          />
+          <Legend wrapperStyle={{ fontSize: 12 }} />
+          {TREND_LINES.map(l => (
+            <Line key={l.key} type="monotone" dataKey={l.key} stroke={l.color} strokeWidth={2} dot={{ r: 3 }} connectNulls>
+              <LabelList dataKey={l.key} content={p => <TrendLabel {...p} name={l.key} color={l.color} show={show} />} />
+            </Line>
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
     </div>
   )
 }
@@ -402,10 +577,15 @@ function daysSince(at: string, now = new Date()): number {
   return Math.round((day(now) - day(d)) / 86_400_000)
 }
 
-/** Within a group, the one waiting longest first; one without a date keeps its place after them. */
+/**
+ * Within a group: hospitals' spares before warehouses' — a warehouse's is
+ * the least urgent (the user, 29 Sep) — and in each, the one waiting
+ * longest first; one without a date after them.
+ */
 function longestWaitFirst<T extends Ticket>(rows: readonly T[]): T[] {
   const at = (t: T) => { const s = waitingSince(t); return s ? Date.parse(s.at) : Infinity }
-  return [...rows].sort((a, b) => at(a) - at(b))
+  const last = (t: T) => (t.source === 'warehouse' ? 1 : 0)
+  return [...rows].sort((a, b) => last(a) - last(b) || at(a) - at(b))
 }
 
 /**

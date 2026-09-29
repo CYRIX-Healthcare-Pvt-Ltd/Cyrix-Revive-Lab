@@ -4,6 +4,7 @@ import { Boxes, CheckCircle2, ClipboardList, Search, ShoppingCart, Store } from 
 import { useComponents, useRequestPart, useUseComponent, type Component, type Ticket } from '@/lib/queries'
 import { PART_ROUTE_LABEL, type PartRoute } from '@/lib/tickets'
 import { Spinner } from '@/components/ui'
+import { WhereTag } from '@/components/StockPart'
 import PhotoPick, { type PickedPhoto } from '@/components/PhotoPick'
 
 /** Local purchase and Purchase, each in its own colour, chosen or not. */
@@ -16,7 +17,7 @@ const ROUTE_LOOK: Record<PartRoute, { on: string; off: string; icon: string; Ico
 export function searchStock(stock: readonly Component[], query: string, limit = 30): Component[] {
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
   if (words.length === 0) return []
-  const hay = (c: Component) => [c.part_no, c.value, c.item, c.package].filter(Boolean).join(' ').toLowerCase()
+  const hay = (c: Component) => [c.part_no, c.value, c.item, c.package, c.bin, c.location].filter(Boolean).join(' ').toLowerCase()
   return stock
     .filter(c => words.every(w => hay(c).includes(w)))
     .sort((a, b) => {
@@ -43,7 +44,10 @@ function StockLine({ c, onPick, picked }: { c: Component; onPick?: () => void; p
         <span className="block text-sm font-medium text-ink-900">
           {c.value ?? c.item ?? c.part_no} <span className="font-mono text-xs font-normal text-ink-500">{c.part_no}</span>
         </span>
-        <span className="block text-xs text-ink-500">{[c.item, c.package].filter(Boolean).join(' · ') || '—'}</span>
+        <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-500">
+          {[c.item, c.package].filter(Boolean).join(' · ') || '—'}
+          <WhereTag bin={c.bin} location={c.location} />
+        </span>
       </span>
       <span className={clsx('badge whitespace-nowrap tabular-nums', none ? 'bg-rose-100 text-rose-900' : 'bg-green-100 text-green-900')}>
         {none ? 'None in stock' : `${c.qty} in stock`}
