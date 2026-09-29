@@ -461,9 +461,12 @@ export default function Tickets() {
                           <p className="text-xs text-ink-500">{raised.time}</p>
                         </td>
                         <td className="px-4 py-3">
-                          <StatusBadge status={t.status} closure={t.closure} awaiting={awaitingManager(t)} />
-                          <ReturnedTag ticket={t} className="mt-1 flex w-fit" />
-                          <TransferTag ticket={t} className="mt-1 flex w-fit" />
+                          {/* One row of pills, level, wrapping neatly when the column is narrow. */}
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <StatusBadge status={t.status} closure={t.closure} awaiting={awaitingManager(t)} />
+                            <ReturnedTag ticket={t} />
+                            <TransferTag ticket={t} />
+                          </div>
                         </td>
                         <td className="px-4 py-3">
                           {t.spare_category || t.criticality

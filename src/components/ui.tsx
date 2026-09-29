@@ -219,7 +219,8 @@ export function ReturnedTag({ ticket: t, className }: {
   return (
     <span
       className={clsx(
-        'inline-flex items-center gap-1 whitespace-nowrap rounded bg-rose-100 px-1.5 py-px align-middle text-[10px] font-semibold text-rose-900',
+        // The status badge's own pill — same height, shape and type — so the two sit level (the user, 29 Sep).
+        'badge gap-1 whitespace-nowrap bg-rose-100 align-middle font-semibold text-rose-900',
         className,
       )}
       title={`Returned not working${n > 1 ? `, ${n} times` : ''}: ${t.field_returns![n - 1].reason}`}
@@ -239,7 +240,7 @@ export function TransferTag({ ticket: t, className }: {
   return (
     <span
       className={clsx(
-        'inline-flex items-center gap-1 whitespace-nowrap rounded bg-violet-100 px-1.5 py-px align-middle text-[10px] font-semibold text-violet-900',
+        'badge gap-1 whitespace-nowrap bg-violet-100 align-middle font-semibold text-violet-900',
         className,
       )}
       title={`From ${h.from_name} to ${h.to_name} — waiting for them to accept`}
