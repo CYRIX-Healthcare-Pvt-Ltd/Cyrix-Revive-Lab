@@ -346,6 +346,8 @@ export interface Me {
   approves?: boolean
   /** Only watches: the tickets of the Revive Labs ticked for them, with nothing to press (rl_0039). */
   is_observer?: boolean
+  /** An Observer who also raises tickets, as a field engineer does (rl_0040). */
+  may_raise?: boolean
 }
 
 /* ------------------------------------------------------------------ */
@@ -814,11 +816,14 @@ export function ticketTabs(me: Me | null | undefined): TicketTab[] {
  * observer only watches; none of them sends one, so none is offered it —
  * unless they also run a desk, as a coordinator or an admin, where spares
  * arrive and cards are written for them (rl_0015, rl_0019, rl_0036,
- * rl_0039; the database refuses them too).
+ * rl_0039; the database refuses them too). An Observer ticked "May raise
+ * tickets" raises as a field engineer does (rl_0040; the user, 1 Oct: "if
+ * 1 id want to raise tickets but need to see all tickets").
  */
 export function canRaise(me: Me | null | undefined): boolean {
   if (!me) return true
-  return !(me.is_engineer || me.is_purchase || me.is_manager || me.is_observer) || me.is_coordinator || me.is_admin
+  const watchesOnly = !!me.is_observer && !me.may_raise
+  return !(me.is_engineer || me.is_purchase || me.is_manager || watchesOnly) || me.is_coordinator || me.is_admin
 }
 
 /* ------------------------------------------------------------------ */

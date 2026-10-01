@@ -682,6 +682,19 @@ describe('the Revive Lab Observer (rl_0039)', () => {
     expect(canRaise(me({ is_observer: true, is_admin: true }))).toBe(true)
   })
 
+  it('raises as a field engineer does when ticked May raise tickets, and still has nothing else (rl_0040)', () => {
+    const raiser = me({ employee_id: 'obs', is_observer: true, may_raise: true, trc_ids: [REG] })
+    expect(canRaise(raiser)).toBe(true)
+    expect(observesOnly(raiser)).toBe(true)
+    expect(runsTrc(raiser, REG)).toBe(false)
+    expect(actionsFor(ticket(), raiser)).toEqual([])
+    // Their own ticket is theirs like any sender's: the courier details, until it arrives.
+    expect(actionsFor(ticket({ raised_by: 'obs', stakeholder_id: 'obs' }), raiser)).toEqual(['courier'])
+    // The box is the Observer's: it does not let a Revive Lab engineer raise.
+    expect(canRaise(me({ is_engineer: true, is_observer: true, may_raise: true, trc_ids: [REG] }))).toBe(false)
+    expect(canRaise(me({ is_engineer: true, may_raise: true, trc_ids: [REG] }))).toBe(false)
+  })
+
   it('has the list without a Waiting on you tab', () => {
     expect(ticketTabs(observer).map(x => x.label)).toEqual(['All', 'Open', 'Closed'])
     expect(ticketTabs(observer).map(x => x.tone)).toEqual(['slate', 'amber', 'green'])

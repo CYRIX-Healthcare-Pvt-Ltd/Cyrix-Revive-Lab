@@ -80,6 +80,8 @@ interface Member {
   is_purchase: boolean
   /** Only watches: the tickets of the Revive Labs ticked, with nothing to press (rl_0039). */
   is_observer?: boolean
+  /** An Observer who also raises tickets, as a field engineer does (rl_0040). */
+  may_raise?: boolean
 }
 interface Person { id: string; ecode: string; full_name: string; designation: string | null; department: string | null }
 
@@ -88,6 +90,7 @@ interface Draft {
   is_engineer: boolean; is_coordinator: boolean; is_manager: boolean; is_admin: boolean
   is_purchase: boolean
   is_observer: boolean
+  may_raise: boolean
   trc_ids: string[]
 }
 
@@ -149,6 +152,8 @@ export function ReviveLabAccess() {
       p_trc_ids: d.trc_ids,
       p_purchase: d.is_purchase,
       p_observer: d.is_observer,
+      // The Observer's box: it goes when Observer does.
+      p_may_raise: d.is_observer && d.may_raise,
     }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['revive'] }),
   })
@@ -186,14 +191,14 @@ export function ReviveLabAccess() {
     setEditing({
       employee_id: m.employee_id, full_name: m.full_name, ecode: m.ecode,
       is_engineer: m.is_engineer, is_coordinator: m.is_coordinator, is_manager: m.is_manager,
-      is_admin: m.is_admin, is_purchase: m.is_purchase, is_observer: !!m.is_observer, trc_ids: [...m.trc_ids],
+      is_admin: m.is_admin, is_purchase: m.is_purchase, is_observer: !!m.is_observer, may_raise: !!m.may_raise, trc_ids: [...m.trc_ids],
     })
   }
 
   const save = async (d: Draft, removing = false) => {
     setError(null); setNotice(null)
     const payload = removing
-      ? { ...d, is_engineer: false, is_coordinator: false, is_manager: false, is_admin: false, is_purchase: false, is_observer: false, trc_ids: [] }
+      ? { ...d, is_engineer: false, is_coordinator: false, is_manager: false, is_admin: false, is_purchase: false, is_observer: false, may_raise: false, trc_ids: [] }
       : d
     try {
       await saveMember.mutateAsync(payload)
@@ -249,7 +254,7 @@ export function ReviveLabAccess() {
               setAdding(false)
               setEditing({
                 employee_id: p.id, full_name: p.full_name, ecode: p.ecode,
-                is_engineer: false, is_coordinator: false, is_manager: false, is_admin: false, is_purchase: false, is_observer: false,
+                is_engineer: false, is_coordinator: false, is_manager: false, is_admin: false, is_purchase: false, is_observer: false, may_raise: false,
                 trc_ids: (trcs ?? []).length === 1 ? [trcs![0].id] : [],
               })
             }}
@@ -939,6 +944,11 @@ function EditRow({ draft, trcs, busy, onChange, onSave, onCancel, onRemove }: {
         <div className="mt-1 flex flex-wrap items-center gap-2">
           <Check tone="admin" label="Admin — may edit this table" checked={draft.is_admin}
             onChange={v => onChange({ ...draft, is_admin: v })} />
+          {/* For an Observer who also sends spares in: everything to see, and tickets to raise (rl_0040). */}
+          {draft.is_observer && (
+            <Check label="May raise tickets" checked={draft.may_raise}
+              onChange={v => onChange({ ...draft, may_raise: v })} />
+          )}
         </div>
       </div>
 
@@ -953,7 +963,9 @@ function EditRow({ draft, trcs, busy, onChange, onSave, onCancel, onRemove }: {
       {/* What the box means, said while it is the only one ticked: it takes things away as well as giving them. */}
       {draft.is_observer && !(draft.is_engineer || draft.is_coordinator || draft.is_manager || draft.is_purchase || draft.is_admin) && (
         <p className="text-xs text-ink-500">
-          An Observer only watches: a dashboard and the tickets of the Revive Lab(s) ticked, with nothing to press and no ticket to raise.
+          {draft.may_raise
+            ? 'This Observer sees a dashboard and the tickets of the Revive Lab(s) ticked, and raises tickets as a field engineer does. Nothing else to press.'
+            : 'An Observer only watches: a dashboard and the tickets of the Revive Lab(s) ticked, with nothing to press and no ticket to raise.'}
         </p>
       )}
 
