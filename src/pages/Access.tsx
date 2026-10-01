@@ -900,6 +900,9 @@ function EditRow({ draft, trcs, busy, onChange, onSave, onCancel, onRemove }: {
 }) {
   const toggleTrc = (id: string, on: boolean) =>
     onChange({ ...draft, trc_ids: on ? [...draft.trc_ids, id] : draft.trc_ids.filter(x => x !== id) })
+  // An Observer sees the tickets of the Revive Labs ticked, so with none ticked they see nothing —
+  // two were saved that way the day the role came in. It is not saved until one is ticked.
+  const observerNeedsLab = draft.is_observer && draft.trc_ids.length === 0
 
   return (
     <div className="space-y-3 rounded-xl border border-ink-200 bg-surface p-4">
@@ -912,7 +915,11 @@ function EditRow({ draft, trcs, busy, onChange, onSave, onCancel, onRemove }: {
         <p className="label">Role(s)</p>
         <div className="mt-1 flex flex-wrap gap-2">
           {ROLES.map(([k, label]) => (
-            <Check key={k} label={label} checked={draft[k]} onChange={v => onChange({ ...draft, [k]: v })} />
+            <Check key={k} label={label} checked={draft[k]} onChange={v => onChange({
+              ...draft, [k]: v,
+              // Ticked with no Revive Lab chosen, an Observer starts with every Revive Lab: untick what they should not see.
+              ...(k === 'is_observer' && v && draft.trc_ids.length === 0 ? { trc_ids: trcs.filter(t => t.is_active).map(t => t.id) } : {}),
+            })} />
           ))}
         </div>
       </div>
@@ -935,8 +942,13 @@ function EditRow({ draft, trcs, busy, onChange, onSave, onCancel, onRemove }: {
         </div>
       </div>
 
-      {(draft.is_engineer || draft.is_coordinator || draft.is_manager || draft.is_purchase || draft.is_observer) && draft.trc_ids.length === 0 && (
+      {(draft.is_engineer || draft.is_coordinator || draft.is_manager || draft.is_purchase) && draft.trc_ids.length === 0 && (
         <p className="text-xs text-amber-700">A role does nothing without a Revive Lab — tick the Revive Lab(s) they work in.</p>
+      )}
+      {observerNeedsLab && (
+        <p className="text-xs font-medium text-cyrixRed-700">
+          Tick the Revive Lab(s) this Observer should watch — with none ticked they would see no tickets.
+        </p>
       )}
       {/* What the box means, said while it is the only one ticked: it takes things away as well as giving them. */}
       {draft.is_observer && !(draft.is_engineer || draft.is_coordinator || draft.is_manager || draft.is_purchase || draft.is_admin) && (
@@ -946,7 +958,7 @@ function EditRow({ draft, trcs, busy, onChange, onSave, onCancel, onRemove }: {
       )}
 
       <div className="flex flex-wrap gap-2">
-        <button type="button" className="btn-primary" onClick={onSave} disabled={busy}>
+        <button type="button" className="btn-primary" onClick={onSave} disabled={busy || observerNeedsLab}>
           {busy && <Spinner className="h-4 w-4" />} Save
         </button>
         <button type="button" className="btn-secondary" onClick={onCancel}>Cancel</button>
