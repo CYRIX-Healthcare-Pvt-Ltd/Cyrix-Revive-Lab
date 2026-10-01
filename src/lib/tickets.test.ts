@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  ticketCode, parseTicketCode, actionsFor, awaitingManager, runsTrc, waitingOnMe, cleanItems, itemsSummary,
+  ticketCode, parseTicketCode, actionsFor, awaitingManager, runsTrc, managesTrc, waitingOnMe, cleanItems, itemsSummary,
   partsWaitingOn, ticketTabs, serves, approversOf, orList, statusLook, canRaise, partActor, partStatusLook,
   ITEM_KIND_LABEL, PART_PROGRESS, PART_STATUS, poLabel, canClassify, statusGroups, roundOf, ordinal, mergeDeskRaise,
   type Me, type TicketLike,
@@ -41,12 +41,26 @@ describe('ticket numbers', () => {
   })
 })
 
-describe('the desk is a coordinator or manager of that Revive Lab', () => {
-  it('needs the box and the Revive Lab together', () => {
+describe('the desk is a coordinator of that Revive Lab, or a Revive Lab admin (rl_0036)', () => {
+  it('needs the coordinator box and the Revive Lab together', () => {
     expect(runsTrc(me({ is_coordinator: true, trc_ids: [REG] }), REG)).toBe(true)
-    expect(runsTrc(me({ is_manager: true, trc_ids: [REG] }), REG)).toBe(true)
     expect(runsTrc(me({ is_coordinator: true, trc_ids: [PRJ] }), REG)).toBe(false)
     expect(runsTrc(me({ is_engineer: true, trc_ids: [REG] }), REG)).toBe(false)
+    expect(runsTrc(null, REG)).toBe(false)
+  })
+
+  it('counts an admin as the desk of every Revive Lab', () => {
+    expect(runsTrc(me({ is_admin: true }), REG)).toBe(true)
+    expect(runsTrc(me({ is_admin: true, trc_ids: [PRJ] }), REG)).toBe(true)
+  })
+
+  it('does not count a manager: they approve, and that is all', () => {
+    const manager = me({ is_manager: true, trc_ids: [REG] })
+    expect(runsTrc(manager, REG)).toBe(false)
+    expect(managesTrc(manager, REG)).toBe(true)
+    expect(managesTrc(manager, PRJ)).toBe(false)
+    // One who is a coordinator as well is the desk.
+    expect(runsTrc(me({ is_manager: true, is_coordinator: true, trc_ids: [REG] }), REG)).toBe(true)
   })
 })
 
@@ -108,10 +122,17 @@ describe('actionsFor — who may do what, now', () => {
     expect(actionsFor(ticket({ status: 'closed' }), desk)).toEqual([])
   })
 
-  it('handles a person who is both manager and engineer as both', () => {
-    const both = me({ employee_id: 'eng', is_manager: true, is_engineer: true, trc_ids: [REG] })
+  it('handles a person who is both coordinator and engineer as both', () => {
+    const both = me({ employee_id: 'eng', is_coordinator: true, is_engineer: true, trc_ids: [REG] })
     expect(actionsFor(ticket({ status: 'assigned', engineer_id: 'eng' }), both))
       .toEqual(['start', 'assign', 'return', 'transfer'])
+  })
+
+  it('gives a manager who is also an engineer the engineer’s moves, and none of the desk’s', () => {
+    const both = me({ employee_id: 'eng', is_manager: true, is_engineer: true, trc_ids: [REG] })
+    expect(actionsFor(ticket({ status: 'assigned', engineer_id: 'eng' }), both)).toEqual(['start', 'return'])
+    expect(actionsFor(ticket({ status: 'in_repair', engineer_id: 'eng' }), both))
+      .toEqual(['complete', 'use_part', 'request_part', 'observe', 'expect', 'return'])
   })
 
   it('counts a ticket as waiting on me only for a forward move', () => {
@@ -302,15 +323,86 @@ describe('states, approval and the proposal (rl_0014)', () => {
     expect(statusLook('not_repairable', null, 'oem').label).toBe('Not repairable — to send to the OEM')
   })
 
+  it('passes it to the desk once approved: the manager has no dispatch and no scrap (rl_0036)', () => {
+    // Joseph P V, as the user showed him: Revive Lab Engineer and Manager, not Coordinator.
+    const manager = me({ employee_id: 'mgr', is_manager: true, is_engineer: true, trc_ids: [REG] })
+    const approved = { status: 'not_repairable' as const, engineer_id: 'eng', nr_approved_at: '2026-09-30T03:05:00Z' }
+    for (const proposal of ['oem', 'return', 'scrap', null] as const) {
+      expect(actionsFor(ticket({ ...approved, proposal }), manager)).toEqual([])
+      expect(waitingOnMe(ticket({ ...approved, proposal }), manager)).toBe(false)
+    }
+    // Nor when the repair was his own.
+    expect(actionsFor(ticket({ ...approved, proposal: 'oem', engineer_id: 'mgr' }), manager)).toEqual([])
+    // It is the coordinator's, and waits on them.
+    expect(actionsFor(ticket({ ...approved, proposal: 'oem' }), desk)).toEqual(['dispatch'])
+    expect(waitingOnMe(ticket({ ...approved, proposal: 'oem' }), desk)).toBe(true)
+    // Somebody who is both approves it, and then sends it.
+    const both = me({ employee_id: 'both', is_manager: true, is_coordinator: true, trc_ids: [REG] })
+    expect(actionsFor(ticket({ status: 'not_repairable', proposal: 'oem', engineer_id: 'eng' }), both)).toEqual(['approve_nr', 'decline_nr'])
+    expect(actionsFor(ticket({ ...approved, proposal: 'oem' }), both)).toEqual(['dispatch'])
+    expect(actionsFor(ticket({ ...approved, proposal: 'scrap' }), both)).toEqual(['scrap'])
+  })
+
+  it('gives a manager none of the desk’s moves, at any stage (the user, 1 Oct: "coordinator and admin only")', () => {
+    const manager = me({ employee_id: 'mgr', is_manager: true, is_engineer: true, trc_ids: [REG] })
+    for (const status of ['pending_acceptance', 'transferred', 'accepted', 'repaired', 'service_denied', 'in_transit_return', 'closed'] as const) {
+      expect(actionsFor(ticket({ status }), manager)).toEqual([])
+      expect(waitingOnMe(ticket({ status }), manager)).toBe(false)
+    }
+    // Somebody else's repair: no reassigning it, no sending it to another Revive Lab.
+    expect(actionsFor(ticket({ status: 'assigned', engineer_id: 'eng' }), manager)).toEqual([])
+    expect(actionsFor(ticket({ status: 'in_repair', engineer_id: 'eng' }), manager)).toEqual([])
+    // A transfer waiting to be sent, or to be cancelled, is the desk's too.
+    expect(actionsFor(ticket({ status: 'approved', engineer_id: 'eng', approval: { kind: 'transfer', status: 'approved' } }), manager)).toEqual([])
+    // Components: the request to take on, and the stock to approve, wait on the coordinator.
+    const parts = ticket({
+      status: 'parts_requested', engineer_id: 'eng',
+      parts: [{ id: 'a', route: 'local', status: 'requested' }], stock: [{ id: 's', status: 'requested' }],
+    })
+    expect(partsWaitingOn(parts, manager)).toBe(0)
+    expect(partsWaitingOn(parts, desk)).toBe(2)
+    // The category and criticality are the desk's to change.
+    const at = { trc_id: REG, accepted_at: '2026-09-23T04:00:00Z', status: 'in_repair' as const }
+    expect(canClassify(at, manager)).toBe(false)
+    expect(canClassify(at, desk)).toBe(true)
+    // The approval is theirs, and it is what waits on them.
+    const asked = ticket({ status: 'not_repairable', proposal: 'scrap', engineer_id: 'eng' })
+    expect(actionsFor(asked, manager)).toEqual(['approve_nr', 'decline_nr'])
+    expect(waitingOnMe(asked, manager)).toBe(true)
+  })
+
+  it('gives an admin the desk’s moves at every Revive Lab, and leaves the queue to its coordinators', () => {
+    const admin = me({ employee_id: 'adm', is_admin: true })
+    expect(actionsFor(ticket(), admin)).toEqual(['accept'])
+    expect(actionsFor(ticket({ status: 'accepted' }), admin)).toEqual(['assign', 'transfer'])
+    expect(actionsFor(ticket({ status: 'repaired' }), admin)).toEqual(['dispatch'])
+    expect(actionsFor(ticket({ status: 'not_repairable', proposal: 'oem', nr_approved_at: '2026-09-30T03:05:00Z' }), admin)).toEqual(['dispatch'])
+    expect(actionsFor(ticket({ status: 'not_repairable', proposal: 'scrap', nr_approved_at: '2026-09-30T03:05:00Z' }), admin)).toEqual(['scrap'])
+    expect(canClassify({ trc_id: PRJ, accepted_at: '2026-09-23T04:00:00Z', status: 'in_repair' }, admin)).toBe(true)
+    // Approving it as not repairable stays the manager's: an admin is not one.
+    expect(actionsFor(ticket({ status: 'not_repairable', proposal: 'oem' }), admin)).toEqual([])
+    // Stepping in is a choice, not a wait: nothing of the desk's is in their Waiting on you…
+    for (const status of ['pending_acceptance', 'accepted', 'repaired'] as const) {
+      expect(waitingOnMe(ticket({ status }), admin)).toBe(false)
+    }
+    // …unless they coordinate that Revive Lab — then it is, there and only there.
+    const here = me({ employee_id: 'adm', is_admin: true, is_coordinator: true, trc_ids: [REG] })
+    expect(waitingOnMe(ticket({ status: 'pending_acceptance' }), here)).toBe(true)
+    expect(actionsFor(ticket({ status: 'pending_acceptance', trc_id: PRJ }), here)).toEqual(['accept'])
+    expect(waitingOnMe(ticket({ status: 'pending_acceptance', trc_id: PRJ }), here)).toBe(false)
+    // Where a spare goes is theirs to approve when they are an approver, and that does wait on them.
+    const routing = ticket({ status: 'awaiting_approval', approval: { kind: 'raise', status: 'pending' } })
+    expect(waitingOnMe(routing, me({ employee_id: 'adm', is_admin: true, approves: true }))).toBe(true)
+  })
+
   it('leaves the desk’s queue to the coordinator: a manager waits only on what only a manager does', () => {
     const manager = me({ employee_id: 'mgr', is_manager: true, trc_ids: [REG] })
     const arrived = ticket({ status: 'pending_acceptance' })
-    // The manager can still accept it, covering the desk…
-    expect(actionsFor(arrived, manager)).toContain('accept')
-    // …but it waits on the coordinator, not on them.
+    // It waits on the coordinator, not on them — and they have no button for it.
+    expect(actionsFor(arrived, manager)).toEqual([])
     expect(waitingOnMe(arrived, manager)).toBe(false)
     expect(waitingOnMe(arrived, desk)).toBe(true)
-    // One who is both still has the desk's queue.
+    // One who is both has the desk's queue.
     expect(waitingOnMe(arrived, me({ is_manager: true, is_coordinator: true, trc_ids: [REG] }))).toBe(true)
   })
 
@@ -348,6 +440,17 @@ describe('the receipt, and who raises tickets (rl_0015)', () => {
     expect(canRaise(null)).toBe(true)
     // Somebody who is both keeps it: spares arrive at their desk.
     expect(canRaise(me({ employee_id: 'both', is_engineer: true, is_coordinator: true, trc_ids: [REG] }))).toBe(true)
+  })
+
+  it('does not offer a Revive Lab manager one either, unless they run a desk (rl_0036)', () => {
+    // A manager approves; spares are taken in, and their cards written, at the coordinator's desk.
+    expect(canRaise(me({ is_manager: true, trc_ids: [REG] }))).toBe(false)
+    expect(canRaise(me({ is_manager: true, is_engineer: true, trc_ids: [REG] }))).toBe(false)
+    expect(canRaise(me({ is_manager: true, is_coordinator: true, trc_ids: [REG] }))).toBe(true)
+    expect(canRaise(me({ is_manager: true, is_admin: true, trc_ids: [REG] }))).toBe(true)
+    // An admin runs every desk.
+    expect(canRaise(me({ is_admin: true }))).toBe(true)
+    expect(canRaise(me({ is_admin: true, is_engineer: true, trc_ids: [REG] }))).toBe(true)
   })
 
   it('gives every tab the colour of what it holds', () => {

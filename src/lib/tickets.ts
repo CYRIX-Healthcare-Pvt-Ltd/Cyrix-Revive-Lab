@@ -489,9 +489,15 @@ export interface TicketLike {
   handover?: { status: 'pending' | 'accepted' | 'declined' | 'cancelled'; to_id: string } | null
 }
 
-/** A coordinator or manager of that lab: the desk. */
+/**
+ * The desk of that Revive Lab: one of its coordinators, or a Revive Lab
+ * admin. A manager is not the desk — they approve a spare as not repairable
+ * and it passes to the coordinator; taking a spare in, assigning it, its
+ * components and sending it out are not theirs (rl_0036, the user, 1 Oct:
+ * "only coordinator should have it", then "coordinator and admin only").
+ */
 export function runsTrc(me: Me | null | undefined, trcId: string): boolean {
-  return !!me && (me.is_coordinator || me.is_manager) && me.trc_ids.includes(trcId)
+  return !!me && (me.is_admin || (me.is_coordinator && me.trc_ids.includes(trcId)))
 }
 
 /** A manager of that Revive Lab: approves a spare as not repairable (rl_0034). */
@@ -577,9 +583,10 @@ export function actionsFor(t: TicketLike, me: Me | null | undefined): Action[] {
   // what happens") — before the coordinator moves it (rl_0034).
   const waits = awaitingManager(t)
   if (waits && managesTrc(me, t.trc_id)) out.push('approve_nr', 'decline_nr')
-  // Approved: the one move the engineer proposed — dispatched back, or to
-  // the OEM (rl_0033), or scrapped. A repair closed by an app from before
-  // the proposal leaves the desk both (rl_0014).
+  // Approved, it passes to the desk: the one move the engineer proposed —
+  // dispatched back, or to the OEM (rl_0033), or scrapped. The manager who
+  // approved it is not offered it (rl_0036). A repair closed by an app from
+  // before the proposal leaves the desk both (rl_0014).
   if (desk && t.status === 'not_repairable' && !waits) {
     if (t.proposal !== 'scrap') out.push('dispatch')
     if (t.proposal !== 'return' && t.proposal !== 'oem') out.push('scrap')
@@ -633,15 +640,15 @@ const SIDE_STEPS: readonly Action[] = [
 export function waitingOnMe(t: TicketLike, me: Me | null | undefined): boolean {
   const forward = (a: Action) => !SIDE_STEPS.includes(a) && !(a === 'assign' && t.status !== 'accepted')
   /*
-    A manager can do the desk's work when the coordinator is out, and keeps
-    the buttons for it — but the desk's queue is the coordinator's. What
-    waits on a manager who is not a coordinator is what only they do:
-    approving a spare as not repairable, and any repair of their own (the
-    user, 29 Sep: "why in manager the pending of coordinator role showing?").
+    The desk's queue is the coordinator's (the user, 29 Sep: "why in manager
+    the pending of coordinator role showing?"). An admin has the desk's
+    buttons at every Revive Lab, to step in; what waits on them is the desk
+    work of the Revive Labs they coordinate, and whatever else is theirs —
+    an approval, a repair of their own. A manager has no desk buttons at
+    all (rl_0036): approving a spare as not repairable is what waits on them.
   */
-  const asWaiting = me && me.is_manager && !me.is_coordinator ? { ...me, is_manager: false } : me
-  return actionsFor(t, asWaiting).some(forward) || partsWaitingOn(t, asWaiting) > 0
-    || actionsFor(t, me).includes('approve_nr')
+  const queue = me?.is_admin ? { ...me, is_admin: false } : me
+  return actionsFor(t, queue).some(forward) || partsWaitingOn(t, queue) > 0
 }
 
 /**
@@ -760,14 +767,14 @@ export function ticketTabs(me: Me | null | undefined): TicketTab[] {
 
 /**
  * Who raises tickets: whoever sends spares in. A Revive Lab's own engineer
- * repairs what arrives and Purchase buys for it; neither sends one, so
- * neither is offered it — unless they also run a desk, where spares arrive
- * and cards are written for them (rl_0015, rl_0019; the database refuses
- * them too).
+ * repairs what arrives, its manager approves and Purchase buys for it; none
+ * of them sends one, so none is offered it — unless they also run a desk,
+ * as a coordinator or an admin, where spares arrive and cards are written
+ * for them (rl_0015, rl_0019, rl_0036; the database refuses them too).
  */
 export function canRaise(me: Me | null | undefined): boolean {
   if (!me) return true
-  return !(me.is_engineer || me.is_purchase) || me.is_coordinator || me.is_manager || me.is_admin
+  return !(me.is_engineer || me.is_purchase || me.is_manager) || me.is_coordinator || me.is_admin
 }
 
 /* ------------------------------------------------------------------ */

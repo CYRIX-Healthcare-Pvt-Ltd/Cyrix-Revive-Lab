@@ -960,7 +960,8 @@ function TrcTable({ trcs, canEdit, members }: { trcs: Trc[]; canEdit: boolean; m
           <tbody className="divide-y divide-ink-100">
             {trcs.map(t => {
               const people = staff(t.id)
-              const coordinators = people.filter(p => p.is_coordinator || p.is_manager)
+              // The desk is its coordinators: a manager approves, and does not take spares in (rl_0036).
+              const coordinators = people.filter(p => p.is_coordinator)
               return (
                 <tr key={t.id} className="hover:bg-ink-50">
                   <td className="px-4 py-3 font-medium text-ink-900">{t.name}</td>

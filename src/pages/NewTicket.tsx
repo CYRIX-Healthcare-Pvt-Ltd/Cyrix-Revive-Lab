@@ -42,7 +42,7 @@ import ItemsField, { newLine, type ItemLine } from '@/components/ItemsField'
  *
  * Who is asking decides which card it is, and nobody is asked. A field
  * engineer sending a spare in raises it for themselves. A Revive Lab's
- * coordinator or manager raises it at their own Revive Lab for that state,
+ * coordinator, or an admin, raises it at their own Revive Lab for that state,
  * for a spare that arrived there, and names whose it is: the field engineer,
  * or — for a warehouse's defective spare — the warehouse in-charge. A
  * warehouse card names the warehouse from a fixed list, and has no district,
