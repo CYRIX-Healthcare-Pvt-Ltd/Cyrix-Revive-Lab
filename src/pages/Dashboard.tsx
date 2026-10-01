@@ -9,7 +9,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useMembers, useMyTeam, useTickets, useTrcs, useVisibleEvents, type Ticket } from '@/lib/queries'
 import { dateTime as dateTimeOf, dayDate } from '@/lib/when'
 import {
-  REPAIRING, STATUS, STATUS_ORDER, TONE_DOT, TONE_FILL, TONE_TEXT, canRaise, itemsSummary, statusGroups, ticketTabs, waitingOnMe,
+  REPAIRING, STATUS, STATUS_ORDER, TONE_DOT, TONE_FILL, TONE_TEXT, canRaise, itemsSummary, observesOnly, statusGroups, ticketTabs, waitingOnMe,
 } from '@/lib/tickets'
 import { formatSpan, ticketTat, type TatEvent } from '@/lib/tat'
 import { EmptyState, PageLoader, ReturnedTag, SectorTag, StatTile, TransferTag, WarehouseChip } from '@/components/ui'
@@ -211,6 +211,10 @@ export default function Dashboard() {
   if (isLoading) return <PageLoader />
 
   const firstName = employee?.full_name.split(/\s+/)[0]
+  // An observer only watches (rl_0039): nothing waits on them, so no tile says
+  // nought of it — unless something does, a spare of their own to confirm.
+  const watching = observesOnly(me)
+  const noWaiting = watching && stats.mine.length === 0
 
   return (
     <div className="space-y-5">
@@ -249,9 +253,11 @@ export default function Dashboard() {
       </div>
 
       {/* grid-fill: the fifth tile takes a whole row on a phone rather than half of one. */}
-      <div className="grid-fill grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <div className={clsx('grid-fill grid grid-cols-2 gap-3', noWaiting ? 'lg:grid-cols-4' : 'lg:grid-cols-5')}>
         <StatTile label="Open" value={stats.open} sub={`of ${stats.total} tickets`} />
-        <StatTile label="Waiting on you" value={stats.mine.length} sub="your move next" tone={stats.mine.length ? 'brand' : 'default'} />
+        {!noWaiting && (
+          <StatTile label="Waiting on you" value={stats.mine.length} sub="your move next" tone={stats.mine.length ? 'brand' : 'default'} />
+        )}
         <StatTile label="With Revive Lab engineer" value={stats.inRepair} sub="assigned or being repaired" />
         <StatTile
           label="In transit"
@@ -329,7 +335,7 @@ export default function Dashboard() {
             </div>
           )}
 
-          {teamCounts && (
+          {teamCounts && !watching && (
             <Link to="/team" className="card flex flex-wrap items-center gap-x-5 gap-y-2 p-4 hover:bg-ink-50">
               <span className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
                 <IconChip icon={Users} tone="violet" /> My team

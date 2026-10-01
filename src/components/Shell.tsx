@@ -4,7 +4,7 @@ import clsx from 'clsx'
 import { Boxes, LayoutDashboard, ListChecks, PackagePlus, ShieldCheck, Grid2x2, LogOut, Users } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useMyTeam, useTickets } from '@/lib/queries'
-import { TONE_TEXT, canRaise, waitingOnMe, type Tone } from '@/lib/tickets'
+import { TONE_TEXT, canRaise, observesOnly, waitingOnMe, type Tone } from '@/lib/tickets'
 import { indexTeam, ownerOfTicket } from '@/lib/team'
 import { Logo } from '@/components/Logo'
 import ThemeToggle from '@/components/ThemeToggle'
@@ -34,6 +34,8 @@ export default function Shell() {
   */
   const { data: team } = useMyTeam()
   const hasTeam = useMemo(() => {
+    // An observer has the dashboard and the tickets, and that is all (rl_0039).
+    if (observesOnly(me)) return false
     if (!(team?.people ?? []).some(p => p.active)) return false
     const labRole = !!me && (me.is_engineer || me.is_coordinator || me.is_manager || me.is_admin || me.is_purchase)
     if (!labRole) return true
@@ -179,6 +181,7 @@ function roleCaption(me: ReturnType<typeof useAuth>['me']): string {
     me.is_manager && 'Revive Lab Manager',
     me.is_coordinator && 'Revive Lab Coordinator',
     me.is_engineer && 'Revive Lab Engineer',
+    me.is_observer && 'Revive Lab Observer',
   ].filter(Boolean) as string[]
   if (parts.length === 0) return ''
   return ' · ' + parts[0] + (parts.length > 1 ? ` +${parts.length - 1}` : '')

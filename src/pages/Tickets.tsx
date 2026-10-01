@@ -1,12 +1,15 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
-import { ArrowDownUp, Download, Inbox, PackagePlus, Search } from 'lucide-react'
+import {
+  ArrowDownUp, Building2, ChevronDown, CircleDot, Download, FilterX, Hospital, Inbox, Layers, Map as MapIcon, MapPin, PackagePlus,
+  Search, SlidersHorizontal, Tag, TriangleAlert, Users, Wrench, type LucideIcon,
+} from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useMyTeam, useTickets, type Ticket } from '@/lib/queries'
 import { branchOf, indexTeam, ownerOfTicket } from '@/lib/team'
 import {
-  STATUS, STATUS_ORDER, TONE_CLASS, TONE_DOT, TONE_TEXT, awaitingManager, canRaise, itemsSummary, parseTicketCode, statusGroups, ticketTabs,
+  STATUS, STATUS_ORDER, TONE_CLASS, TONE_DOT, TONE_EDGE, TONE_TEXT, awaitingManager, canRaise, itemsSummary, parseTicketCode, statusGroups, ticketTabs,
   type TabId, type TicketStatus, type Tone,
 } from '@/lib/tickets'
 import { EmptyState, PageLoader, ReturnedTag, SectorTag, SortHeader, Spinner, StatusBadge, TransferTag, WarehouseChip } from '@/components/ui'
@@ -107,8 +110,8 @@ export default function Tickets() {
     }
   }, [myTeam, employee?.id])
   const showTeam = useMemo(() => (tickets ?? []).some(t => teamOf(t)), [tickets, teamOf])
-  // The desk follows its engineers; anybody arriving by a link that names one gets the filter too.
-  const desk = !!me && (me.is_coordinator || me.is_manager || me.is_admin)
+  // The desk follows its engineers, and so does whoever watches it; anybody arriving by a link that names one gets the filter too.
+  const desk = !!me && (me.is_coordinator || me.is_manager || me.is_admin || !!me.is_observer)
 
   // Everything that shapes the list lives in the address, so coming back
   // from a ticket finds it as it was left.
@@ -122,6 +125,10 @@ export default function Tickets() {
   const tab = tabs.find(x => x.id === asked) ?? tabs[0]
   const view = tab.id
   const trcId = params.get('lab') ?? ''
+  // Where the spare came from on the map, and under which BEMMP (the user, 1 Oct); 'none' is a warehouse's, which has neither.
+  const inState = params.get('state') ?? ''
+  const inDistrict = params.get('district') ?? ''
+  const bemmp = params.get('bemmp') ?? ''
   const status = params.get('status') ?? ''
   // A hospital's spares or a warehouse's (rl_0020); asked only once there are any from a warehouse.
   const from = params.get('from') ?? ''
@@ -182,9 +189,14 @@ export default function Tickets() {
     data, and the dropdowns connected"). A choice that no longer matches
     anything stays offered, at nought, so it can be seen and cleared.
   */
-  type Filter = 'lab' | 'status' | 'from' | 'cat' | 'crit' | 'team' | 'eng'
+  type Filter = 'lab' | 'state' | 'district' | 'bemmp' | 'status' | 'from' | 'cat' | 'crit' | 'team' | 'eng'
   const passes = (t: Ticket, skip: Filter | null = null) =>
     (skip === 'lab' || !trcId || t.trc_id === trcId)
+    && (skip === 'state' || !inState || (t.state ?? 'none') === inState)
+    // A district is inside its state: the states on offer are counted without it,
+    // so another state can be chosen straight away — and the district then goes.
+    && (skip === 'district' || skip === 'state' || !inDistrict || (t.district ?? 'none') === inDistrict)
+    && (skip === 'bemmp' || !bemmp || (t.bemmp_code ?? 'none') === bemmp)
     && (skip === 'team' || !team || (teamOf(t)?.id ?? 'none') === team)
     && (skip === 'eng' || !eng || (t.engineer_id ?? 'none') === eng)
     && (skip === 'status' || !status || t.status === status)
@@ -212,12 +224,18 @@ export default function Tickets() {
     const crits = tally('crit', t => t.criticality ?? 'none', t => (t.criticality === 'critical' ? 'Critical' : t.criticality === 'non_critical' ? 'Non-critical' : 'Not said yet'))
     const byLabel = (m: Map<string, Facet>) => [...m.values()]
       .sort((a, b) => (a.value === 'none' ? 1 : b.value === 'none' ? -1 : text.compare(a.label, b.label)))
+    const states = byLabel(tally('state', t => t.state ?? 'none', t => t.state ?? 'No state'))
+    const districts = byLabel(tally('district', t => t.district ?? 'none', t => t.district ?? 'No district'))
+    const bemmps = byLabel(tally('bemmp', t => t.bemmp_code ?? 'none', t => t.bemmp_code ?? 'No BEMMP'))
     const teams = byLabel(tally('team', t => teamOf(t)?.id ?? 'none', t => teamOf(t)?.name ?? 'Not from your team'))
     const engineers = byLabel(tally('eng', t => t.engineer_id ?? 'none', t => t.engineer_name ?? 'No engineer yet'))
     const keep = (list: Facet[], value: string, label: string) =>
       value && !list.some(f => f.value === value) ? [...list, { value, label, n: 0 }] : list
     return {
       labs: keep(labs, trcId, 'That Revive Lab'),
+      states: keep(states, inState, inState === 'none' ? 'No state' : inState),
+      districts: keep(districts, inDistrict, inDistrict === 'none' ? 'No district' : inDistrict),
+      bemmps: keep(bemmps, bemmp, bemmp === 'none' ? 'No BEMMP' : bemmp),
       statuses: keep(statuses, status, STATUS[status as TicketStatus]?.short ?? status),
       sources: keep(['hospital', 'warehouse'].filter(s => sources.has(s)).map(s => sources.get(s)!), from,
         from === 'warehouse' ? 'From warehouses' : 'From hospitals'),
@@ -229,7 +247,7 @@ export default function Tickets() {
       engineers: keep(engineers, eng, 'That engineer'),
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searched, trcId, status, from, cat, crit, team, eng, teamOf])
+  }, [searched, trcId, inState, inDistrict, bemmp, status, from, cat, crit, team, eng, teamOf])
 
   const shown = useMemo(() => {
     const rows = searched.filter(t => passes(t))
@@ -247,7 +265,22 @@ export default function Tickets() {
       return Date.parse(b.created_at) - Date.parse(a.created_at)
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searched, trcId, status, from, cat, crit, team, eng, sortKey, asc, teamOf])
+  }, [searched, trcId, inState, inDistrict, bemmp, status, from, cat, crit, team, eng, sortKey, asc, teamOf])
+
+  // How many filters are narrowing the list, and the way back to all of it.
+  const narrowing = [trcId, inState, inDistrict, bemmp, status, from, cat, crit, team, eng].filter(Boolean).length
+  const clearFilters = () => setParams(p => {
+    for (const k of ['lab', 'state', 'district', 'bemmp', 'status', 'from', 'cat', 'crit', 'team', 'eng']) p.delete(k)
+    return p
+  }, { replace: true })
+  // A district belongs to one state: choosing another state lets the district go.
+  const chooseState = (v: string | null) => setParams(p => {
+    if (v) p.set('state', v); else p.delete('state')
+    p.delete('district')
+    return p
+  }, { replace: true })
+  // On a phone the filters fold away under one button; a wider screen has them out.
+  const [filtersOpen, setFiltersOpen] = useState(false)
 
   // What waits on this person, in groups by where each spare stands — the
   // same groups as the dashboard's card. Every other tab is one list.
@@ -302,91 +335,116 @@ export default function Tickets() {
       </div>
 
       <div className="card overflow-hidden">
-        <div className="flex flex-wrap items-center gap-2 border-b border-ink-200 bg-ink-50 px-3 py-2">
-          {/* Each tab in the colour of what it holds, and its count with it:
-              a row of grey numbers says nothing about what needs doing. */}
-          <div className="flex flex-wrap gap-1">
-            {tabs.map(({ id, label, tone }) => {
-              const on = view === id
-              const n = counts[id]
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setParam('view', id)}
-                  className={clsx(
-                    'inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
-                    on ? clsx(TONE_CLASS[tone], 'shadow-sm') : 'text-ink-500 hover:text-ink-800',
-                  )}
-                >
-                  <span aria-hidden className={clsx('h-1.5 w-1.5 rounded-full', TONE_DOT[tone], !on && !n && 'opacity-40')} />
-                  {label}
-                  <span className={clsx('tabular-nums', on ? 'opacity-70' : n ? TONE_TEXT[tone] : 'text-ink-300')}>{n}</span>
-                </button>
-              )
-            })}
+        <div className="border-b border-ink-200 bg-ink-50">
+          <div className="flex flex-wrap items-center gap-2 px-3 py-2">
+            {/* Each tab in the colour of what it holds, and its count with it:
+                a row of grey numbers says nothing about what needs doing. */}
+            <div className="flex flex-wrap gap-1">
+              {tabs.map(({ id, label, tone }) => {
+                const on = view === id
+                const n = counts[id]
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setParam('view', id)}
+                    className={clsx(
+                      'inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                      on ? clsx(TONE_CLASS[tone], 'shadow-sm') : 'text-ink-500 hover:text-ink-800',
+                    )}
+                  >
+                    <span aria-hidden className={clsx('h-1.5 w-1.5 rounded-full', TONE_DOT[tone], !on && !n && 'opacity-40')} />
+                    {label}
+                    <span className={clsx('tabular-nums', on ? 'opacity-70' : n ? TONE_TEXT[tone] : 'text-ink-300')}>{n}</span>
+                  </button>
+                )
+              })}
+            </div>
+            {/* The search, the filters' button on a phone, and Excel as one:
+                when the row runs out of room they move down together, and Excel
+                is never left on a line of its own (the user, 24 Sep: "move excel
+                button after search"). On a phone the search has a line to itself
+                and the two buttons share the next: three abreast left it a few
+                letters wide. */}
+            <div className="ml-auto flex w-full min-w-0 flex-wrap gap-2 sm:w-auto sm:flex-nowrap">
+              <label className="relative min-w-0 basis-full sm:w-64 sm:basis-auto sm:flex-none">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
+                <input
+                  className="input !py-1.5 !pl-8"
+                  placeholder="RL-07, SR number, hospital…"
+                  value={q}
+                  onChange={e => { setQ(e.target.value); setParam('q', e.target.value || null) }}
+                  aria-label="Search tickets"
+                />
+              </label>
+              <button
+                type="button"
+                className="btn-secondary flex-1 !py-1.5 text-sm sm:hidden"
+                onClick={() => setFiltersOpen(v => !v)}
+                aria-expanded={filtersOpen}
+                aria-controls="ticket-filters"
+              >
+                <SlidersHorizontal className="h-4 w-4 text-indigo-500" /> Filters
+                {narrowing > 0 && (
+                  <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-indigo-600 px-1.5 text-[11px] font-bold tabular-nums text-white">{narrowing}</span>
+                )}
+              </button>
+              {/* After the search: what the list now shows, as an Excel sheet (the user, 23 Sep). */}
+              <button
+                type="button"
+                className="btn-secondary flex-1 !py-1.5 text-sm sm:flex-none"
+                onClick={() => void download()}
+                disabled={shown.length === 0 || saving}
+                title={shown.length
+                  ? `The ${shown.length} ticket${shown.length === 1 ? '' : 's'} listed below — this tab, with its filters — in an Excel sheet`
+                  : 'Nothing listed to download'}
+              >
+                {saving ? <Spinner className="h-4 w-4" /> : <Download className="h-4 w-4 text-green-600" />} Excel
+              </button>
+            </div>
           </div>
-          <div className="ml-auto flex w-full flex-wrap gap-2 sm:w-auto">
-            <select className="input !py-1.5 sm:w-44" value={trcId} onChange={e => setParam('lab', e.target.value || null)} aria-label="Filter by Revive Lab">
-              <option value="">All Revive Labs</option>
-              {facets.labs.map(f => <option key={f.value} value={f.value}>{f.label} ({f.n})</option>)}
-            </select>
-            <select className="input !py-1.5 sm:w-44" value={status} onChange={e => setParam('status', e.target.value || null)} aria-label="Filter by status">
-              <option value="">Any status</option>
-              {facets.statuses.map(f => <option key={f.value} value={f.value}>{f.label} ({f.n})</option>)}
-            </select>
-            {(anyWarehouse || from) && (
-              <select className="input !py-1.5 sm:w-48" value={from} onChange={e => setParam('from', e.target.value || null)} aria-label="Filter by where it came from">
-                <option value="">Hospital or warehouse</option>
-                {facets.sources.map(f => <option key={f.value} value={f.value}>{f.label} ({f.n})</option>)}
-              </select>
-            )}
-            <select className="input !py-1.5 sm:w-36" value={cat} onChange={e => setParam('cat', e.target.value || null)} aria-label="Filter by category">
-              <option value="">Any category</option>
-              {facets.cats.map(f => <option key={f.value} value={f.value}>{f.label} ({f.n})</option>)}
-            </select>
-            <select className="input !py-1.5 sm:w-40" value={crit} onChange={e => setParam('crit', e.target.value || null)} aria-label="Filter by criticality">
-              <option value="">Any criticality</option>
-              {facets.crits.map(f => <option key={f.value} value={f.value}>{f.label} ({f.n})</option>)}
-            </select>
-            {(showTeam || team) && (
-              <select className="input !py-1.5 sm:w-44" value={team} onChange={e => setParam('team', e.target.value || null)} aria-label="Filter by your team">
-                <option value="">All your teams</option>
-                {facets.teams.map(f => <option key={f.value} value={f.value}>{f.label} ({f.n})</option>)}
-              </select>
-            )}
-            {(desk || eng) && (
-              <select className="input !py-1.5 sm:w-52" value={eng} onChange={e => setParam('eng', e.target.value || null)} aria-label="Filter by Revive Lab engineer">
-                <option value="">Any Revive Lab engineer</option>
-                {facets.engineers.map(f => <option key={f.value} value={f.value}>{f.label} ({f.n})</option>)}
-              </select>
-            )}
-            {/* The search and Excel as one: when the row runs out of room they move
-                down together, and Excel is never left on a line of its own (the
-                user, 24 Sep: "move excel button after search"). */}
-            <div className="flex min-w-0 flex-1 gap-2 sm:flex-none">
-            <label className="relative min-w-0 flex-1 sm:w-52 sm:flex-none">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
-              <input
-                className="input !py-1.5 !pl-8"
-                placeholder="RL-07, SR number, hospital…"
-                value={q}
-                onChange={e => { setQ(e.target.value); setParam('q', e.target.value || null) }}
-                aria-label="Search tickets"
-              />
-            </label>
-            {/* After the search: what the list now shows, as an Excel sheet (the user, 23 Sep). */}
-            <button
-              type="button"
-              className="btn-secondary !py-1.5 text-sm"
-              onClick={() => void download()}
-              disabled={shown.length === 0 || saving}
-              title={shown.length
-                ? `The ${shown.length} ticket${shown.length === 1 ? '' : 's'} listed below — this tab, with its filters — in an Excel sheet`
-                : 'Nothing listed to download'}
-            >
-              {saving ? <Spinner className="h-4 w-4" /> : <Download className="h-4 w-4 text-green-600" />} Excel
-            </button>
+
+          {/* What narrows the list, in even columns: where it came from first,
+              then what it is and who has it. Each is a dropdown in its own
+              colour, lit while it is narrowing (the user, 1 Oct: "make filters
+              more beautiful and attractive"). */}
+          <div id="ticket-filters" className={clsx('border-t border-ink-200/70 px-3 py-2.5 sm:block', !filtersOpen && 'hidden')}>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+              <FilterSelect icon={Building2} tone="violet" label="Filter by Revive Lab" all="All Revive Labs"
+                value={trcId} options={facets.labs} onChange={v => setParam('lab', v)} />
+              <FilterSelect icon={MapIcon} tone="sky" label="Filter by state" all="Any state"
+                value={inState} options={facets.states} onChange={chooseState} />
+              <FilterSelect icon={MapPin} tone="cyan" label="Filter by district" all="Any district"
+                value={inDistrict} options={facets.districts} onChange={v => setParam('district', v)} />
+              <FilterSelect icon={Layers} tone="blue" label="Filter by BEMMP" all="Any BEMMP"
+                value={bemmp} options={facets.bemmps} onChange={v => setParam('bemmp', v)} />
+              {(anyWarehouse || from) && (
+                <FilterSelect icon={Hospital} tone="orange" label="Filter by where it came from" all="Hospital or warehouse"
+                  value={from} options={facets.sources} onChange={v => setParam('from', v)} />
+              )}
+              <FilterSelect icon={CircleDot} tone="amber" label="Filter by status" all="Any status"
+                value={status} options={facets.statuses} onChange={v => setParam('status', v)} />
+              <FilterSelect icon={Tag} tone="indigo" label="Filter by category" all="Any category"
+                value={cat} options={facets.cats} onChange={v => setParam('cat', v)} />
+              <FilterSelect icon={TriangleAlert} tone="rose" label="Filter by criticality" all="Any criticality"
+                value={crit} options={facets.crits} onChange={v => setParam('crit', v)} />
+              {(showTeam || team) && (
+                <FilterSelect icon={Users} tone="fuchsia" label="Filter by your team" all="All your teams"
+                  value={team} options={facets.teams} onChange={v => setParam('team', v)} />
+              )}
+              {(desk || eng) && (
+                <FilterSelect icon={Wrench} tone="teal" label="Filter by Revive Lab engineer" all="Any Revive Lab engineer"
+                  value={eng} options={facets.engineers} onChange={v => setParam('eng', v)} />
+              )}
+              {narrowing > 0 && (
+                <button
+                  type="button"
+                  onClick={clearFilters}
+                  className="btn-press inline-flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-ink-300 px-3 py-1.5 text-sm font-medium text-ink-600 transition-colors hover:border-ink-400 hover:text-ink-900"
+                >
+                  <FilterX className="h-4 w-4" /> {narrowing === 1 ? 'Clear the filter' : `Clear ${narrowing} filters`}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -588,5 +646,52 @@ export default function Tickets() {
         )}
       </div>
     </div>
+  )
+}
+
+/**
+ * One filter: a dropdown with its own icon and colour. Quiet while it lets
+ * everything through; lit in its colour while it is narrowing the list, so
+ * a glance down the row says which are on. The choices are the browser's
+ * own list — it is what a phone opens as a wheel — and each says how many
+ * tickets it would show.
+ */
+function FilterSelect({ icon: Icon, tone, label, all, value, options, onChange }: {
+  icon: LucideIcon
+  tone: Tone
+  /** What it filters by, for a screen reader: the box itself shows only the choice. */
+  label: string
+  /** What the box says while it lets everything through: "Any status". */
+  all: string
+  value: string
+  options: Facet[]
+  onChange: (value: string | null) => void
+}) {
+  const on = value !== ''
+  return (
+    <label
+      className={clsx(
+        'relative flex min-w-0 items-center rounded-lg border transition-colors',
+        'focus-within:border-[color:var(--score-accent)] focus-within:ring-1 focus-within:ring-[color:var(--score-accent)]',
+        on ? clsx(TONE_EDGE[tone], TONE_CLASS[tone]) : 'border-ink-200 bg-surface text-ink-700 hover:border-ink-300',
+      )}
+    >
+      <Icon aria-hidden className={clsx('pointer-events-none absolute left-2.5 h-4 w-4', !on && TONE_TEXT[tone])} />
+      <select
+        aria-label={label}
+        value={value}
+        onChange={e => onChange(e.target.value || null)}
+        className={clsx(
+          'w-full min-w-0 cursor-pointer appearance-none truncate rounded-lg bg-transparent py-1.5 pl-8 pr-8 text-sm focus:outline-none',
+          // The list the browser opens states its own colours: on Windows it does not take them from the page.
+          '[&>option]:bg-surface [&>option]:font-normal [&>option]:text-ink-900',
+          on && 'font-semibold',
+        )}
+      >
+        <option value="">{all}</option>
+        {options.map(f => <option key={f.value} value={f.value}>{f.label} ({f.n})</option>)}
+      </select>
+      <ChevronDown aria-hidden className="pointer-events-none absolute right-2.5 h-4 w-4 opacity-60" />
+    </label>
   )
 }

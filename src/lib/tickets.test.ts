@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  ticketCode, parseTicketCode, actionsFor, awaitingManager, runsTrc, managesTrc, waitingOnMe, cleanItems, itemsSummary,
+  ticketCode, parseTicketCode, actionsFor, awaitingManager, runsTrc, managesTrc, observesOnly, waitingOnMe, cleanItems, itemsSummary,
   partsWaitingOn, ticketTabs, serves, approversOf, orList, statusLook, canRaise, partActor, partStatusLook,
   ITEM_KIND_LABEL, PART_PROGRESS, PART_STATUS, poLabel, canClassify, statusGroups, roundOf, ordinal, mergeDeskRaise,
   type Me, type TicketLike,
@@ -651,5 +651,48 @@ describe('a spare on its way back, handed to another field engineer (rl_0028)', 
       expect(actionsFor({ ...t, handover: { status, to_id: 'b' } }, a)).toEqual(['received', 'hand_over'])
       expect(actionsFor({ ...t, handover: { status, to_id: 'b' } }, b)).toEqual([])
     }
+  })
+})
+
+describe('the Revive Lab Observer (rl_0039)', () => {
+  const observer = me({ employee_id: 'obs', is_observer: true, trc_ids: [REG] })
+
+  it('only watches when Observer is the only box ticked', () => {
+    expect(observesOnly(observer)).toBe(true)
+    expect(observesOnly(me({ is_observer: true, is_coordinator: true, trc_ids: [REG] }))).toBe(false)
+    expect(observesOnly(me({ is_observer: true, is_engineer: true, trc_ids: [REG] }))).toBe(false)
+    expect(observesOnly(me({ employee_id: 'field' }))).toBe(false)
+    expect(observesOnly(null)).toBe(false)
+  })
+
+  it('has nothing to press, wherever a spare stands', () => {
+    for (const status of ['pending_acceptance', 'accepted', 'assigned', 'in_repair', 'parts_requested', 'repaired', 'not_repairable', 'service_denied', 'in_transit_return', 'received_back', 'closed'] as const) {
+      expect(actionsFor(ticket({ status, engineer_id: 'eng' }), observer)).toEqual([])
+      expect(waitingOnMe(ticket({ status, engineer_id: 'eng' }), observer)).toBe(false)
+    }
+    expect(runsTrc(observer, REG)).toBe(false)
+    expect(canClassify({ trc_id: REG, accepted_at: '2026-09-23T04:00:00Z', status: 'in_repair' }, observer)).toBe(false)
+    const parts = ticket({ status: 'parts_requested', parts: [{ id: 'a', route: 'local', status: 'requested' }], stock: [{ id: 's', status: 'requested' }] })
+    expect(partsWaitingOn(parts, observer)).toBe(0)
+  })
+
+  it('is not offered a ticket to raise, unless they also run a desk', () => {
+    expect(canRaise(observer)).toBe(false)
+    expect(canRaise(me({ is_observer: true, is_coordinator: true, trc_ids: [REG] }))).toBe(true)
+    expect(canRaise(me({ is_observer: true, is_admin: true }))).toBe(true)
+  })
+
+  it('has the list without a Waiting on you tab', () => {
+    expect(ticketTabs(observer).map(x => x.label)).toEqual(['All', 'Open', 'Closed'])
+    expect(ticketTabs(observer).map(x => x.tone)).toEqual(['slate', 'amber', 'green'])
+    // With another role as well, that role's tabs are theirs.
+    expect(ticketTabs(me({ is_observer: true, is_engineer: true, trc_ids: [REG] })).map(x => x.label))
+      .toEqual(['All', 'Waiting on you', 'In repair', 'Assigned', 'Closed'])
+  })
+
+  it('still confirms a spare of their own, if the desk named them on one', () => {
+    const theirs = ticket({ status: 'in_transit_return', stakeholder_id: 'obs' })
+    expect(actionsFor(theirs, observer)).toEqual(['received', 'hand_over'])
+    expect(waitingOnMe(theirs, observer)).toBe(true)
   })
 })

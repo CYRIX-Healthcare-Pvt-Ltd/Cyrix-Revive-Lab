@@ -271,6 +271,27 @@ export const TONE_FILL: Record<Tone, string> = {
   blue: '#2563eb',
 }
 
+/** The edge of a control lit in its tone — a filter that is narrowing the list. */
+export const TONE_EDGE: Record<Tone, string> = {
+  red: 'border-cyrixRed-300',
+  amber: 'border-amber-300',
+  sky: 'border-sky-300',
+  indigo: 'border-indigo-300',
+  lime: 'border-lime-300',
+  teal: 'border-teal-300',
+  green: 'border-green-300',
+  violet: 'border-violet-300',
+  orange: 'border-orange-300',
+  yellow: 'border-yellow-300',
+  cyan: 'border-cyan-300',
+  rose: 'border-rose-300',
+  slate: 'border-slate-300',
+  fuchsia: 'border-fuchsia-300',
+  emerald: 'border-emerald-300',
+  pink: 'border-pink-300',
+  blue: 'border-blue-300',
+}
+
 /** A filled dot in the tone's colour — a tab, a marker beside a label. */
 export const TONE_DOT: Record<Tone, string> = {
   red: 'bg-cyrixRed-600',
@@ -323,6 +344,8 @@ export interface Me {
   is_purchase?: boolean
   /** Approves where a spare goes: an admin of a Regional Revive Lab (rl_0014). */
   approves?: boolean
+  /** Only watches: the tickets of the Revive Labs ticked for them, with nothing to press (rl_0039). */
+  is_observer?: boolean
 }
 
 /* ------------------------------------------------------------------ */
@@ -503,6 +526,18 @@ export function runsTrc(me: Me | null | undefined, trcId: string): boolean {
 /** A manager of that Revive Lab: approves a spare as not repairable (rl_0034). */
 export function managesTrc(me: Me | null | undefined, trcId: string): boolean {
   return !!me && me.is_manager && me.trc_ids.includes(trcId)
+}
+
+/**
+ * Somebody who only watches (rl_0039): an Observer with no other Revive Lab
+ * role. They get a plain dashboard and the tickets of the Revive Labs ticked
+ * for them — no Waiting on you, no ticket to raise, nothing to press (the
+ * user, 1 Oct: "for observer just basic dashboard without waiting for you,
+ * and ticket log").
+ */
+export function observesOnly(me: Me | null | undefined): boolean {
+  return !!me && !!me.is_observer
+    && !(me.is_engineer || me.is_coordinator || me.is_manager || me.is_admin || me.is_purchase)
 }
 
 /** Holds the Purchase role for that Revive Lab. */
@@ -757,6 +792,14 @@ export function ticketTabs(me: Me | null | undefined): TicketTab[] {
       { id: 'closed', label: 'Closed', tone: 'green', match: closed },
     ]
   }
+  // An observer watches: nothing waits on them, so no tab says so (rl_0039).
+  if (observesOnly(me)) {
+    return [
+      { id: 'all', label: 'All', tone: 'slate', match: () => true },
+      { id: 'open', label: 'Open', tone: 'amber', match: t => !closed(t) },
+      { id: 'closed', label: 'Closed', tone: 'green', match: closed },
+    ]
+  }
   return [
     { id: 'all', label: 'All', tone: 'slate', match: () => true },
     mine,
@@ -767,14 +810,15 @@ export function ticketTabs(me: Me | null | undefined): TicketTab[] {
 
 /**
  * Who raises tickets: whoever sends spares in. A Revive Lab's own engineer
- * repairs what arrives, its manager approves and Purchase buys for it; none
- * of them sends one, so none is offered it — unless they also run a desk,
- * as a coordinator or an admin, where spares arrive and cards are written
- * for them (rl_0015, rl_0019, rl_0036; the database refuses them too).
+ * repairs what arrives, its manager approves, Purchase buys for it and an
+ * observer only watches; none of them sends one, so none is offered it —
+ * unless they also run a desk, as a coordinator or an admin, where spares
+ * arrive and cards are written for them (rl_0015, rl_0019, rl_0036,
+ * rl_0039; the database refuses them too).
  */
 export function canRaise(me: Me | null | undefined): boolean {
   if (!me) return true
-  return !(me.is_engineer || me.is_purchase || me.is_manager) || me.is_coordinator || me.is_admin
+  return !(me.is_engineer || me.is_purchase || me.is_manager || me.is_observer) || me.is_coordinator || me.is_admin
 }
 
 /* ------------------------------------------------------------------ */

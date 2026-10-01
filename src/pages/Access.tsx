@@ -78,6 +78,8 @@ interface Member {
   trc_ids: string[]; updated_at: string; updated_by_name: string | null
   /** Buys what engineers request as a purchase (rl_0013). */
   is_purchase: boolean
+  /** Only watches: the tickets of the Revive Labs ticked, with nothing to press (rl_0039). */
+  is_observer?: boolean
 }
 interface Person { id: string; ecode: string; full_name: string; designation: string | null; department: string | null }
 
@@ -85,15 +87,18 @@ interface Draft {
   employee_id: string; full_name: string; ecode: string
   is_engineer: boolean; is_coordinator: boolean; is_manager: boolean; is_admin: boolean
   is_purchase: boolean
+  is_observer: boolean
   trc_ids: string[]
 }
 
-const ROLES: Array<[keyof Pick<Draft, 'is_engineer' | 'is_coordinator' | 'is_manager' | 'is_purchase'>, string]> = [
+const ROLES: Array<[keyof Pick<Draft, 'is_engineer' | 'is_coordinator' | 'is_manager' | 'is_purchase' | 'is_observer'>, string]> = [
   ['is_engineer', 'Revive Lab Engineer'],
   ['is_coordinator', 'Revive Lab Coordinator'],
   ['is_manager', 'Revive Lab Manager'],
   // Buys the components engineers request as a purchase, for the Revive Labs ticked.
   ['is_purchase', 'Revive Lab Purchase'],
+  // Only watches: a dashboard and the tickets of the Revive Labs ticked, and nothing to press (rl_0039).
+  ['is_observer', 'Revive Lab Observer'],
 ]
 
 const call = async <T,>(name: string, args?: Record<string, unknown>): Promise<T> => {
@@ -143,6 +148,7 @@ export function ReviveLabAccess() {
       p_manager: d.is_manager, p_admin: d.is_admin,
       p_trc_ids: d.trc_ids,
       p_purchase: d.is_purchase,
+      p_observer: d.is_observer,
     }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['revive'] }),
   })
@@ -180,14 +186,14 @@ export function ReviveLabAccess() {
     setEditing({
       employee_id: m.employee_id, full_name: m.full_name, ecode: m.ecode,
       is_engineer: m.is_engineer, is_coordinator: m.is_coordinator, is_manager: m.is_manager,
-      is_admin: m.is_admin, is_purchase: m.is_purchase, trc_ids: [...m.trc_ids],
+      is_admin: m.is_admin, is_purchase: m.is_purchase, is_observer: !!m.is_observer, trc_ids: [...m.trc_ids],
     })
   }
 
   const save = async (d: Draft, removing = false) => {
     setError(null); setNotice(null)
     const payload = removing
-      ? { ...d, is_engineer: false, is_coordinator: false, is_manager: false, is_admin: false, is_purchase: false, trc_ids: [] }
+      ? { ...d, is_engineer: false, is_coordinator: false, is_manager: false, is_admin: false, is_purchase: false, is_observer: false, trc_ids: [] }
       : d
     try {
       await saveMember.mutateAsync(payload)
@@ -243,7 +249,7 @@ export function ReviveLabAccess() {
               setAdding(false)
               setEditing({
                 employee_id: p.id, full_name: p.full_name, ecode: p.ecode,
-                is_engineer: false, is_coordinator: false, is_manager: false, is_admin: false, is_purchase: false,
+                is_engineer: false, is_coordinator: false, is_manager: false, is_admin: false, is_purchase: false, is_observer: false,
                 trc_ids: (trcs ?? []).length === 1 ? [trcs![0].id] : [],
               })
             }}
@@ -929,8 +935,14 @@ function EditRow({ draft, trcs, busy, onChange, onSave, onCancel, onRemove }: {
         </div>
       </div>
 
-      {(draft.is_engineer || draft.is_coordinator || draft.is_manager || draft.is_purchase) && draft.trc_ids.length === 0 && (
+      {(draft.is_engineer || draft.is_coordinator || draft.is_manager || draft.is_purchase || draft.is_observer) && draft.trc_ids.length === 0 && (
         <p className="text-xs text-amber-700">A role does nothing without a Revive Lab — tick the Revive Lab(s) they work in.</p>
+      )}
+      {/* What the box means, said while it is the only one ticked: it takes things away as well as giving them. */}
+      {draft.is_observer && !(draft.is_engineer || draft.is_coordinator || draft.is_manager || draft.is_purchase || draft.is_admin) && (
+        <p className="text-xs text-ink-500">
+          An Observer only watches: a dashboard and the tickets of the Revive Lab(s) ticked, with nothing to press and no ticket to raise.
+        </p>
       )}
 
       <div className="flex flex-wrap gap-2">
