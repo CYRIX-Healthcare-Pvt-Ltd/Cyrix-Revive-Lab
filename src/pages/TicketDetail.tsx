@@ -773,6 +773,8 @@ function stepLook(
   // A manager's word on not repairable (rl_0034).
   if (e.kind === 'review' && e.action === 'nr_approved') return { title: 'Approved as not repairable', tone: 'rose', icon: BadgeCheck }
   if (e.action === 'nr_declined') return { title: 'Not approved as not repairable — back to repair', tone: 'indigo', icon: Wrench }
+  // Reopened by the software administrator, from People & Revive Labs (rl_0037).
+  if (e.action === 'reopened') return { title: 'Reopened — back in repair', tone: 'indigo', icon: RotateCcw }
   if (e.action === 'scrapped') return { title: 'Moved to scrap — closed', tone: 'slate', icon: Trash2 }
   if (e.kind === 'observation') {
     // Numbered, so "Observation 2" can be talked about on the phone.

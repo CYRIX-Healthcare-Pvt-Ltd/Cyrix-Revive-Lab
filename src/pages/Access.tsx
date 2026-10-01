@@ -21,7 +21,7 @@
 import { useMemo, useState } from 'react'
 import clsx from 'clsx'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Building2, Layers, Pencil, Plus, Search, Trash2, UserPlus, Users, Warehouse, X } from 'lucide-react'
+import { Building2, Layers, Pencil, Plus, RotateCcw, Search, Trash2, UserPlus, Users, Warehouse, X } from 'lucide-react'
 import { supabase, friendlyError } from '@/lib/supabase'
 import { Alert, EmptyState, Spinner, StatTile } from '@/components/ui'
 
@@ -339,6 +339,8 @@ export function ReviveLabAccess() {
 
       <WarehouseTable canEdit={canEdit} />
 
+      {me?.is_sw_admin && <ReopenTicket />}
+
       {me?.is_sw_admin && <DeleteTicket />}
     </div>
   )
@@ -631,6 +633,134 @@ function WarehouseTable({ canEdit }: { canEdit: boolean }) {
   )
 }
 
+/** "RL-07", "rl-7", "7" → 7. Anything else → null. */
+const ticketNumberOf = (typed: string): number | null => {
+  const m = typed.trim().match(/^(?:rl-?)?0*([0-9]{1,7})$/i)
+  return m ? Number(m[1]) : null
+}
+
+/** A ticket's status in words, for this page to say — it has no other file to ask. */
+const STATUS_WORDS: Record<string, string> = {
+  awaiting_approval: 'waiting for approval', approved: 'approved and not sent yet', not_approved: 'not approved',
+  pending_acceptance: 'pending acceptance', transferred: 'on its way to another Revive Lab', accepted: 'accepted, with no engineer yet',
+  assigned: 'assigned, the repair not accepted yet', in_repair: 'in repair', parts_requested: 'in repair, waiting for a component',
+  parts_ordered: 'in repair, waiting for a component', parts_ready: 'in repair, waiting for a component',
+  repaired: 'repaired', not_repairable: 'not repairable', service_denied: 'customer denied service',
+  in_transit_return: 'already dispatched', received_back: 'back with the field engineer', closed: 'closed',
+}
+/** The engineer has closed the repair, and the coordinator has not sent the spare out. */
+const REOPENABLE = ['repaired', 'not_repairable', 'service_denied']
+
+/**
+ * Reopening a repair, for the software administrator only (rl_0037, rl_0038).
+ *
+ * A repair the engineer has closed — repaired, not repairable, or denied by
+ * the customer — goes back to In repair with the same engineer, while the
+ * Revive Lab still has the spare: before the coordinator dispatches it or
+ * moves it to scrap. Asked for as deleting a ticket is (the user, 1 Oct:
+ * "like delete in admin panel, just need a field to enter ticket id"): type
+ * the number, and the ticket is named back before anything happens. The
+ * database refuses anybody else (revive_reopen_repair), and the ticket's
+ * history keeps the step.
+ */
+function ReopenTicket() {
+  const qc = useQueryClient()
+  const [typed, setTyped] = useState('')
+  const [found, setFound] = useState<{ id: string; code: string; facility: string; status: string; engineer: string | null } | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+
+  const number = ticketNumberOf(typed)
+
+  const lookUp = async () => {
+    setError(null); setNotice(null); setFound(null)
+    if (!number) { setError('Type a ticket number, like RL-05.'); return }
+    setBusy(true)
+    try {
+      const { data, error: err } = await supabase.from('revive_tickets')
+        .select('id, code, facility, status, engineer_id').eq('number', number).maybeSingle()
+      if (err) { setError(friendlyError(err)); return }
+      const t = data as { id: string; code: string; facility: string; status: string; engineer_id: string | null } | null
+      if (!t) { setError(`There is no ticket RL-${number < 10 ? '0' : ''}${number}.`); return }
+      if (!REOPENABLE.includes(t.status)) {
+        setError(`${t.code} is ${STATUS_WORDS[t.status] ?? t.status}. Only a repair the engineer has closed, and the coordinator has not yet dispatched or scrapped, can be reopened.`)
+        return
+      }
+      // Whose repair it goes back to, by name.
+      const { data: who } = t.engineer_id
+        ? await supabase.from('employees').select('full_name').eq('id', t.engineer_id).maybeSingle()
+        : { data: null }
+      setFound({ id: t.id, code: t.code, facility: t.facility, status: t.status, engineer: (who as { full_name: string } | null)?.full_name ?? null })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const reopen = async () => {
+    if (!found) return
+    setBusy(true); setError(null)
+    try {
+      await call<null>('revive_reopen_repair', { p_ticket_id: found.id })
+      setNotice(`Reopened ${found.code}. It is back in repair${found.engineer ? ` with ${found.engineer}` : ''}.`)
+      setFound(null); setTyped('')
+      qc.invalidateQueries({ queryKey: ['revive'] })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not reopen that ticket.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="flex items-center gap-2 border-b border-ink-200 bg-ink-50 px-4 py-2.5">
+        <RotateCcw className="h-4 w-4 text-ink-500" />
+        <h3 className="text-sm font-semibold text-ink-800">Reopen a ticket</h3>
+        <span className="text-xs text-ink-400">· software administrator only</span>
+      </div>
+      <div className="space-y-3 p-4">
+        {error && <Alert kind="error">{error}</Alert>}
+        {notice && <Alert kind="success">{notice}</Alert>}
+        <form
+          className="flex flex-wrap items-end gap-2"
+          onSubmit={e => { e.preventDefault(); void lookUp() }}
+        >
+          <label className="block w-40">
+            <span className="label">Ticket number</span>
+            <input
+              className="input mt-1 font-mono"
+              value={typed}
+              onChange={e => { setTyped(e.target.value); setFound(null) }}
+              placeholder="RL-05"
+            />
+          </label>
+          <button type="submit" className="btn-secondary" disabled={busy || !typed.trim()}>
+            {busy && !found ? <Spinner className="h-4 w-4" /> : <RotateCcw className="h-4 w-4" />} Reopen
+          </button>
+        </form>
+
+        {found && (
+          <div className="rounded-xl border border-ink-200 bg-ink-50 p-3">
+            <p className="text-sm font-medium text-ink-900">
+              Reopen {found.code} · {found.facility}?
+            </p>
+            <p className="mt-0.5 text-xs text-ink-600">
+              It was closed as {STATUS_WORDS[found.status]}. It goes back to In repair{found.engineer ? <> with {found.engineer}</> : null}, to be closed again.
+            </p>
+            <div className="mt-2 flex gap-2">
+              <button type="button" className="btn-primary" onClick={reopen} disabled={busy}>
+                {busy && <Spinner className="h-4 w-4" />} Yes, reopen {found.code}
+              </button>
+              <button type="button" className="btn-secondary" onClick={() => setFound(null)}>Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 /**
  * Deleting a ticket, for the software administrator only.
  *
@@ -648,10 +778,7 @@ function DeleteTicket() {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
 
-  const number = (() => {
-    const m = typed.trim().match(/^(?:rl-?)?0*([0-9]{1,7})$/i)
-    return m ? Number(m[1]) : null
-  })()
+  const number = ticketNumberOf(typed)
 
   const lookUp = async () => {
     setError(null); setNotice(null); setFound(null)

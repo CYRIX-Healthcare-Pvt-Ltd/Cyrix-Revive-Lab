@@ -158,6 +158,22 @@ describe('the Revive Lab’s reports', () => {
     ])).toEqual({ assignedAt: Date.parse(ago(18)), closedAt: null })
   })
 
+  it('does not count a repair as closed once it was sent back or reopened, until it is closed again (rl_0034, rl_0037)', () => {
+    const reopened = [
+      { status: 'assigned', at: ago(50) }, { status: 'in_repair', at: ago(48) }, { status: 'repaired', at: ago(40) },
+      { status: 'in_repair', at: ago(30) },
+    ]
+    const closedAgain = [...reopened, { status: 'not_repairable', at: ago(6) }]
+    expect(repairWindow(reopened)).toEqual({ assignedAt: Date.parse(ago(50)), closedAt: null })
+    expect(repairWindow(closedAgain)).toEqual({ assignedAt: Date.parse(ago(50)), closedAt: Date.parse(ago(6)) })
+    // The engineer's row: open while it is back in repair — the clock still from when it was assigned…
+    const open = engineerWork([ticket({ id: 'r', engineer_id: 'E9', engineer_name: 'Deepu', status: 'in_repair' })], () => reopened, [], NOW)
+    expect(open[0]).toMatchObject({ id: 'E9', open: 1, closed: 0, avgOpenMs: 50 * H })
+    // …and closed once, at the close that stands.
+    const closed = engineerWork([ticket({ id: 'r', engineer_id: 'E9', engineer_name: 'Deepu', status: 'not_repairable' })], () => closedAgain, [], NOW)
+    expect(closed[0]).toMatchObject({ id: 'E9', open: 0, closed: 1, avgClosureMs: 44 * H })
+  })
+
   it('gives each engineer total, closed, open and the two averages', () => {
     const rows = engineerWork(list, eventsOf, [{ id: 'E3', name: 'Cini' }], NOW)
     const anu = rows.find(r => r.id === 'E1')!

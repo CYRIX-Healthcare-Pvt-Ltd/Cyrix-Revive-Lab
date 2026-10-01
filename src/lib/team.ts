@@ -316,13 +316,17 @@ export const inRange = (ms: number, r: Range) => ms >= r.from && ms < r.to
 const REPAIRING_NOW: readonly TicketStatus[] = ['assigned', 'in_repair', 'parts_requested', 'parts_ordered', 'parts_ready']
 /** The statuses a Revive Lab engineer closes a repair with. */
 const REPAIR_CLOSED = ['repaired', 'not_repairable', 'service_denied']
+/** Being repaired: after a close, it means the close did not stand. */
+const BACK_IN_REPAIR = ['in_repair', 'parts_requested', 'parts_ordered', 'parts_ready']
 
 /**
  * When this round of the repair was assigned, and when the engineer closed
  * it — from the ticket's status history (only status steps). Assigned is the
  * start of the latest run of "assigned", so an estimate or a reassignment
  * inside it does not restart the clock; a spare sent back and assigned again
- * starts a new round.
+ * starts a new round. A close that did not stand — a manager sent it back to
+ * be repaired (rl_0034), or the software administrator reopened it (rl_0037) —
+ * is no close: the round carries on, and closes when it is closed again.
  */
 export function repairWindow(events: ReadonlyArray<{ status: string; at: string }>): { assignedAt: number | null; closedAt: number | null } {
   let assignedAt: number | null = null
@@ -334,6 +338,8 @@ export function repairWindow(events: ReadonlyArray<{ status: string; at: string 
       if (assignedAt === null || closedAt !== null) { assignedAt = Date.parse(e.at); closedAt = null }
     } else if (REPAIR_CLOSED.includes(e.status) && assignedAt !== null && closedAt === null) {
       closedAt = Date.parse(e.at)
+    } else if (closedAt !== null && BACK_IN_REPAIR.includes(e.status)) {
+      closedAt = null
     }
     prev = e.status
   }

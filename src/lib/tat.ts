@@ -81,6 +81,8 @@ export interface TatBreakdown {
 const REPAIR_END = ['repaired', 'not_repairable', 'service_denied']
 /** The statuses of a repair waiting on a component. */
 const WAITING_FOR_PARTS = ['parts_requested', 'parts_ordered', 'parts_ready']
+/** Being repaired: after a close, it means the close did not stand. */
+const BACK_IN_REPAIR = ['in_repair', ...WAITING_FOR_PARTS]
 /** Waiting on approval to go to another Revive Lab, and on it being sent once decided. */
 const WAITING_FOR_APPROVAL = ['awaiting_approval', 'approved', 'not_approved']
 
@@ -166,7 +168,13 @@ export function ticketTat(
     const accepted = first('accepted')
     const assigned = first('assigned')
     const inRepair = first('in_repair')
-    const repaired = ch.events.find(e => REPAIR_END.includes(e.status))?.at
+    // The close that stands. A repair sent back to be repaired — by a
+    // manager (rl_0034), or reopened by the software administrator
+    // (rl_0037) — is in repair until it is closed again.
+    const lastEnd = ch.events.map(e => REPAIR_END.includes(e.status)).lastIndexOf(true)
+    const repaired = lastEnd >= 0 && !ch.events.slice(lastEnd + 1).some(e => BACK_IN_REPAIR.includes(e.status))
+      ? ch.events[lastEnd].at
+      : undefined
     const transferEnd = ch.end ? ch.end.at : null
 
     // Every stretch waiting on approval, up to the next move.

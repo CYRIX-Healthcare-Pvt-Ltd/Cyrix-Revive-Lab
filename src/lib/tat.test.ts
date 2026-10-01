@@ -341,3 +341,33 @@ describe('ticketTat — fitted, not working, and sent back to the same Revive La
     expect(tat.legs[1].assign).toEqual({ ms: 12 * H, running: true })
   })
 })
+
+describe('ticketTat — a closed repair sent back or reopened (rl_0034, rl_0037)', () => {
+  const trail = [
+    ev('pending_acceptance', 0), ev('accepted', D), ev('assigned', D), ev('in_repair', D + 2 * H),
+    ev('repaired', 2 * D + 2 * H),       // closed after a day
+    ev('in_repair', 3 * D + 2 * H),      // reopened a day later
+  ]
+
+  it('is in repair again: the repair runs, and nothing waits to be dispatched', () => {
+    const tat = ticketTat(trail, 'A', T0 + 4 * D + 2 * H)
+    expect(tat.repair).toEqual({ ms: 3 * D, running: true })
+    expect(tat.dispatch).toEqual({ ms: null, running: false })
+  })
+
+  it('ends the repair at the close that stands, and dispatch starts from there', () => {
+    const tat = ticketTat([
+      ...trail, ev('repaired', 5 * D + 2 * H), ev('in_transit_return', 5 * D + 6 * H), ev('received_back', 6 * D + 2 * H),
+    ], 'A', T0 + 10 * D)
+    expect(tat.repair).toEqual({ ms: 4 * D, running: false })
+    expect(tat.dispatch).toEqual({ ms: D, running: false })
+  })
+
+  it('leaves a repair closed once exactly as it was', () => {
+    const tat = ticketTat([
+      ev('pending_acceptance', 0), ev('accepted', D), ev('assigned', D), ev('in_repair', D + 2 * H), ev('not_repairable', 2 * D + 2 * H),
+    ], 'A', T0 + 3 * D + 2 * H)
+    expect(tat.repair).toEqual({ ms: D, running: false })
+    expect(tat.dispatch).toEqual({ ms: D, running: true })
+  })
+})
