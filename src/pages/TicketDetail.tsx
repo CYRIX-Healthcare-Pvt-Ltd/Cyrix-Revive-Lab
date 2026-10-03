@@ -6,7 +6,7 @@ import {
   ArrowLeft, ArrowRightLeft, BadgeCheck, Ban, Boxes, CalendarClock, Camera, CheckCircle2, CircleCheck, CircleX, ClipboardCheck,
   ClipboardList, Factory, Forward, Hand, History as HistoryIcon, PackageCheck, PackagePlus, PackageX, PlayCircle, Receipt, RotateCcw, ScanSearch, Tag,
   Send, ShieldQuestion, ShieldX, ShoppingCart, Signpost, Timer, Trash2, TriangleAlert, Truck, Undo2, UserCheck, UserCog, UserPlus,
-  UserX, Wrench, X,
+  UserX, Wrench, X, ExternalLink,
   type LucideIcon,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
@@ -28,6 +28,8 @@ import {
 import { categoryTat, formatSpan, ticketTat, type Span } from '@/lib/tat'
 import { dateTime, dayDate, gapLabel, gapWords, localDay } from '@/lib/when'
 import { ClassificationFields, TatChip } from '@/components/Classification'
+import CourierSelect from '@/components/CourierSelect'
+import { tracking } from '@/lib/couriers'
 import Choices, { type ChoiceOption } from '@/components/Choices'
 import { Alert, EmptyState, PageLoader, SectorTag, Spinner, StatusBadge, WarehouseChip } from '@/components/ui'
 import IconChip from '@/components/IconChip'
@@ -676,12 +678,26 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
+/** The courier's own tracking page; where it cannot take the AWB in its address, the AWB is copied to paste there. */
+function TrackLink({ courier, awb }: { courier: string | null; awb: string }) {
+  const where = tracking(courier, awb)
+  if (!where) return null
+  return (
+    <a href={where.url} target="_blank" rel="noreferrer"
+      onClick={() => { if (where.paste) void navigator.clipboard?.writeText(awb.replace(/\s/g, '')).catch(() => {}) }}
+      title={where.paste ? 'The AWB is copied — paste it on the courier’s page' : 'Opens the courier’s tracking page'}
+      className="inline-flex items-center gap-1 rounded-md bg-teal-100 px-2 py-0.5 text-xs font-medium text-teal-900 hover:opacity-90">
+      {where.paste ? 'Copy AWB & track' : 'Track'} <ExternalLink className="h-3 w-3" />
+    </a>
+  )
+}
+
 function Courier({ name, awb, on, empty }: { name: string | null; awb: string | null; on: string | null; empty: string }) {
   if (!name && !awb && !on) return <p className="text-sm text-ink-400">{empty}</p>
   return (
     <dl className="space-y-2">
       <Row label="Courier">{name}</Row>
-      <Row label="Tracking / AWB">{awb && <span className="font-mono">{awb}</span>}</Row>
+      <Row label="Tracking / AWB">{awb && <span className="inline-flex flex-wrap items-center gap-2"><span className="font-mono">{awb}</span><TrackLink courier={name} awb={awb} /></span>}</Row>
       <Row label="Dispatched">{day(on)}</Row>
     </dl>
   )
@@ -1770,7 +1786,7 @@ function ActionForm({
               {action === 'accept' ? 'Courier it came with' : returning ? 'Courier it goes back with' : 'Courier'}
               {(action === 'dispatch' || courierRequired) && <span className="text-cyrixRed-600"> *</span>}
             </span>
-            <input className="input mt-1" value={courier} onChange={e => setCourier(e.target.value)} placeholder="DTDC, Blue Dart…" />
+            <CourierSelect className="mt-1" value={courier} onChange={setCourier} />
           </label>
           <label className="block">
             <span className="label">Tracking / AWB{courierRequired && <span className="text-cyrixRed-600"> *</span>}</span>

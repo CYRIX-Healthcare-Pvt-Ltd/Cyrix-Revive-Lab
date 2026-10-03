@@ -24,6 +24,7 @@ import LabOptions from '@/components/LabOptions'
 import { MediaCapture, type PendingPhoto } from '@/components/Attachments'
 import ItemsField, { newLine, type ItemLine } from '@/components/ItemsField'
 import CloseFirst from '@/components/CloseFirst'
+import CourierSelect from '@/components/CourierSelect'
 
 /**
  * Raising a ticket — the route card, on a screen.
@@ -489,7 +490,7 @@ export default function NewTicket() {
             </p>
           </div>
           <div className="grid gap-3 sm:grid-cols-3">
-            <Field label="Courier" value={form.inCourier} onChange={set('inCourier')} placeholder="DTDC, Blue Dart…" />
+            <label className="block"><span className="label">Courier</span><CourierSelect className="mt-1" value={form.inCourier} onChange={v => setForm(f => ({ ...f, inCourier: v }))} /></label>
             <Field label="Tracking / AWB number" value={form.inAwb} onChange={set('inAwb')} mono />
             <Field label="Date of dispatch" type="date" value={form.inDispatchedOn} onChange={set('inDispatchedOn')} />
           </div>
