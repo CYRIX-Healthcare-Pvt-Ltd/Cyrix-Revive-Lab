@@ -374,6 +374,19 @@ export function useOverdueReturns() {
   })
 }
 
+/**
+ * What holds somebody else back (rl_0042): the desk, naming a field
+ * engineer on its card, sees at once whether they may be named. Only a
+ * coordinator or admin is answered.
+ */
+export function useOverdueReturnsOf(employeeId: string | null) {
+  return useQuery({
+    enabled: !!employeeId,
+    queryKey: ['revive', 'overdue-returns', employeeId],
+    queryFn: async () => unwrap<OverdueReturn[]>(await supabase.rpc('revive_overdue_returns_for', { p_employee_id: employeeId })),
+  })
+}
+
 export function useTrail(ticketId: string | undefined) {
   return useQuery({
     enabled: !!ticketId,

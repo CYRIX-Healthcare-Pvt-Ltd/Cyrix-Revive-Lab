@@ -22,15 +22,28 @@ const onDay = (d: string) => { const [y, m, day] = d.split('-').map(Number); ret
  * "they should be able to click on the ticket and redirect to our closing
  * ticket"), and the ticket's back link comes back here, so the next one is a
  * press away — and once none is left, the route card.
+ *
+ * With `who`, it is the desk naming somebody else on its card, and being
+ * told they are held (rl_0042; the user, 3 Oct: "coordinator cannot raise
+ * bcz from eng it is pending"). Only they can confirm or close those
+ * spares, so the tickets open in a new tab and the card half filled in
+ * stays where it is.
  */
-export default function CloseFirst({ tickets, onClose }: { tickets: OverdueReturn[]; onClose: () => void }) {
+export default function CloseFirst({ tickets, onClose, who }: { tickets: OverdueReturn[]; onClose: () => void; who?: string }) {
   const one = tickets.length === 1
   return (
-    <Dialog title="Close these tickets first" icon={<IconChip icon={TriangleAlert} tone="red" />} onClose={onClose} wide>
-      <p className="text-sm text-ink-600">
-        {one ? 'A spare that came back to you is' : `${tickets.length} spares that came back to you are`} still open, past the days allowed.
-        {' '}Close {one ? 'it' : 'them'} first, then you can raise a new ticket.
-      </p>
+    <Dialog title={who ? `${who} has tickets to close first` : 'Close these tickets first'} icon={<IconChip icon={TriangleAlert} tone="red" />} onClose={onClose} wide>
+      {who ? (
+        <p className="text-sm text-ink-600">
+          {one ? 'A spare that came back to them is' : `${tickets.length} spares that came back to them are`} still open, past the days allowed.
+          {' '}Only they can press Received back or close {one ? 'it' : 'them'}. A ticket can be raised in their name once they have.
+        </p>
+      ) : (
+        <p className="text-sm text-ink-600">
+          {one ? 'A spare that came back to you is' : `${tickets.length} spares that came back to you are`} still open, past the days allowed.
+          {' '}Close {one ? 'it' : 'them'} first, then you can raise a new ticket.
+        </p>
+      )}
       <ul className="space-y-2">
         {tickets.map(t => {
           const back = t.status === 'received_back'
@@ -38,7 +51,7 @@ export default function CloseFirst({ tickets, onClose }: { tickets: OverdueRetur
             <li key={t.id}>
               <Link
                 to={`/tickets/${t.code}`}
-                state={{ back: { to: '/new', label: 'Raise a ticket' } }}
+                {...(who ? { target: '_blank', rel: 'noreferrer' } : { state: { back: { to: '/new', label: 'Raise a ticket' } } })}
                 className="btn-press flex items-center gap-3 rounded-xl border border-ink-200 bg-surface p-3 transition-colors hover:border-ink-300 hover:bg-ink-50"
               >
                 <span className="min-w-0 flex-1">
@@ -50,9 +63,11 @@ export default function CloseFirst({ tickets, onClose }: { tickets: OverdueRetur
                     {t.facility}{t.spare_name ? ` · ${t.spare_name}` : ''}
                   </span>
                   <span className="mt-0.5 block text-xs text-ink-500">
-                    {back
-                      ? <>Received on {dayDate(onDay(t.since))} · press <span className="font-medium text-ink-700">Close ticket</span> within {t.limit_days} days</>
-                      : <>Dispatched on {dayDate(onDay(t.since))} · press <span className="font-medium text-ink-700">Received back</span> within {t.limit_days} days</>}
+                    {/* To the field engineer, what to press; to the desk, what was due from them. */}
+                    {back ? <>Received on {dayDate(onDay(t.since))} · </> : <>Dispatched on {dayDate(onDay(t.since))} · </>}
+                    {who ? null : 'press '}
+                    <span className="font-medium text-ink-700">{back ? 'Close ticket' : 'Received back'}</span>
+                    {who ? ' was due' : ''} within {t.limit_days} days
                   </span>
                 </span>
                 {/* How long, against how long was allowed: the number that has to come down. */}
@@ -68,7 +83,7 @@ export default function CloseFirst({ tickets, onClose }: { tickets: OverdueRetur
           )
         })}
       </ul>
-      <button type="button" className="btn-secondary w-full justify-center" onClick={onClose}>Back</button>
+      <button type="button" className="btn-secondary w-full justify-center" onClick={onClose}>{who ? 'Choose someone else' : 'Back'}</button>
     </Dialog>
   )
 }

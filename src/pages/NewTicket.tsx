@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import {
-  useBemmpProjects, useMembers, useOverdueReturns, useRaiseTicket, useTickets, useTrcs, useWarehouses, type Person, type Trc,
+  useBemmpProjects, useMembers, useOverdueReturns, useOverdueReturnsOf, useRaiseTicket, useTickets, useTrcs, useWarehouses, type Person, type Trc,
 } from '@/lib/queries'
 import {
   approversOf, cleanItems, orList, runsTrc, serves, stateLabel,
@@ -52,8 +52,9 @@ import CloseFirst from '@/components/CloseFirst'
  * A field engineer with a spare that came back and has waited past the days
  * set for its state — not confirmed arriving, or not closed — is shown those
  * tickets instead of the card, each opening its ticket (rl_0041). The
- * database refuses their raise too. The desk is never held: its raise is for
- * a spare already at its Revive Lab.
+ * database refuses their raise too. Nor can the desk name a field engineer
+ * who is held (rl_0042): picking one shows their tickets at once, and lets
+ * go of them. A warehouse's in-charge is not held.
  */
 export default function NewTicket() {
   const { me, employee } = useAuth()
@@ -114,6 +115,10 @@ export default function NewTicket() {
 
   const state = form.state
   const fromWarehouse = atLab && source === 'warehouse'
+  // The field engineer the desk names, and whether they are held (rl_0042).
+  const named = atLab && !fromWarehouse ? holder : null
+  const { data: namedLate } = useOverdueReturnsOf(named?.id ?? null)
+  const namedHeld = !!named && (namedLate?.length ?? 0) > 0
   const districts = districtsOf(state)
   const bemmpChoices = useMemo(() => (bemmp ?? []).filter(b => b.is_active && serves(b, state)), [bemmp, state])
   // The state's own Revive Labs and the Regional ones — for the desk, only
@@ -181,6 +186,7 @@ export default function NewTicket() {
       setError(fromWarehouse ? 'Name the warehouse in-charge this spare belongs to.' : 'Name the field engineer this spare belongs to.')
       return
     }
+    if (namedHeld) { setError(`${named!.full_name} has spares to close first — a ticket cannot be raised in their name yet.`); return }
 
     if (asksContract && !contractType) { setError('Choose the contract type — AMC or CAMC.'); return }
     if (atLab && !category) { setError('Choose the spare category — A, B or C.'); return }
@@ -301,6 +307,7 @@ export default function NewTicket() {
             <div>
               <span className="label">{fromWarehouse ? 'Warehouse in-charge' : 'Field engineer it belongs to'} <Req /></span>
               <div className="mt-1"><PersonPicker value={holder} onChange={setHolder} /></div>
+              {namedHeld && <CloseFirst tickets={namedLate!} who={named!.full_name} onClose={() => setHolder(null)} />}
               <p className="mt-1 text-xs text-ink-500">They and their reporting manager follow this ticket as if they had raised it.</p>
             </div>
             {/* Raised here, it is accepted as it is raised: what it is, now (rl_0024). */}
