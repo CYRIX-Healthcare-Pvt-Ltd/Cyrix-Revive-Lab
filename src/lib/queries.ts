@@ -342,6 +342,38 @@ export function useMyTeam() {
   })
 }
 
+/**
+ * A spare that came back to the signed-in person and has waited past its
+ * state's limit (rl_0041): in transit back and not confirmed arriving, or
+ * received back and not closed.
+ */
+export interface OverdueReturn {
+  id: string
+  code: string
+  status: 'in_transit_return' | 'received_back'
+  state: string
+  facility: string
+  spare_name: string | null
+  equipment_name: string | null
+  /** The dispatch date for one in transit back; the day it was received for one back with them. A date, "2026-09-24". */
+  since: string
+  days: number
+  limit_days: number
+}
+
+/**
+ * What holds the signed-in person back from raising a ticket (rl_0041):
+ * their spares past the days the software administrator set for the state.
+ * Empty for almost everybody. Under ['revive'], so confirming or closing
+ * one — which refreshes everything there — takes it off.
+ */
+export function useOverdueReturns() {
+  return useQuery({
+    queryKey: ['revive', 'overdue-returns'],
+    queryFn: async () => unwrap<OverdueReturn[]>(await supabase.rpc('revive_my_overdue_returns')),
+  })
+}
+
 export function useTrail(ticketId: string | undefined) {
   return useQuery({
     enabled: !!ticketId,

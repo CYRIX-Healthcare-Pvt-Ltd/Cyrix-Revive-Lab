@@ -18,10 +18,10 @@
  * the admins of a Regional Revive Lab approve anything else (rl_0014).
  * Warehouses are a list of the same kind: in a state, or in any (rl_0020).
  */
-import { useMemo, useState } from 'react'
+import { useDeferredValue, useMemo, useState } from 'react'
 import clsx from 'clsx'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Building2, Layers, Pencil, Plus, RotateCcw, Search, Trash2, UserPlus, Users, Warehouse, X } from 'lucide-react'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Building2, Hourglass, Layers, Pencil, Plus, RotateCcw, Search, Trash2, UserPlus, Users, Warehouse, X } from 'lucide-react'
 import { supabase, friendlyError } from '@/lib/supabase'
 import { Alert, EmptyState, Spinner, StatTile } from '@/components/ui'
 
@@ -350,6 +350,8 @@ export function ReviveLabAccess() {
 
       <WarehouseTable canEdit={canEdit} />
 
+      {me?.is_sw_admin && <CloseLimits />}
+
       {me?.is_sw_admin && <ReopenTicket />}
 
       {me?.is_sw_admin && <DeleteTicket />}
@@ -661,6 +663,179 @@ const STATUS_WORDS: Record<string, string> = {
 }
 /** The engineer has closed the repair, and the coordinator has not sent the spare out. */
 const REOPENABLE = ['repaired', 'not_repairable', 'service_denied']
+
+/**
+ * Close before raising, for the software administrator only (rl_0041).
+ *
+ * Per state, how many days a spare that came back may wait before its
+ * field engineer cannot raise another ticket: in transit back, from the
+ * dispatch date until they press Received back; and received back, from
+ * that day until they close it, working or not (the user, 3 Oct: "for KL …
+ * received back status … 5 days … in transit 7 days"; "admin should able to
+ * decide for each state"). Engineers were leaving spares unclosed, and a
+ * spare never closed as working can always be blamed on the Revive Lab.
+ *
+ * The database holds the rule: revive_raise_ticket refuses, and the raise
+ * page lists the tickets, each opening its own. A ticket the desk raised in
+ * an engineer's name is that engineer's to close too. Each state here shows
+ * what it has waiting now, and whom the days typed would hold back today,
+ * before they are saved.
+ */
+interface CloseLimit { state: string; received_back_days: number | null; in_transit_days: number | null }
+interface LimitPreview {
+  in_transit: number; in_transit_oldest: number | null
+  received_back: number; received_back_oldest: number | null
+  late_tickets: number; late_people: number
+}
+
+function CloseLimits() {
+  const { data: rows, isLoading } = useQuery({
+    queryKey: ['revive', 'close-limits'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('revive_close_limits')
+        .select('state, received_back_days, in_transit_days').order('state')
+      if (error) throw new Error(friendlyError(error))
+      return data as CloseLimit[]
+    },
+  })
+  const [adding, setAdding] = useState<string | null>(null)
+  const taken = new Set((rows ?? []).map(r => r.state))
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="flex flex-wrap items-center gap-2 border-b border-ink-200 bg-ink-50 px-4 py-2.5">
+        <Hourglass className="h-4 w-4 text-ink-500" />
+        <h3 className="text-sm font-semibold text-ink-800">Close before raising</h3>
+        <span className="text-xs text-ink-400">· software administrator only</span>
+      </div>
+      <div className="space-y-3 p-4">
+        <p className="text-sm text-ink-600">
+          A field engineer with a spare left longer than this cannot raise a new ticket until they press Received back, or close it.
+          Tickets the coordinator raised in their name count too.
+        </p>
+        <p className="text-xs text-ink-500">
+          In transit back counts from the dispatch date, Received back from the day they pressed Received back. Leave a box empty for no limit.
+        </p>
+        {isLoading ? <Spinner className="h-4 w-4 text-ink-400" /> : (
+          <div className="space-y-2.5">
+            {(rows ?? []).map(r => <LimitRow key={r.state} row={r} />)}
+            {adding && (
+              <LimitRow key={`new-${adding}`} row={{ state: adding, received_back_days: null, in_transit_days: null }} fresh onDone={() => setAdding(null)} />
+            )}
+            {(rows ?? []).length === 0 && !adding && (
+              <p className="rounded-xl border border-dashed border-ink-200 px-3 py-3 text-sm text-ink-500">No state has a limit yet, so nobody is held back.</p>
+            )}
+          </div>
+        )}
+        {!adding && (
+          <select
+            className="input !py-1.5 w-60"
+            value=""
+            aria-label="Add a state"
+            onChange={e => { if (e.target.value) setAdding(e.target.value) }}
+          >
+            <option value="">Add a state…</option>
+            {STATES.filter(x => !taken.has(x)).map(x => <option key={x} value={x}>{x}</option>)}
+          </select>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** One state's two limits: typed, measured against today's spares, then saved. */
+function LimitRow({ row, fresh = false, onDone }: { row: CloseLimit; fresh?: boolean; onDone?: () => void }) {
+  const qc = useQueryClient()
+  const [transit, setTransit] = useState(row.in_transit_days?.toString() ?? '')
+  const [back, setBack] = useState(row.received_back_days?.toString() ?? '')
+  const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const number = (v: string) => (v.trim() === '' ? null : Number(v))
+  const fits = (n: number | null) => n === null || (Number.isInteger(n) && n >= 1 && n <= 90)
+  const t = number(transit), b = number(back)
+  const valid = fits(t) && fits(b)
+  const changed = fresh || t !== row.in_transit_days || b !== row.received_back_days
+  // What the days typed would do today. Deferred, so typing 12 does not ask about 1 on the way.
+  const laterT = useDeferredValue(t), laterB = useDeferredValue(b)
+  const { data: pv } = useQuery({
+    queryKey: ['revive', 'close-limit-preview', row.state, laterT, laterB],
+    enabled: valid,
+    placeholderData: keepPreviousData,
+    queryFn: () => call<LimitPreview>('revive_close_limit_preview', { p_state: row.state, p_received_back_days: laterB, p_in_transit_days: laterT }),
+  })
+  const save = useMutation({
+    mutationFn: (v: { t: number | null; b: number | null }) =>
+      call<null>('revive_set_close_limit', { p_state: row.state, p_received_back_days: v.b, p_in_transit_days: v.t }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['revive', 'close-limits'] }),
+  })
+  const store = async (v: { t: number | null; b: number | null }) => {
+    setError(null); setNotice(null)
+    try { await save.mutateAsync(v); setNotice('Saved.'); onDone?.() }
+    catch (err) { setError(err instanceof Error ? err.message : 'Could not save that.') }
+  }
+  const days = (value: string, set: (v: string) => void, label: string) => (
+    <label className="flex items-center gap-2 text-sm text-ink-700">
+      <span className="w-28 shrink-0">{label}</span>
+      <input
+        className={clsx('input !w-16 !py-1.5 text-center tabular-nums', !fits(number(value)) && '!border-cyrixRed-400')}
+        inputMode="numeric"
+        value={value}
+        onChange={e => { setNotice(null); set(e.target.value.replace(/[^0-9]/g, '').slice(0, 2)) }}
+        placeholder="—"
+        aria-label={`${label}, days, ${row.state}`}
+      />
+      <span className="text-ink-500">days</span>
+    </label>
+  )
+
+  return (
+    <div className="rounded-xl border border-ink-200 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-semibold text-ink-900">{row.state}</p>
+        {fresh ? (
+          <button type="button" className="text-xs font-medium text-ink-500 hover:text-ink-900" onClick={onDone}>Cancel</button>
+        ) : (
+          <button type="button" className="text-xs font-medium text-ink-500 hover:text-ink-900" disabled={save.isPending}
+            title="Take this state's limits away: nobody here is held back" onClick={() => void store({ t: null, b: null })}>
+            Remove
+          </button>
+        )}
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-x-6 gap-y-2">
+        {days(transit, setTransit, 'In transit back')}
+        {days(back, setBack, 'Received back')}
+        <button
+          type="button"
+          className="btn-primary !py-1.5"
+          disabled={!changed || !valid || save.isPending || (fresh && t === null && b === null)}
+          onClick={() => void store({ t, b })}
+        >
+          {save.isPending && <Spinner className="h-4 w-4" />} Save
+        </button>
+      </div>
+      {pv && (
+        <div className="mt-2.5 space-y-0.5 text-xs">
+          <p className="text-ink-500">
+            Waiting now: {pv.in_transit} in transit back{pv.in_transit_oldest !== null ? ` (oldest ${pv.in_transit_oldest} days)` : ''}
+            {' · '}{pv.received_back} received back{pv.received_back_oldest !== null ? ` (oldest ${pv.received_back_oldest} days)` : ''}
+          </p>
+          {(t !== null || b !== null) && (
+            <p className={clsx('font-medium', pv.late_people ? 'text-amber-700' : 'text-green-700')}>
+              {changed ? 'If saved, today' : 'Today'}:{' '}
+              {pv.late_people
+                ? `${pv.late_people} field engineer${pv.late_people === 1 ? '' : 's'} cannot raise — ${pv.late_tickets} ticket${pv.late_tickets === 1 ? '' : 's'} past the limit`
+                : 'nobody is held back'}
+            </p>
+          )}
+        </div>
+      )}
+      {error && <div className="mt-2"><Alert kind="error">{error}</Alert></div>}
+      {notice && !changed && <p className="mt-2 text-xs font-medium text-green-700">{notice}</p>}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
 
 /**
  * Reopening a repair, for the software administrator only (rl_0037, rl_0038).

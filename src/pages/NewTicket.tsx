@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import {
-  useBemmpProjects, useMembers, useRaiseTicket, useTickets, useTrcs, useWarehouses, type Person, type Trc,
+  useBemmpProjects, useMembers, useOverdueReturns, useRaiseTicket, useTickets, useTrcs, useWarehouses, type Person, type Trc,
 } from '@/lib/queries'
 import {
   approversOf, cleanItems, orList, runsTrc, serves, stateLabel,
@@ -23,6 +23,7 @@ import Dialog from '@/components/Dialog'
 import LabOptions from '@/components/LabOptions'
 import { MediaCapture, type PendingPhoto } from '@/components/Attachments'
 import ItemsField, { newLine, type ItemLine } from '@/components/ItemsField'
+import CloseFirst from '@/components/CloseFirst'
 
 /**
  * Raising a ticket — the route card, on a screen.
@@ -47,6 +48,12 @@ import ItemsField, { newLine, type ItemLine } from '@/components/ItemsField'
  * or — for a warehouse's defective spare — the warehouse in-charge. A
  * warehouse card names the warehouse from a fixed list, and has no district,
  * BEMMP or ticket ID (rl_0020).
+ *
+ * A field engineer with a spare that came back and has waited past the days
+ * set for its state — not confirmed arriving, or not closed — is shown those
+ * tickets instead of the card, each opening its ticket (rl_0041). The
+ * database refuses their raise too. The desk is never held: its raise is for
+ * a spare already at its Revive Lab.
  */
 export default function NewTicket() {
   const { me, employee } = useAuth()
@@ -56,6 +63,7 @@ export default function NewTicket() {
   const { data: tickets } = useTickets()
   const { data: members } = useMembers()
   const { data: warehouses } = useWarehouses()
+  const { data: late, isLoading: checkingLate } = useOverdueReturns()
   const raise = useRaiseTicket()
 
   const active = useMemo(() => (trcs ?? []).filter(t => t.is_active), [trcs])
@@ -224,7 +232,20 @@ export default function NewTicket() {
     })
   }
 
-  if (isLoading) return <PageLoader />
+  if (isLoading || (!atLab && checkingLate)) return <PageLoader />
+
+  // Spares that came back and were left past their state's limit: those first (rl_0041).
+  if (!atLab && late && late.length > 0) {
+    return (
+      <div className="mx-auto max-w-3xl space-y-5">
+        <div>
+          <h1 className="text-xl font-semibold text-ink-900">Raise a ticket</h1>
+          <p className="mt-0.5 text-sm text-ink-500">Close the spares that came back to you, then raise a new one.</p>
+        </div>
+        <CloseFirst tickets={late} onClose={() => navigate('/tickets')} />
+      </div>
+    )
+  }
 
   const busy = stage !== 'idle'
 
