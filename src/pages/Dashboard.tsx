@@ -1,17 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import {
   Bar, BarChart, CartesianGrid, Cell, LabelList, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
-import { AlarmClock, ArrowRight, BellRing, Building2, ChartColumn, HardHat, Inbox, PackagePlus, TrendingUp, Users } from 'lucide-react'
+import { AlarmClock, ArrowRight, BellRing, Building2, ChartColumn, Check, HardHat, Inbox, PackagePlus, TrendingUp, Users } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useMembers, useMyTeam, useTickets, useTrcs, useVisibleEvents, type Ticket } from '@/lib/queries'
 import { dateTime as dateTimeOf, dayDate } from '@/lib/when'
 import {
   REPAIRING, STATUS, STATUS_ORDER, TONE_DOT, TONE_FILL, TONE_TEXT, canRaise, itemsSummary, observesOnly, statusGroups, ticketTabs, waitingOnMe,
 } from '@/lib/tickets'
-import { formatSpan, ticketTat, type TatEvent } from '@/lib/tat'
+import { formatSpan, ticketTat, type TatBreakdown, type TatEvent } from '@/lib/tat'
 import { EmptyState, PageLoader, ReturnedTag, SectorTag, StatTile, TransferTag, WarehouseChip } from '@/components/ui'
 import IconChip from '@/components/IconChip'
 import { CATEGORY_CLASS, ClassTag } from '@/components/Classification'
@@ -27,35 +27,40 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 const TREND_START = new Date(2026, 8, 26)
 
 type TrendBy = 'day' | 'week' | 'month' | 'year'
-const TREND_BY: ReadonlyArray<{ id: TrendBy; label: string; each: string }> = [
-  { id: 'day', label: 'Day', each: 'day' },
-  { id: 'week', label: 'Week', each: 'week' },
-  { id: 'month', label: 'Month', each: 'month' },
-  { id: 'year', label: 'Year', each: 'year' },
+const TREND_BY: ReadonlyArray<{ id: TrendBy; label: string }> = [
+  { id: 'day', label: 'Day' },
+  { id: 'week', label: 'Week' },
+  { id: 'month', label: 'Month' },
+  { id: 'year', label: 'Year' },
 ]
 
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
 /**
- * The stretches the trend is drawn over, oldest first: the last 30 days,
- * the last 12 weeks (Monday to Sunday), the last 12 months, or every year —
- * none before 26 Sep 2026, and the first cut to begin there, so nothing
- * closed before it counts.
+ * The stretches the trend is drawn over, oldest first: the 30 days before
+ * today, the last 12 weeks (Monday to Sunday), the last 12 months, or every
+ * year — none before 26 Sep 2026, and the first cut to begin there, so
+ * nothing closed before it counts. Today is left off: it is still filling,
+ * and its point read as a finished day (the user, 6 Oct: "current date on
+ * graph not needed"). Each has a label for the axis and a title for the
+ * readout under the pointer.
  */
-function trendBuckets(by: TrendBy, now: Date): Array<{ label: string; from: number; to: number }> {
+function trendBuckets(by: TrendBy, now: Date): Array<{ label: string; title: string; from: number; to: number }> {
   const start = TREND_START.getTime()
   const at = (y: number, m: number, d: number) => new Date(y, m, d)
   const dayLabel = (d: Date) => `${d.getDate()} ${MONTHS[d.getMonth()]}`
-  const raw: Array<{ from: Date; to: Date; label: (from: Date) => string }> = []
+  const raw: Array<{ from: Date; to: Date; label: (from: Date) => string; title?: (from: Date) => string }> = []
   if (by === 'day') {
-    for (let i = 29; i >= 0; i--) {
+    for (let i = 30; i >= 1; i--) {
       const d = at(now.getFullYear(), now.getMonth(), now.getDate() - i)
-      raw.push({ from: d, to: at(d.getFullYear(), d.getMonth(), d.getDate() + 1), label: dayLabel })
+      raw.push({ from: d, to: at(d.getFullYear(), d.getMonth(), d.getDate() + 1), label: dayLabel, title: f => `${WEEKDAYS[f.getDay()]}, ${dayLabel(f)}` })
     }
   } else if (by === 'week') {
     // This week's Monday.
     const monday = at(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7))
     for (let i = 11; i >= 0; i--) {
       const d = at(monday.getFullYear(), monday.getMonth(), monday.getDate() - 7 * i)
-      raw.push({ from: d, to: at(d.getFullYear(), d.getMonth(), d.getDate() + 7), label: dayLabel })
+      raw.push({ from: d, to: at(d.getFullYear(), d.getMonth(), d.getDate() + 7), label: dayLabel, title: f => `Week from ${dayLabel(f)}` })
     }
   } else if (by === 'month') {
     // "Sep 2026", in full: "Sep 26" read as the 26th.
@@ -72,7 +77,7 @@ function trendBuckets(by: TrendBy, now: Date): Array<{ label: string; from: numb
     .filter(b => b.to.getTime() > start)
     .map(b => {
       const from = b.from.getTime() < start ? TREND_START : b.from
-      return { label: b.label(from), from: from.getTime(), to: b.to.getTime() }
+      return { label: b.label(from), title: (b.title ?? b.label)(from), from: from.getTime(), to: b.to.getTime() }
     })
 }
 
@@ -98,6 +103,10 @@ export default function Dashboard() {
   const words = PERIODS.find(p => p.id === period)!.words
   // The TAT trend by the day, week, month or year tickets closed in (the user, 29 Sep).
   const [trendBy, setTrendBy] = useState<TrendBy>('month')
+  // Which stages the trend draws — kept for next time — and the one being pointed at on the card (the user, 6 Oct).
+  const [picked, setPicked] = useStagePick()
+  const [focus, setFocus] = useState<StageKey | null>(null)
+  const dark = useDark()
 
   const stats = useMemo(() => {
     /*
@@ -142,25 +151,28 @@ export default function Dashboard() {
     /*
       By the day, week, month or year each ticket closed in, as chosen on
       the card (the user, 29 Sep) — from September 2026, when Revive Lab
-      went live ("start tat trend from sep 26"), to now.
+      went live ("start tat trend from sep 26"), to now. Every stage of the
+      journey is worked out, whichever are shown, so ticking one on the card
+      draws it at once (the user, 6 Oct).
     */
-    const trend = trendBuckets(trendBy, now).map(({ label, from, to }) => {
-      const inMonth = closed.filter(t => {
+    const stagesOf = new Map<string, TatBreakdown>()
+    const tatOnce = (t: Ticket) => {
+      let v = stagesOf.get(t.id)
+      if (!v) { v = tatOf(t.id, t.trc_id); stagesOf.set(t.id, v) }
+      return v
+    }
+    const trend = trendBuckets(trendBy, now).map(({ label, title, from, to }) => {
+      const inBucket = closed.filter(t => {
         const c = Date.parse(t.closed_at!)
         return c >= from && c < to
       })
-      const avg = (pick: 'total' | 'repair' | 'reach') => {
-        const vals = inMonth.map(t => tatOf(t.id, t.trc_id)[pick].ms).filter((v): v is number => v !== null)
+      const point: TrendPoint = { month: label, title, closed: inBucket.length }
+      for (const s of TAT_STAGES) {
+        const vals = inBucket.map(t => tatOnce(t)[s.key].ms).filter((v): v is number => v !== null)
         // Days, unrounded: a label under a day reads in hours, and 0.1 of a day hid which (the user, 29 Sep).
-        return vals.length ? Math.round((vals.reduce((a, v) => a + v, 0) / vals.length / 86_400_000) * 1000) / 1000 : null
+        point[s.key] = vals.length ? Math.round((vals.reduce((a, v) => a + v, 0) / vals.length / 86_400_000) * 1000) / 1000 : null
       }
-      return {
-        month: label,
-        'End to end': avg('total'),
-        Repair: avg('repair'),
-        'Reach Revive Lab': avg('reach'),
-        closed: inMonth.length,
-      }
+      return point
     })
 
     return {
@@ -403,7 +415,7 @@ export default function Dashboard() {
           </div>
 
           <div className="card p-4">
-            <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
                 <IconChip icon={TrendingUp} tone="indigo" /> TAT trend
               </h3>
@@ -423,10 +435,8 @@ export default function Dashboard() {
                 ))}
               </div>
             </div>
-            <p className="mb-3 text-xs text-ink-500">
-              Average days, for tickets closed in each {TREND_BY.find(b => b.id === trendBy)!.each}: end to end, repair time with the Revive Lab engineer, and time to reach the Revive Lab — since 26 Sep 2026, when Revive Lab came into use.
-            </p>
-            <TrendChart data={stats.trend} />
+            <StageChips picked={picked} onPick={setPicked} onFocus={setFocus} dark={dark} />
+            <TrendChart data={stats.trend} picked={picked} focus={focus} dark={dark} />
           </div>
         </>
       )}
@@ -434,53 +444,185 @@ export default function Dashboard() {
   )
 }
 
-/** The three lines, in the order their labels win a place. Teal, not near-black: that was invisible on the dark theme. */
-const TREND_LINES = [
-  { key: 'End to end', color: '#0d9488' },
-  { key: 'Repair', color: '#4f46e5' },
-  { key: 'Reach Revive Lab', color: '#d97706' },
-] as const
+/**
+ * The stages of a ticket's journey, in the order it goes through them, each
+ * a line on the TAT trend (the user, 6 Oct: "all, reach revive lab, assigned,
+ * eng accepted, repair, dispatch, eng recieved, eng closed, end to end").
+ * Worked out in lib/tat.ts; `what` is said on the chip under the pointer.
+ *
+ * A stage keeps its colour whichever others are shown. The colours are the
+ * app's own (TONE_FILL). The three the chart already had are kept — Reach
+ * Revive Lab amber, Repair indigo, End to end teal — and the rest are chosen
+ * so that neighbours in this order stay apart for colour-blind readers too,
+ * in both themes (checked with the dataviz palette validator). Repair takes a
+ * lighter indigo on the dark card, where the light one is too dim. Eight
+ * lines cannot all be told apart by colour alone, so pointing at a stage's
+ * chip picks its line out, and the readout under the pointer names each one.
+ */
+const TAT_STAGES = [
+  { key: 'reach', name: 'Reach Revive Lab', color: '#d97706', what: 'From raised until the Revive Lab accepts it' },
+  { key: 'assign', name: 'Assigned', color: '#0284c7', what: 'From accepted until the coordinator assigns a Revive Lab engineer' },
+  { key: 'accept', name: 'Revive Lab engineer accepted', color: '#e11d48', what: 'From assigned until the Revive Lab engineer accepts the repair' },
+  { key: 'repair', name: 'Repair', color: '#4f46e5', dark: '#6366f1', what: 'From the engineer accepting it until the repair is closed, less any wait for components' },
+  { key: 'out', name: 'Dispatch', color: '#65a30d', what: 'From the repair closed until it is dispatched' },
+  { key: 'back', name: 'Field engineer received', color: '#c026d3', what: 'From dispatched until the field engineer has it back' },
+  { key: 'close', name: 'Field engineer closed', color: '#ea580c', what: 'From the field engineer having it back until they close the ticket' },
+  { key: 'total', name: 'End to end', color: '#0d9488', what: 'From raised until the field engineer has it back' },
+] as const satisfies ReadonlyArray<{ key: Exclude<keyof TatBreakdown, 'legs'>; name: string; color: string; dark?: string; what: string }>
+
+type Stage = (typeof TAT_STAGES)[number]
+type StageKey = Stage['key']
+const stageColor = (s: Stage, dark: boolean) => (dark && 'dark' in s ? s.dark : s.color)
+/** What the chart showed before there was a choice. */
+const DEFAULT_STAGES: StageKey[] = ['reach', 'repair', 'total']
+const PICK_KEY = 'revive.tatStages'
+
+/** The stages ticked, kept on this device for next time. */
+function useStagePick(): [Set<StageKey>, (next: Set<StageKey>) => void] {
+  const [picked, setPicked] = useState<Set<StageKey>>(() => {
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem(PICK_KEY) ?? 'null')
+      if (Array.isArray(saved)) return new Set(TAT_STAGES.map(s => s.key).filter(k => saved.includes(k)))
+    } catch {
+      // Unreadable: start from the usual three.
+    }
+    return new Set(DEFAULT_STAGES)
+  })
+  const pick = (next: Set<StageKey>) => {
+    setPicked(next)
+    try { localStorage.setItem(PICK_KEY, JSON.stringify([...next])) } catch { /* kept for this visit only */ }
+  }
+  return [picked, pick]
+}
+
+/** Whether the page is dark now: the root carries `dark` whichever way it got there (lib/theme.ts). */
+function useDark(): boolean {
+  const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'))
+  useEffect(() => {
+    const root = document.documentElement
+    const watch = new MutationObserver(() => setDark(root.classList.contains('dark')))
+    watch.observe(root, { attributes: true, attributeFilter: ['class'] })
+    return () => watch.disconnect()
+  }, [])
+  return dark
+}
+
+/**
+ * The stages as ticks, which are also the chart's legend: each box is its
+ * line's colour. All first; End to end last, a little apart, because it is
+ * the whole journey rather than a step of it — space rather than a rule,
+ * which would be left hanging at the end of a line where the row wraps. One
+ * row on a computer; one row that scrolls on a phone.
+ */
+function StageChips({ picked, onPick, onFocus, dark }: {
+  picked: Set<StageKey>; onPick: (next: Set<StageKey>) => void; onFocus: (k: StageKey | null) => void; dark: boolean
+}) {
+  const all = picked.size === TAT_STAGES.length
+  const toggle = (k: StageKey) => {
+    const next = new Set(picked)
+    if (next.has(k)) next.delete(k)
+    else next.add(k)
+    onPick(next)
+  }
+  const rule = <span aria-hidden className="mx-0.5 h-5 w-px shrink-0 bg-ink-200" />
+  return (
+    <div role="group" aria-label="Stages to show" className="nav-scroll -mx-4 mb-3 mt-2 flex items-center gap-1 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:px-0">
+      <StageChip
+        label="All" color={null} on={all} mixed={!all && picked.size > 0}
+        onClick={() => onPick(all ? new Set() : new Set(TAT_STAGES.map(s => s.key)))}
+      />
+      {rule}
+      {TAT_STAGES.map(s => (
+        <Fragment key={s.key}>
+          {s.key === 'total' && <span aria-hidden className="w-1.5 shrink-0" />}
+          <StageChip
+            label={s.name} title={s.what} color={stageColor(s, dark)} on={picked.has(s.key)}
+            onClick={() => toggle(s.key)} onHover={on => onFocus(on ? s.key : null)}
+          />
+        </Fragment>
+      ))}
+    </div>
+  )
+}
+
+function StageChip({ label, title, color, on, mixed = false, onClick, onHover }: {
+  label: string; title?: string; color: string | null; on: boolean; mixed?: boolean; onClick: () => void; onHover?: (on: boolean) => void
+}) {
+  // A stage's box is its line's colour; All's is ink.
+  const box = color ?? 'rgb(var(--ink-900))'
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={mixed ? 'mixed' : on}
+      title={title}
+      onClick={onClick}
+      onMouseEnter={onHover && (() => onHover(true))}
+      onMouseLeave={onHover && (() => onHover(false))}
+      onFocus={onHover && (() => onHover(true))}
+      onBlur={onHover && (() => onHover(false))}
+      className={clsx(
+        'btn-press inline-flex shrink-0 items-center gap-1.5 rounded-full border py-1.5 pl-1.5 pr-2.5 text-xs font-medium transition-colors',
+        on || mixed ? 'border-ink-300 bg-surface text-ink-900 shadow-sm' : 'border-ink-200 text-ink-500 hover:border-ink-300 hover:text-ink-800',
+      )}
+    >
+      <span
+        aria-hidden
+        className="grid h-4 w-4 shrink-0 place-items-center rounded-[5px] border-[1.5px] transition-colors"
+        style={{ borderColor: color || on || mixed ? box : 'rgb(var(--ink-400))', background: on ? box : 'transparent' }}
+      >
+        {on && <Check className="h-3 w-3" strokeWidth={3.5} style={{ color: color ? '#ffffff' : 'rgb(var(--surface))' }} />}
+        {mixed && <span className="h-[2px] w-2 rounded-full" style={{ background: box }} />}
+      </span>
+      {label}
+    </button>
+  )
+}
 
 type TrendPoint = Record<string, string | number | null>
 
+/** End to end first, then the journey in order: the order labels win a place in. */
+const labelOrder = (shown: readonly Stage[]) => [...shown.filter(s => s.key === 'total'), ...shown.filter(s => s.key !== 'total')]
+
 /**
- * The axis: four even steps to a top a quarter above the highest point, so
- * the highest label has room and the ticks read 0, 2, 4, 6, 8 — not 0, 2, 5.
+ * The axis: four even steps to a top a quarter above the highest point shown,
+ * so the highest label has room and the ticks read 0, 2, 4, 6, 8 — not 0, 2, 5.
  */
-function trendAxis(data: readonly TrendPoint[]): { top: number; ticks: number[] } {
-  const max = Math.max(0, ...data.flatMap(d => TREND_LINES.map(l => d[l.key])).filter((v): v is number => typeof v === 'number'))
+function trendAxis(data: readonly TrendPoint[], shown: readonly Stage[]): { top: number; ticks: number[] } {
+  const max = Math.max(0, ...data.flatMap(d => shown.map(s => d[s.key])).filter((v): v is number => typeof v === 'number'))
   const want = Math.max(max * 1.25, 0.4)
   const step = [0.1, 0.25, 0.5, 1, 2, 5, 10, 25, 50, 100].find(s => s * 4 >= want) ?? Math.ceil(want / 4)
   return { top: step * 4, ticks: [0, 1, 2, 3, 4].map(i => Math.round(i * step * 100) / 100) }
 }
+
+/** The chart's frame, which the label placement below has to match (TrendChart). */
+const CHART = { height: 256, top: 8, right: 16, axisW: 44, axisH: 30 }
 
 /**
  * Which points carry their value (the user, 29 Sep: "show data labels
  * beautifully also, but if congested dont show … in mobile we dont need").
  * None on a phone. Otherwise each label is placed where it would sit —
  * above its point, in the chart's own geometry — and kept only if it
- * touches no label already placed and no point: End to end first, then
- * repair, then reaching the Revive Lab.
+ * touches no label already placed and no point; lines in `lines`' order.
  */
-function trendLabels(data: readonly TrendPoint[], width: number, top: number): Set<string> {
+function trendLabels(data: readonly TrendPoint[], width: number, top: number, lines: readonly Stage[]): Set<string> {
   const show = new Set<string>()
-  if (width < 640 || data.length === 0) return show
-  // The LineChart's layout: 50px of axis on the left, 16 on the right; 190px of plot under a 5px margin.
-  const x0 = 50
-  const plotW = width - x0 - 16
-  const plotH = 190
+  if (width < 640 || data.length === 0 || lines.length === 0) return show
+  const x0 = CHART.axisW
+  const plotW = width - x0 - CHART.right
+  const plotH = CHART.height - CHART.top - CHART.axisH
   const xAt = (i: number) => x0 + (data.length === 1 ? plotW / 2 : (i * plotW) / (data.length - 1))
-  const yAt = (v: number) => 5 + plotH * (1 - v / top)
+  const yAt = (v: number) => CHART.top + plotH * (1 - v / top)
   type Box = { l: number; r: number; t: number; b: number }
   const placed: Box[] = []
   // Every point is somewhere a label may not cover.
-  for (const line of TREND_LINES) {
+  for (const line of lines) {
     data.forEach((d, i) => {
       const v = d[line.key]
-      if (typeof v === 'number') placed.push({ l: xAt(i) - 4, r: xAt(i) + 4, t: yAt(v) - 4, b: yAt(v) + 4 })
+      if (typeof v === 'number') placed.push({ l: xAt(i) - 5, r: xAt(i) + 5, t: yAt(v) - 5, b: yAt(v) + 5 })
     })
   }
-  for (const line of TREND_LINES) {
+  for (const line of lines) {
     data.forEach((d, i) => {
       const v = d[line.key]
       if (typeof v !== 'number') return
@@ -495,16 +637,15 @@ function trendLabels(data: readonly TrendPoint[], width: number, top: number): S
 }
 
 /** 1.2d; under a day in hours, 10h; under an hour, <1h (the user, 29 Sep: "if less that day can we show as hours?"). */
-const spanLabel = (days: number): string =>
-  days >= 1 ? `${Math.round(days * 10) / 10}d` : days * 24 >= 1 ? `${Math.round(days * 24)}h` : '<1h'
-
-/** The same, in words, for the tooltip. */
-const spanWords = (days: number): string =>
-  days >= 1 ? `${Math.round(days * 10) / 10} days` : days * 24 >= 1 ? `${Math.round(days * 24)} hours` : 'under an hour'
+const spanLabel = (days: number): string => {
+  // 23.6 hours rounds to a day, and says so: "24h" sat beside "1d" for the same span.
+  const hours = Math.round(days * 24)
+  return days >= 1 || hours >= 24 ? `${Math.max(1, Math.round(days * 10) / 10)}d` : hours >= 1 ? `${hours}h` : '<1h'
+}
 
 const labelWidth = (v: number) => 10 + 6 * spanLabel(v).length
 
-/** The value above its point, in a pill of its line's colour. */
+/** The value above its point: ink on a pill of its line's colour. */
 function TrendLabel({ x, y, value, index, name, color, show }: {
   x?: number | string; y?: number | string; value?: unknown; index?: number; name: string; color: string; show: Set<string>
 }) {
@@ -512,9 +653,43 @@ function TrendLabel({ x, y, value, index, name, color, show }: {
   const w = labelWidth(value)
   return (
     <g pointerEvents="none">
-      <rect x={x - w / 2} y={y - 26} width={w} height={16} rx={8} fill={color} fillOpacity={0.16} stroke={color} strokeOpacity={0.45} />
-      <text x={x} y={y - 14.5} textAnchor="middle" fontSize={10.5} fontWeight={600} fill={color}>{spanLabel(value)}</text>
+      <rect x={x - w / 2} y={y - 26} width={w} height={16} rx={8} fill={color} fillOpacity={0.14} stroke={color} strokeOpacity={0.5} />
+      <text x={x} y={y - 14.5} textAnchor="middle" fontSize={10.5} fontWeight={600} style={{ fill: 'rgb(var(--ink-800))' }}>{spanLabel(value)}</text>
     </g>
+  )
+}
+
+/**
+ * Under the pointer: the day (or week, month, year), every stage shown with
+ * its value first, in the order of the journey, and how many tickets closed.
+ */
+function TrendTip({ active, payload, shown, dark }: {
+  active?: boolean; payload?: ReadonlyArray<{ payload?: unknown }>; shown: readonly Stage[]; dark: boolean
+}) {
+  const p = active ? (payload?.[0]?.payload as TrendPoint | undefined) : undefined
+  if (!p) return null
+  const n = Number(p.closed ?? 0)
+  return (
+    <div className="min-w-[13rem] rounded-xl border border-ink-200 bg-surface px-3.5 py-3 text-xs shadow-lg">
+      <p className="font-semibold text-ink-900">{String(p.title ?? p.month)}</p>
+      {n > 0 && (
+      <ul className="mt-2 space-y-1.5">
+        {shown.map(s => {
+          const v = p[s.key]
+          return (
+            <li key={s.key} className="flex items-center gap-2.5">
+              <span aria-hidden className="h-[3px] w-3.5 shrink-0 rounded-full" style={{ background: stageColor(s, dark) }} />
+              <span className="w-10 shrink-0 font-semibold tabular-nums text-ink-900">{typeof v === 'number' ? spanLabel(v) : '—'}</span>
+              <span className="text-ink-500">{s.name}</span>
+            </li>
+          )
+        })}
+      </ul>
+      )}
+      <p className={clsx('text-ink-500', n > 0 ? 'mt-2.5 border-t border-ink-100 pt-2' : 'mt-1')}>
+        {n === 0 ? 'No tickets closed' : n === 1 ? '1 ticket closed' : `${n} tickets closed`}
+      </p>
+    </div>
   )
 }
 
@@ -532,29 +707,59 @@ function useWidth<T extends HTMLElement>(): [React.RefObject<T>, number] {
   return [ref, width]
 }
 
-function TrendChart({ data }: { data: TrendPoint[] }) {
+/**
+ * The lines ticked on the card, in their own colours. Pointing at a stage's
+ * chip picks its line out — the others fade — and carries that line's values.
+ */
+function TrendChart({ data, picked, focus, dark }: { data: TrendPoint[]; picked: Set<StageKey>; focus: StageKey | null; dark: boolean }) {
   const [ref, width] = useWidth<HTMLDivElement>()
-  const { top, ticks } = useMemo(() => trendAxis(data), [data])
-  const show = useMemo(() => trendLabels(data, width, top), [data, width, top])
+  const shown = useMemo(() => TAT_STAGES.filter(s => picked.has(s.key)), [picked])
+  const lit = focus && picked.has(focus) ? focus : null
+  const { top, ticks } = useMemo(() => trendAxis(data, shown), [data, shown])
+  const show = useMemo(
+    () => trendLabels(data, width, top, lit ? shown.filter(s => s.key === lit) : labelOrder(shown)),
+    [data, width, top, shown, lit],
+  )
+  // The dots' ring is the card's own colour, so a dot stays clear where lines cross.
+  const ring = dark ? '#17181c' : '#ffffff'
+  const still = typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+
+  // One frame either way, so its width is measured from the start.
   return (
-    <div ref={ref} className="h-64">
+    <div ref={ref} className="tat-trend h-64">
+      {shown.length === 0 ? (
+        <div className="grid h-full place-items-center rounded-xl border border-dashed border-ink-200 text-sm text-ink-500">
+          Tick a stage above to see its trend.
+        </div>
+      ) : (
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ left: -10, right: 16 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#eceef2" vertical={false} />
-          <XAxis dataKey="month" tick={TICK} />
-          <YAxis tick={TICK} domain={[0, top]} ticks={ticks} />
-          <Tooltip
-            contentStyle={TOOLTIP}
-            formatter={(v: unknown) => (typeof v === 'number' ? spanWords(v) : '—')}
+        <LineChart data={data} margin={{ top: CHART.top, right: CHART.right, left: 0, bottom: 0 }}>
+          <CartesianGrid vertical={false} />
+          <XAxis dataKey="month" tick={TICK} tickLine={false} height={CHART.axisH} />
+          <YAxis
+            tick={TICK} domain={[0, top]} ticks={ticks} width={CHART.axisW} axisLine={false} tickLine={false}
+            tickFormatter={(v: number) => (v === 0 ? '0' : spanLabel(v))}
           />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
-          {TREND_LINES.map(l => (
-            <Line key={l.key} type="monotone" dataKey={l.key} stroke={l.color} strokeWidth={2} dot={{ r: 3 }} connectNulls>
-              <LabelList dataKey={l.key} content={p => <TrendLabel {...p} name={l.key} color={l.color} show={show} />} />
-            </Line>
-          ))}
+          {/* filterNull off: a day nothing closed on still says so, rather than showing nothing. */}
+          <Tooltip filterNull={false} cursor={{ strokeWidth: 1 }} content={p => <TrendTip active={p.active} payload={p.payload} shown={shown} dark={dark} />} />
+          {shown.map(s => {
+            const c = stageColor(s, dark)
+            const faded = lit !== null && lit !== s.key
+            return (
+              <Line
+                key={s.key} type="monotone" dataKey={s.key} name={s.name} stroke={c}
+                strokeWidth={lit === s.key ? 2.75 : 2} strokeOpacity={faded ? 0.15 : 1}
+                dot={faded ? false : { r: 3.5, fill: c, stroke: ring, strokeWidth: 2 }}
+                activeDot={faded ? false : { r: 5, fill: c, stroke: ring, strokeWidth: 2 }}
+                connectNulls isAnimationActive={!still} animationDuration={600}
+              >
+                <LabelList dataKey={s.key} content={p => <TrendLabel {...p} name={s.key} color={c} show={show} />} />
+              </Line>
+            )
+          })}
         </LineChart>
       </ResponsiveContainer>
+      )}
     </div>
   )
 }

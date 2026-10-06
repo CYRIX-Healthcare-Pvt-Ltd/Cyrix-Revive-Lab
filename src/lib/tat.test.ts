@@ -371,3 +371,81 @@ describe('ticketTat — a closed repair sent back or reopened (rl_0034, rl_0037)
     expect(tat.dispatch).toEqual({ ms: D, running: true })
   })
 })
+
+describe('ticketTat — each stage of the TAT trend (the user, 6 Oct)', () => {
+  const trail = [
+    ev('pending_acceptance', 0),
+    ev('accepted', 2 * D),                  // reach the Revive Lab: 2 days
+    ev('assigned', 2 * D + 4 * H),          // assigned: 4 hours
+    ev('in_repair', 3 * D),                 // engineer accepted: 20 hours
+    ev('repaired', 5 * D),                  // repair: 2 days
+    ev('in_transit_return', 5 * D + 2 * H), // dispatch: 2 hours
+    ev('received_back', 7 * D),             // engineer received: 1 day 22 hours
+    ev('closed', 8 * D),                    // engineer closed: 1 day
+  ]
+  const tat = ticketTat(trail, 'A', T0 + 20 * D)
+
+  it('measures each, one after another', () => {
+    expect(tat.reach.ms).toBe(2 * D)
+    expect(tat.assign.ms).toBe(4 * H)
+    expect(tat.accept).toEqual({ ms: 20 * H, running: false })
+    expect(tat.repair.ms).toBe(2 * D)
+    expect(tat.out).toEqual({ ms: 2 * H, running: false })
+    expect(tat.back).toEqual({ ms: D + 22 * H, running: false })
+    expect(tat.close).toEqual({ ms: D, running: false })
+  })
+
+  it('keeps dispatch as the two together, and the total stopping when the field engineer has it', () => {
+    expect(tat.dispatch.ms).toBe(tat.out.ms! + tat.back.ms!)
+    expect(tat.total).toEqual({ ms: 7 * D, running: false })
+  })
+
+  it('a scrapped spare is dispatched to scrap, and never comes back', () => {
+    const s = ticketTat([
+      ev('pending_acceptance', 0), ev('accepted', D), ev('assigned', D), ev('in_repair', 2 * D), ev('not_repairable', 3 * D), ev('closed', 4 * D),
+    ], 'A', T0 + 9 * D)
+    expect(s.out).toEqual({ ms: D, running: false })
+    expect(s.back.ms).toBeNull()
+    expect(s.close.ms).toBeNull()
+  })
+
+  it("a warehouse's in-charge receiving it closes it: received, and nothing after", () => {
+    const w = ticketTat([
+      ev('accepted', 0), ev('assigned', H), ev('in_repair', 2 * H), ev('repaired', D), ev('in_transit_return', D + H), ev('closed', 3 * D),
+    ], 'A', T0 + 9 * D)
+    expect(w.back).toEqual({ ms: 2 * D - H, running: false })
+    expect(w.close.ms).toBeNull()
+  })
+
+  it('runs the stage under way to now', () => {
+    const now = ticketTat(trail.slice(0, 6), 'A', T0 + 6 * D)
+    expect(now.back).toEqual({ ms: D - 2 * H, running: true })
+    expect(now.close.ms).toBeNull()
+  })
+
+  it('a round sent back not working has no closing of its own; the round after does', () => {
+    const r = ticketTat([
+      ev('pending_acceptance', 0), ev('accepted', D), ev('assigned', D), ev('in_repair', 2 * D), ev('repaired', 3 * D),
+      ev('in_transit_return', 3 * D), ev('received_back', 5 * D), ev('pending_acceptance', 6 * D),
+      ev('accepted', 7 * D), ev('assigned', 7 * D), ev('in_repair', 7 * D), ev('repaired', 8 * D),
+      ev('in_transit_return', 8 * D), ev('received_back', 10 * D), ev('closed', 10 * D + H),
+    ], 'A', T0 + 20 * D)
+    expect(r.legs[0].close.ms).toBeNull()
+    expect(r.legs[1].close).toEqual({ ms: H, running: false })
+    expect(r.close).toEqual({ ms: H, running: false })
+    expect(r.back).toEqual({ ms: 4 * D, running: false })
+  })
+
+  it('gives the stages after repair only to the last Revive Lab of a transfer', () => {
+    const t = ticketTat([
+      ev('pending_acceptance', 0, 'A'), ev('accepted', D, 'A'), ev('assigned', D + 2 * H, 'A'), ev('in_repair', 2 * D, 'A'),
+      ev('transferred', 3 * D, 'A'), ev('accepted', 5 * D, 'B'), ev('assigned', 5 * D + H, 'B'), ev('in_repair', 6 * D, 'B'),
+      ev('repaired', 7 * D, 'B'), ev('in_transit_return', 7 * D + H, 'B'), ev('received_back', 9 * D, 'B'), ev('closed', 9 * D + 2 * H, 'B'),
+    ], 'B', T0 + 30 * D)
+    expect(t.legs[0].out.ms).toBeNull()
+    expect(t.legs[0].accept).toEqual({ ms: 22 * H, running: false })
+    expect(t.accept.ms).toBe(22 * H + 23 * H)
+    expect(t.out).toEqual({ ms: H, running: false })
+    expect(t.close).toEqual({ ms: 2 * H, running: false })
+  })
+})

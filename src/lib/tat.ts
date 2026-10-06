@@ -31,6 +31,18 @@
  *             Kept out of every stage above — none of them could move — and
  *             reported on its own
  *
+ * And finer, for the dashboard's TAT trend, a stage a line (the user, 6 Oct:
+ * "reach revive lab, assigned, eng accepted, repair, dispatch, eng recieved,
+ * eng closed, end to end"):
+ *   accept    given to an engineer → the engineer accepts the repair
+ *   out       repair closed → dispatched (or moved to scrap); the first part
+ *             of dispatch above
+ *   back      dispatched → the field engineer has it back (a warehouse's
+ *             in-charge, closing it); the rest of dispatch above
+ *   close     the field engineer has it back → closes the ticket. Not part of
+ *             the total, which stops when they have it; and none on a round
+ *             they sent back instead of closing
+ *
  * A repair closes as repaired, not repairable or denied by the customer;
  * any of the three ends the repair stage.
  *
@@ -59,9 +71,13 @@ export interface Leg {
   endedBy: 'transfer' | 'closed' | 'returned' | null
   reach: Span
   assign: Span
+  accept: Span
   repair: Span
   parts: Span
   dispatch: Span
+  out: Span
+  back: Span
+  close: Span
   approval: Span
   total: Span
 }
@@ -70,9 +86,13 @@ export interface TatBreakdown {
   legs: Leg[]
   reach: Span
   assign: Span
+  accept: Span
   repair: Span
   parts: Span
   dispatch: Span
+  out: Span
+  back: Span
+  close: Span
   approval: Span
   total: Span
 }
@@ -129,7 +149,10 @@ export function ticketTat(
 ): TatBreakdown {
   const sorted = [...events].sort((a, b) => t(a.at) - t(b.at))
   if (sorted.length === 0) {
-    return { legs: [], reach: NONE, assign: NONE, repair: NONE, parts: NONE, dispatch: NONE, approval: NONE, total: NONE }
+    return {
+      legs: [], reach: NONE, assign: NONE, accept: NONE, repair: NONE, parts: NONE, dispatch: NONE, out: NONE, back: NONE, close: NONE,
+      approval: NONE, total: NONE,
+    }
   }
 
   // Cut the trail into legs at every transfer, and wherever the field
@@ -168,6 +191,9 @@ export function ticketTat(
     const accepted = first('accepted')
     const assigned = first('assigned')
     const inRepair = first('in_repair')
+    const dispatched = first('in_transit_return')
+    const received = first('received_back')
+    const closedEvent = first('closed')
     // The close that stands. A repair sent back to be repaired — by a
     // manager (rl_0034), or reopened by the software administrator
     // (rl_0037) — is in repair until it is closed again.
@@ -218,9 +244,14 @@ export function ticketTat(
       // discarded before any Revive Lab had it did not keep reaching one.
       reach: less(span(reachFrom, accepted, end, now), reachFrom, holds, heldNow),
       assign: less(span(accepted, assigned, end, now), accepted, holds, heldNow),
+      accept: less(span(assigned, inRepair, end, now), assigned, holds, heldNow),
       repair,
       parts: partsMs > 0 || partsRunning ? { ms: partsMs, running: partsRunning } : NONE,
       dispatch: ch.end ? NONE : span(repaired, closedAt, null, now),
+      // Dispatch, in two: until it left (a scrap closes without leaving), then until it was back.
+      out: ch.end ? NONE : span(repaired, dispatched ?? (repaired ? closedEvent : undefined), null, now),
+      back: ch.end ? NONE : span(dispatched, received ?? closedEvent, null, now),
+      close: ch.end || ch.returned ? NONE : span(received, closedEvent, null, now),
       approval: holds.length ? { ms: approvalMs, running: heldNow } : NONE,
       total: span(ch.start, end ?? undefined, null, now),
     }
@@ -235,9 +266,13 @@ export function ticketTat(
     legs,
     reach: sum(legs.map(l => l.reach)),
     assign: sum(legs.map(l => l.assign)),
+    accept: sum(legs.map(l => l.accept)),
     repair: sum(legs.map(l => l.repair)),
     parts: sum(legs.map(l => l.parts)),
     dispatch: sum(legs.map(l => l.dispatch)),
+    out: sum(legs.map(l => l.out)),
+    back: sum(legs.map(l => l.back)),
+    close: sum(legs.map(l => l.close)),
     approval: sum(legs.map(l => l.approval)),
     total: span(raised, closed, null, now),
   }

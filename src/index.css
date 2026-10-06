@@ -1344,6 +1344,17 @@
 .recharts-tooltip-item {
   color: rgb(var(--ink-900)) !important;
 }
+/* The line that follows the pointer across a chart. */
+.recharts-tooltip-cursor {
+  stroke: rgb(var(--ink-300));
+}
+/* The TAT trend: a stage picked out on its chip fades the other lines, easing rather than jumping. */
+.tat-trend .recharts-line-curve {
+  transition: stroke-opacity 160ms ease, stroke-width 160ms ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tat-trend .recharts-line-curve { transition: none; }
+}
 
 /*
  * The company lockup.
