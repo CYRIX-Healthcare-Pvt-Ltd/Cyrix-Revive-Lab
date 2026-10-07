@@ -40,8 +40,8 @@ export default function App() {
           <Route path="tickets/:code" element={<TicketDetail />} />
           <Route path="new" element={canRaise(me) ? <NewTicket /> : <Navigate to="/" replace />} />
           <Route path="access" element={me?.is_admin ? <Access /> : <Navigate to="/" replace />} />
-          {/* Coordinators, managers and admins; Purchase for its requests. */}
-          <Route path="components" element={me && (me.is_coordinator || me.is_manager || me.is_admin || me.is_purchase) ? <Components /> : <Navigate to="/" replace />} />
+          {/* Coordinators, managers and admins; Purchase for its requests; a Revive Lab engineer for their component requests (rl_0044). */}
+          <Route path="components" element={me && (me.is_coordinator || me.is_manager || me.is_admin || me.is_purchase || me.is_engineer) ? <Components /> : <Navigate to="/" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

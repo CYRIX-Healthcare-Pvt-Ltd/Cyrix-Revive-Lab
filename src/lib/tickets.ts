@@ -428,10 +428,11 @@ export type PartRoute = 'local' | 'purchase'
  * A component request's journey (rl_0016). Everything asked for reaches the
  * coordinator first: they buy it locally, or pass it to Purchase. Whoever
  * buys it attaches the bill; the coordinator then writes it into the Revive
- * Lab's stock and sends it to the engineer, who confirms it.
+ * Lab's stock and sends it to the engineer, who confirms it. A request for
+ * the stock, with no ticket (PR-01 on, rl_0044), ends there: stocked.
  */
 export type PartStatus =
-  | 'requested' | 'forwarded' | 'accepted' | 'bought' | 'sent' | 'received' | 'declined' | 'cancelled'
+  | 'requested' | 'forwarded' | 'accepted' | 'bought' | 'sent' | 'received' | 'stocked' | 'declined' | 'cancelled'
 
 export interface PartSummary {
   id: string
@@ -466,6 +467,7 @@ export const PART_STATUS: Record<PartStatus, { label: string; tone: Tone }> = {
   bought: { label: 'Purchased — to go into stock', tone: 'violet' },
   sent: { label: 'Sent — engineer to confirm', tone: 'cyan' },
   received: { label: 'Confirmed', tone: 'green' },
+  stocked: { label: 'In stock', tone: 'green' },
   declined: { label: 'Declined', tone: 'rose' },
   cancelled: { label: 'Cancelled', tone: 'slate' },
 }
@@ -550,6 +552,23 @@ export function buysFor(me: Me | null | undefined, trcId: string): boolean {
 /** Who buys a request: the desk for a local purchase, Purchase for a purchase. */
 export function handlesPart(me: Me | null | undefined, route: PartRoute, trcId: string): boolean {
   return route === 'local' ? runsTrc(me, trcId) : buysFor(me, trcId)
+}
+
+/**
+ * May ask for a component for that Revive Lab's stock, with no ticket under
+ * it (rl_0044; the user, 7 Oct: "TRC eng, or coordinator"): its engineers,
+ * and its desk.
+ */
+export function requestsStockAt(me: Me | null | undefined, trcId: string): boolean {
+  return runsTrc(me, trcId) || (!!me && me.is_engineer && me.trc_ids.includes(trcId))
+}
+
+/** Requests for the stock waiting on this person: to take on, order, or add to stock. */
+export function stockRequestsWaitingOn(
+  requests: ReadonlyArray<{ ticket_id: string | null; trc_id: string; route: PartRoute; status: PartStatus }>,
+  me: Me | null | undefined,
+): number {
+  return requests.filter(r => r.ticket_id === null && partActor(r, me, r.trc_id, null)).length
 }
 
 /**

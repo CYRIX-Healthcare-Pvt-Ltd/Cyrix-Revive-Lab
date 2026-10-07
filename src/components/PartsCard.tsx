@@ -255,8 +255,8 @@ function StockUseItem({ use: u, desk, isAsker, onDecline, onNotice }: {
   )
 }
 
-function RequestItem({
-  r, links, mine, desk, buyer, isEngineer, onBill, onOrder, onStock, onDecline, onView, onNotice,
+export function RequestItem({
+  r, links, mine, desk, buyer, isEngineer, isAsker = false, head, onBill, onOrder, onStock, onDecline, onView, onNotice,
 }: {
   r: PartRequest
   links: Record<string, string>
@@ -265,6 +265,10 @@ function RequestItem({
   desk: boolean
   buyer: boolean
   isEngineer: boolean
+  /** Asked for it: on a request for the stock (rl_0044), the one who may cancel it. */
+  isAsker?: boolean
+  /** Above it, where a list of them needs to say which it is: PR-01, for Cochin's stock. */
+  head?: ReactNode
   onBill: () => void
   onOrder: () => void
   onStock: () => void
@@ -295,6 +299,17 @@ function RequestItem({
     ...(r.stocked_at ? [[<>Into stock by {r.stocked_by_name} as <span className="font-mono text-ink-700">{r.part_no}</span>{r.bought_qty ? <> · {r.bought_qty} purchased</> : null}</>, r.stocked_at] as [ReactNode, string]] : []),
     ...(r.received_at ? [[<>Confirmed by {r.received_by_name}</>, r.received_at] as [ReactNode, string]] : []),
   ]
+  // A request for the stock keeps the rest in its own history (rl_0044): passed on, handed back, cancelled, and why.
+  const pr = r.ticket_id === null
+  if (pr) {
+    for (const ev of r.events) {
+      const why = ev.note ? <>: <span className="text-ink-700">{ev.note}</span></> : null
+      if (ev.action === 'forwarded') steps.push([<>Passed to Purchase by {ev.who}{why}</>, ev.at])
+      else if (ev.action === 'handed_back') steps.push([<>Handed back by {ev.who}{why}</>, ev.at])
+      else if (ev.action === 'cancelled') steps.push([<>Cancelled by {ev.who}{why}</>, ev.at])
+    }
+    steps.sort((a, b) => Date.parse(a[1] ?? '') - Date.parse(b[1] ?? ''))
+  }
 
   // Whoever it is with now, and the ways out for the engineer who asked.
   // The coordinator takes a local purchase on; Purchase goes straight to the order (rl_0019).
@@ -306,13 +321,14 @@ function RequestItem({
   const canProgress = desk && r.status === 'accepted' && r.route === 'local'
   const canStock = desk && r.status === 'bought'
   const canDecline = (desk && ['requested', 'accepted'].includes(r.status)) || (buyer && ['forwarded', 'accepted'].includes(r.status))
-  const canConfirm = isEngineer && r.status === 'sent'
-  const canCancel = isEngineer && ['requested', 'forwarded', 'accepted'].includes(r.status)
+  const canConfirm = !pr && isEngineer && r.status === 'sent'
+  const canCancel = (pr ? isAsker : isEngineer) && ['requested', 'forwarded', 'accepted'].includes(r.status)
   const anyAction = canTake || canForward || canMakeLocal || canOrder || canBill || canProgress || canStock || canDecline
     || canConfirm || canCancel
 
   return (
     <li className="rounded-lg border border-ink-200 p-3">
+      {head && <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-ink-100 pb-2 text-sm">{head}</div>}
       <div className="flex flex-wrap items-start gap-3">
         {photo && (
           <button type="button" onClick={() => onView([photo], 0)} className="h-14 w-14 shrink-0 overflow-hidden rounded-md border border-ink-200" aria-label="View the component photo">
@@ -403,7 +419,7 @@ function RequestItem({
           )}
           {canStock && (
             <button type="button" className="btn-primary !py-1.5 text-sm" disabled={busy} onClick={onStock}>
-              <PackagePlus className="h-4 w-4 text-violet-400" /> Add to stock and send to {asker(r)}
+              <PackagePlus className="h-4 w-4 text-violet-400" /> {pr ? 'Add to stock' : <>Add to stock and send to {asker(r)}</>}
             </button>
           )}
           {canDecline && (
@@ -434,8 +450,9 @@ function RequestItem({
  * added and its total put in the amount box — a suggestion to check against
  * the photo, not a figure to trust.
  */
-function BillDialog({ ticket: t, request: r, onClose, onDone }: {
-  ticket: Ticket
+export function BillDialog({ ticket: t, request: r, onClose, onDone }: {
+  /** Its ticket; none on a request for the stock (rl_0044). */
+  ticket?: Ticket | null
   request: PartRequest
   onClose: () => void
   onDone: (message: string) => void
@@ -477,10 +494,10 @@ function BillDialog({ ticket: t, request: r, onClose, onDone }: {
     if (!amount.trim() || !Number.isFinite(n) || n < 0) { setError('Enter the bill amount.'); return }
     try {
       await purchase.mutateAsync({
-        ticketId: t.id, id: r.id, amount: n, bills: pages.map(p => p.blob),
+        ticketId: r.ticket_id, id: r.id, amount: n, bills: pages.map(p => p.blob),
         billNo: billNo.trim(), vendor: vendor.trim(),
       })
-      onDone(`Bill saved: ${r.qty} × ${r.name}, ${rupees(n)}. Now add it to stock and send it to ${asker(r)}.`)
+      onDone(`Bill saved: ${r.qty} × ${r.name}, ${rupees(n)}. ${r.ticket_id ? `Now add it to stock and send it to ${asker(r)}.` : 'Now add it to stock.'}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'That did not go through.')
     }
@@ -489,7 +506,7 @@ function BillDialog({ ticket: t, request: r, onClose, onDone }: {
   return (
     <Dialog title="Attach the bill" icon={<IconChip icon={Receipt} tone="cyan" />} onClose={onClose}>
       <p className="text-sm text-ink-600">
-        {r.qty} × {r.name} <span className="text-ink-400">· {PART_ROUTE_LABEL[r.route]} for {t.code}</span>
+        {r.qty} × {r.name} <span className="text-ink-400">· {PART_ROUTE_LABEL[r.route]} for {t?.code ?? r.code}</span>
       </p>
 
       <div>
@@ -547,19 +564,21 @@ function BillDialog({ ticket: t, request: r, onClose, onDone }: {
  * engineer asked for goes to the repair; whatever was bought over and above
  * stays on the shelf.
  */
-function StockDialog({ request: r, onClose, onDone }: {
+export function StockDialog({ request: r, onClose, onDone }: {
   request: PartRequest
   onClose: () => void
   onDone: (message: string) => void
 }) {
   const stock = useStockPart()
+  // For the stock, with no ticket (rl_0044): no repair to send any to — all of it stays on the shelf.
+  const pr = r.ticket_id === null
   const [value, setValue] = useState(r.name)
   const [item, setItem] = useState('')
   const [pack, setPack] = useState('')
   const [partNo, setPartNo] = useState('')
   const [touchedPartNo, setTouchedPartNo] = useState(false)
   const [qty, setQty] = useState(String(r.qty))
-  const [useQty, setUseQty] = useState(String(r.qty))
+  const [useQty, setUseQty] = useState(pr ? '0' : String(r.qty))
   const [error, setError] = useState<string | null>(null)
   const suggestion = usePartNo(r.trc_id, value, item)
 
@@ -582,14 +601,16 @@ function StockDialog({ request: r, onClose, onDone }: {
         id: r.id, value: value.trim(), item: item.trim(), package: pack.trim(),
         partNo: partNo.trim() || null, qty: bought, useQty: toRepair,
       })
-      onDone(`${bought} into stock as ${partNo.trim() || 'a new part'}${toRepair ? `, ${toRepair} sent to ${asker(r)}` : ''}. They confirm it and carry on.`)
+      onDone(pr
+        ? `${bought} into stock as ${partNo.trim() || 'a new part'}. ${r.code} is done.`
+        : `${bought} into stock as ${partNo.trim() || 'a new part'}${toRepair ? `, ${toRepair} sent to ${asker(r)}` : ''}. They confirm it and carry on.`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'That did not go through.')
     }
   }
 
   return (
-    <Dialog title={`Add to stock and send to ${asker(r)}`} icon={<IconChip icon={PackagePlus} tone="violet" />} onClose={onClose} wide>
+    <Dialog title={pr ? `Add ${r.code} to stock` : `Add to stock and send to ${asker(r)}`} icon={<IconChip icon={PackagePlus} tone="violet" />} onClose={onClose} wide>
       <p className="text-sm text-ink-600">
         {asker(r)} requested <span className="font-medium text-ink-900">{r.qty} × {r.name}</span>
         {r.po_number ? <> · {poLabel(r.po_number)}</> : null}
@@ -631,22 +652,24 @@ function StockDialog({ request: r, onClose, onDone }: {
           <input className="input mt-1 tabular-nums" type="number" inputMode="numeric" min={1} step={1}
             value={qty} onChange={e => setQty(e.target.value)} />
         </label>
-        <label className="block">
-          <span className="label">To this repair</span>
-          <input className="input mt-1 tabular-nums" type="number" inputMode="numeric" min={0} step={1}
-            value={useQty} onChange={e => setUseQty(e.target.value)} />
-          <span className="mt-1 block text-xs text-ink-500">
-            {Number.isFinite(bought) && Number.isFinite(toRepair) && bought - toRepair > 0
-              ? `${bought - toRepair} stays in stock.`
-              : 'The rest stays in stock.'}
-          </span>
-        </label>
+        {!pr && (
+          <label className="block">
+            <span className="label">To this repair</span>
+            <input className="input mt-1 tabular-nums" type="number" inputMode="numeric" min={0} step={1}
+              value={useQty} onChange={e => setUseQty(e.target.value)} />
+            <span className="mt-1 block text-xs text-ink-500">
+              {Number.isFinite(bought) && Number.isFinite(toRepair) && bought - toRepair > 0
+                ? `${bought - toRepair} stays in stock.`
+                : 'The rest stays in stock.'}
+            </span>
+          </label>
+        )}
       </div>
 
       {error && <Alert kind="error">{error}</Alert>}
       <div className="flex gap-2">
         <button type="button" className="btn-primary" onClick={send} disabled={stock.isPending}>
-          {stock.isPending ? <Spinner className="h-4 w-4" /> : <Send className="h-4 w-4" />} Add to stock and send
+          {stock.isPending ? <Spinner className="h-4 w-4" /> : <Send className="h-4 w-4" />} {pr ? 'Add to stock' : 'Add to stock and send'}
         </button>
         <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
       </div>
@@ -659,8 +682,9 @@ function StockDialog({ request: r, onClose, onDone }: {
  * from whom. It then waits with the coordinator, who adds it to stock and
  * sends it to the engineer when it comes (rl_0019).
  */
-function OrderDialog({ ticket: t, request: r, onClose, onDone }: {
-  ticket: Ticket
+export function OrderDialog({ ticket: t, request: r, onClose, onDone }: {
+  /** Its ticket; none on a request for the stock (rl_0044). */
+  ticket?: Ticket | null
   request: PartRequest
   onClose: () => void
   onDone: (message: string) => void
@@ -671,20 +695,20 @@ function OrderDialog({ ticket: t, request: r, onClose, onDone }: {
   const [edd, setEdd] = useState('')
   const [vendor, setVendor] = useState('')
   const [error, setError] = useState<string | null>(null)
-  // No date on the ticket before the day it was raised (the user, 23 Sep).
-  const floor = localDay(t.created_at)
+  // No date on the ticket before the day it was raised (the user, 23 Sep); none before a PR was requested.
+  const floor = localDay(t?.created_at ?? r.requested_at)
 
   const send = async () => {
     setError(null)
     if (!poNumber.trim()) { setError('Enter the PO number.'); return }
     if (!poDate) { setError('Enter the PO date.'); return }
-    if (poDate < floor) { setError(`The PO date cannot be before ${t.code} was raised, ${onDay(floor)}.`); return }
+    if (poDate < floor) { setError(`The PO date cannot be before ${t ? `${t.code} was raised` : `${r.code} was requested`}, ${onDay(floor)}.`); return }
     if (!edd) { setError('Enter the expected delivery date.'); return }
     if (edd < poDate) { setError('The expected delivery date cannot be before the PO date.'); return }
     if (vendor.trim().length < 2) { setError('Enter the vendor’s name.'); return }
     try {
       await order.mutateAsync({ id: r.id, poNumber: poNumber.trim(), poDate, edd, vendor: vendor.trim() })
-      onDone(`Ordered: ${poLabel(poNumber)}, due ${onDay(edd)}. It is with the coordinator, who adds it to stock and sends it to ${asker(r)} when it arrives.`)
+      onDone(`Ordered: ${poLabel(poNumber)}, due ${onDay(edd)}. It is with the coordinator, who adds it to stock${r.ticket_id ? ` and sends it to ${asker(r)}` : ''} when it arrives.`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'That did not go through.')
     }
@@ -693,7 +717,7 @@ function OrderDialog({ ticket: t, request: r, onClose, onDone }: {
   return (
     <Dialog title="Enter the order" icon={<IconChip icon={ClipboardList} tone="violet" />} onClose={onClose}>
       <p className="text-sm text-ink-600">
-        {r.qty} × {r.name} <span className="text-ink-400">· for {t.code}, requested by {asker(r)}</span>
+        {r.qty} × {r.name} <span className="text-ink-400">· for {t?.code ?? r.code}, requested by {asker(r)}</span>
       </p>
       {/* Inputs level with each other when a label runs to two lines. */}
       <div className="grid items-end gap-3 sm:grid-cols-2">
@@ -725,7 +749,7 @@ function OrderDialog({ ticket: t, request: r, onClose, onDone }: {
   )
 }
 
-function DeclineDialog({ request: r, buyer, onClose, onDone }: {
+export function DeclineDialog({ request: r, buyer, onClose, onDone }: {
   request: PartRequest
   /** Purchase handing it back to the coordinator, rather than the coordinator refusing it. */
   buyer: boolean

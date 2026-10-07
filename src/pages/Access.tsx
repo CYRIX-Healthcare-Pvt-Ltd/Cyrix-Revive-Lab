@@ -652,6 +652,12 @@ const ticketNumberOf = (typed: string): number | null => {
   return m ? Number(m[1]) : null
 }
 
+/** "PR-01", "pr1", "PR 01" → 1: a component request for the stock (rl_0044). Anything else → null. */
+const prNumberOf = (typed: string): number | null => {
+  const m = typed.trim().match(/^pr\s*-?\s*0*([0-9]{1,7})$/i)
+  return m ? Number(m[1]) : null
+}
+
 /** A ticket's status in words, for this page to say — it has no other file to ask. */
 const STATUS_WORDS: Record<string, string> = {
   awaiting_approval: 'waiting for approval', approved: 'approved and not sent yet', not_approved: 'not approved',
@@ -948,34 +954,51 @@ function ReopenTicket() {
 }
 
 /**
- * Deleting a ticket, for the software administrator only.
+ * Deleting a ticket, or a component request for the stock, for the software
+ * administrator only.
  *
  * For clearing out test tickets: type the number, press Delete, and the
  * ticket is named back before anything happens — a typed "RL-15" for
  * "RL-51" should cost a second look, not a real ticket. The database
  * refuses anybody else (revive_delete_ticket), keeps one audit line of
  * what went, and restarts numbering at RL-01 once no tickets are left.
+ *
+ * The same field takes a component request's number, PR-01 on (rl_0044;
+ * the user, 7 Oct: "same field enough bcz this rqst series will be PR-01"):
+ * revive_delete_part_request, with its own audit line, and PR numbering
+ * starts again at PR-01 once none are left. What it added to stock stays.
  */
 function DeleteTicket() {
   const qc = useQueryClient()
   const [typed, setTyped] = useState('')
-  const [found, setFound] = useState<{ id: string; code: string; facility: string; status: string } | null>(null)
+  const [found, setFound] = useState<{ kind: 'ticket' | 'pr'; id: string; code: string; facility: string; status: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
 
-  const number = ticketNumberOf(typed)
+  const pr = prNumberOf(typed)
+  const number = pr === null ? ticketNumberOf(typed) : null
 
   const lookUp = async () => {
     setError(null); setNotice(null); setFound(null)
-    if (!number) { setError('Type a ticket number, like RL-05.'); return }
+    if (pr === null && !number) { setError('Type a ticket number, like RL-05, or a component request’s, like PR-01.'); return }
     setBusy(true)
+    if (pr !== null) {
+      const { data, error: err } = await supabase.from('revive_part_requests')
+        .select('id, code, name, qty, status').eq('number', pr).is('ticket_id', null).maybeSingle()
+      setBusy(false)
+      if (err) { setError(friendlyError(err)); return }
+      if (!data) { setError(`There is no component request PR-${pr < 10 ? '0' : ''}${pr}.`); return }
+      const r = data as { id: string; code: string; name: string; qty: number; status: string }
+      setFound({ kind: 'pr', id: r.id, code: r.code, facility: `${r.qty} × ${r.name}`, status: r.status })
+      return
+    }
     const { data, error: err } = await supabase.from('revive_tickets')
-      .select('id, code, facility, status').eq('number', number).maybeSingle()
+      .select('id, code, facility, status').eq('number', number!).maybeSingle()
     setBusy(false)
     if (err) { setError(friendlyError(err)); return }
-    if (!data) { setError(`There is no ticket RL-${number < 10 ? '0' : ''}${number}.`); return }
-    setFound(data as { id: string; code: string; facility: string; status: string })
+    if (!data) { setError(`There is no ticket RL-${number! < 10 ? '0' : ''}${number}.`); return }
+    setFound({ kind: 'ticket', ...(data as { id: string; code: string; facility: string; status: string }) })
   }
 
   const remove = async () => {
@@ -984,22 +1007,29 @@ function DeleteTicket() {
     try {
       /*
         Its photos and voice note first. Storage files do not go with the
-        row, and once the ticket is gone the read rule that finds them
-        (revive_can_see) has nothing to check against — they would be left
-        where nobody could ever reach them again.
+        row, and once it is gone the read rule that finds them has nothing
+        to check against — they would be left where nobody could ever
+        reach them again. A component request keeps its photo and bill
+        pages in requests/<request>/ (rl_0044).
       */
       const bucket = supabase.storage.from('revive-attachments')
-      const { data: files } = await bucket.list(found.id)
+      const folder = found.kind === 'pr' ? `requests/${found.id}` : found.id
+      const { data: files } = await bucket.list(folder)
       if (files?.length) {
-        const { error: rmErr } = await bucket.remove(files.map(f => `${found.id}/${f.name}`))
+        const { error: rmErr } = await bucket.remove(files.map(f => `${folder}/${f.name}`))
         if (rmErr) throw new Error(friendlyError(rmErr))
       }
-      const out = await call<{ code: string; numbering_restarted: boolean }>('revive_delete_ticket', { p_ticket_id: found.id })
-      setNotice(`Deleted ${out.code}.` + (out.numbering_restarted ? ' No tickets are left, so the next one will be RL-01.' : ''))
+      if (found.kind === 'pr') {
+        const out = await call<{ code: string; numbering_restarted: boolean }>('revive_delete_part_request', { p_request_id: found.id })
+        setNotice(`Deleted ${out.code}.` + (out.numbering_restarted ? ' No component requests are left, so the next one will be PR-01.' : ''))
+      } else {
+        const out = await call<{ code: string; numbering_restarted: boolean }>('revive_delete_ticket', { p_ticket_id: found.id })
+        setNotice(`Deleted ${out.code}.` + (out.numbering_restarted ? ' No tickets are left, so the next one will be RL-01.' : ''))
+      }
       setFound(null); setTyped('')
       qc.invalidateQueries({ queryKey: ['revive'] })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not delete that ticket.')
+      setError(err instanceof Error ? err.message : `Could not delete that ${found.kind === 'pr' ? 'request' : 'ticket'}.`)
     } finally {
       setBusy(false)
     }
@@ -1009,7 +1039,7 @@ function DeleteTicket() {
     <div className="card overflow-hidden">
       <div className="flex items-center gap-2 border-b border-ink-200 bg-ink-50 px-4 py-2.5">
         <Trash2 className="h-4 w-4 text-cyrixRed-600" />
-        <h3 className="text-sm font-semibold text-ink-800">Delete a ticket</h3>
+        <h3 className="text-sm font-semibold text-ink-800">Delete a ticket or PR</h3>
         <span className="text-xs text-ink-400">· software administrator only</span>
       </div>
       <div className="space-y-3 p-4">
@@ -1019,13 +1049,13 @@ function DeleteTicket() {
           className="flex flex-wrap items-end gap-2"
           onSubmit={e => { e.preventDefault(); void lookUp() }}
         >
-          <label className="block w-40">
-            <span className="label">Ticket number</span>
+          <label className="block w-44">
+            <span className="label">Ticket or PR number</span>
             <input
               className="input mt-1 font-mono"
               value={typed}
               onChange={e => { setTyped(e.target.value); setFound(null) }}
-              placeholder="RL-05"
+              placeholder="RL-05 or PR-01"
             />
           </label>
           <button type="submit" className="btn-secondary !text-cyrixRed-700" disabled={busy || !typed.trim()}>
@@ -1039,7 +1069,9 @@ function DeleteTicket() {
               Delete {found.code} · {found.facility} for good?
             </p>
             <p className="mt-0.5 text-xs text-cyrixRed-800">
-              Its history and transfers go with it. This cannot be undone.
+              {found.kind === 'pr'
+                ? 'Its history, photo and bill go with it; what it added to stock stays in stock. This cannot be undone.'
+                : 'Its history and transfers go with it. This cannot be undone.'}
             </p>
             <div className="mt-2 flex gap-2">
               <button type="button" className="btn-danger" onClick={remove} disabled={busy}>

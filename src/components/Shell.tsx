@@ -1,10 +1,10 @@
 import { useMemo } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import clsx from 'clsx'
-import { Boxes, LayoutDashboard, ListChecks, PackagePlus, ShieldCheck, Grid2x2, LogOut, Users } from 'lucide-react'
+import { Boxes, ClipboardList, LayoutDashboard, ListChecks, PackagePlus, ShieldCheck, Grid2x2, LogOut, Users } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { useMyTeam, useTickets } from '@/lib/queries'
-import { TONE_TEXT, canRaise, observesOnly, waitingOnMe, type Tone } from '@/lib/tickets'
+import { useMyTeam, usePartRequests, useTickets } from '@/lib/queries'
+import { TONE_TEXT, canRaise, observesOnly, stockRequestsWaitingOn, waitingOnMe, type Tone } from '@/lib/tickets'
 import { indexTeam, ownerOfTicket } from '@/lib/team'
 import { Logo } from '@/components/Logo'
 import ThemeToggle from '@/components/ThemeToggle'
@@ -23,6 +23,11 @@ export default function Shell() {
   const { employee, me, signOut } = useAuth()
   const { data: tickets } = useTickets()
   const mine = (tickets ?? []).filter(t => waitingOnMe(t, me)).length
+  // Component requests for the stock waiting on this person — the desk's to take on or add to stock,
+  // Purchase's to order (rl_0044). They have no ticket, so Tickets cannot count them.
+  const seesComponents = !!me && (me.is_coordinator || me.is_manager || me.is_admin || !!me.is_purchase)
+  const { data: parts } = usePartRequests(undefined, seesComponents)
+  const prWaiting = stockRequestsWaitingOn(parts ?? [], me)
   /*
     My team is for the field side: a manager whose people send spares in
     (rl_0029). A Revive Lab's own manager, coordinator or engineer has a team
@@ -57,9 +62,12 @@ export default function Shell() {
     ...(hasTeam ? [{ to: '/team', label: 'My team', short: 'Team', icon: Users, tone: 'violet' as Tone }] : []),
     // A Revive Lab's own engineer repairs what arrives; they never send one in.
     ...(canRaise(me) ? [{ to: '/new', label: 'Raise ticket', short: 'Raise', icon: PackagePlus, tone: 'red' as Tone }] : []),
-    ...(me && (me.is_coordinator || me.is_manager || me.is_admin || me.is_purchase)
-      ? [{ to: '/components', label: 'Components', short: 'Parts', icon: Boxes, tone: 'orange' as Tone }]
-      : []),
+    ...(seesComponents
+      ? [{ to: '/components', label: 'Components', short: 'Parts', icon: Boxes, tone: 'orange' as Tone, badge: prWaiting }]
+      // A Revive Lab engineer asks for components for the stock, with no ticket (rl_0044; the user, 7 Oct).
+      : me?.is_engineer
+        ? [{ to: '/components', label: 'Component requests', short: 'Parts', icon: ClipboardList, tone: 'orange' as Tone }]
+        : []),
     ...(me?.is_admin
       ? [{ to: '/access', label: 'People & Revive Labs', short: 'People', icon: ShieldCheck, tone: 'violet' as Tone }]
       : []),

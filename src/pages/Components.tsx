@@ -1,8 +1,9 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
-  Boxes, CheckCircle2, Download, FileSpreadsheet, IndianRupee, PackageMinus, Pencil, Plus, Receipt, Search, ShoppingCart, Trash2,
+  Boxes, CheckCircle2, ClipboardList, Download, FileSpreadsheet, IndianRupee, PackageMinus, Pencil, Plus, Receipt, Search, ShoppingCart, Trash2,
   TriangleAlert, Upload, X,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
@@ -11,16 +12,22 @@ import {
   type Component, type PartRequest, type StockUseRow,
 } from '@/lib/queries'
 import {
-  buysFor, itemsSummary, partOpen, partStatusLook, poLabel, PART_PROGRESS, PART_ROUTE_LABEL, runsTrc, STOCK_USE_STATUS, TONE_CLASS,
+  buysFor, itemsSummary, partActor, partOpen, partStatusLook, poLabel, PART_PROGRESS, PART_ROUTE_LABEL, requestsStockAt, runsTrc,
+  stockRequestsWaitingOn, STOCK_USE_STATUS, TONE_CLASS,
   type PartRoute,
 } from '@/lib/tickets'
+import { signedLinks } from '@/lib/partFiles'
 import { readStockGrid, stockDiff, STOCK_SHEET_HEADINGS, type SheetRead, type StockDiff } from '@/lib/stockSheet'
 import { PartHistoryDialog, StockPartDialog, UploadMenu, WhereTag } from '@/components/StockPart'
 import { Alert, EmptyState, PageLoader, Spinner, StatTile } from '@/components/ui'
 import IconChip from '@/components/IconChip'
-import { rupees, DeclineUseDialog } from '@/components/PartsCard'
+import Lightbox from '@/components/Lightbox'
+import { RequestPartForm } from '@/components/PartForms'
+import {
+  rupees, BillDialog, DeclineDialog, DeclineUseDialog, OrderDialog, RequestItem, StockDialog,
+} from '@/components/PartsCard'
 
-type Sub = 'stock' | 'taken' | 'requests' | 'purchases' | 'scrap'
+type Sub = 'stock' | 'taken' | 'requests' | 'pr' | 'purchases' | 'scrap'
 
 const day = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '—'
@@ -33,6 +40,10 @@ const day = (iso: string | null | undefined) =>
  * Coordinators and managers see all of it for their Revive Labs, upload the
  * stock sheet, and approve what comes off it. Purchase sees the requests
  * that came to them.
+ *
+ * Component requests with no ticket, for the stock (PR-01 on), have a tab
+ * of their own — and are all a Revive Lab engineer with no other role
+ * comes here for (rl_0044; the user, 7 Oct).
  */
 export default function Components() {
   const { me } = useAuth()
@@ -40,9 +51,15 @@ export default function Components() {
   const { data: trcs, isLoading } = useTrcs()
 
   const desk = !!me && (me.is_coordinator || me.is_manager || me.is_admin)
+  // A Revive Lab engineer with no other role is here only for their component requests (rl_0044).
+  const engineerOnly = !!me && !desk && !me.is_purchase
+  const { data: allRequests } = usePartRequests()
+  const prWaiting = stockRequestsWaitingOn(allRequests ?? [], me)
   const subs: Array<[Sub, string, typeof Boxes]> = [
     ...(desk ? [['stock', 'Stock', Boxes], ['taken', 'Taken from stock', PackageMinus]] as Array<[Sub, string, typeof Boxes]> : []),
-    ['requests', 'Requests', ShoppingCart],
+    ...(engineerOnly ? [] : [['requests', 'Requests', ShoppingCart]] as Array<[Sub, string, typeof Boxes]>),
+    // With no ticket, for the stock: PR-01 on (the user, 7 Oct).
+    ['pr', 'Component requests', ClipboardList],
     ...(desk ? [['purchases', 'Purchases', IndianRupee], ['scrap', 'Scrap', Trash2]] as Array<[Sub, string, typeof Boxes]> : []),
   ]
   const asked = params.get('tab') as Sub | null
@@ -59,12 +76,15 @@ export default function Components() {
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-xl font-semibold text-ink-900">Components</h1>
+        <h1 className="text-xl font-semibold text-ink-900">{engineerOnly ? 'Component requests' : 'Components'}</h1>
         <p className="mt-0.5 text-sm text-ink-500">
-          {desk ? 'Stock, what has come off it, requests, what was spent, and what was scrapped.' : 'The purchase requests that came to you.'}
+          {engineerOnly
+            ? 'Components the Revive Lab needs in stock, asked for without a ticket. The coordinator purchases them, or passes them to Purchase, and adds them to stock.'
+            : desk ? 'Stock, what has come off it, requests, what was spent, and what was scrapped.' : 'The purchase requests that came to you.'}
         </p>
       </div>
 
+      {subs.length > 1 && (
       <div className="flex flex-wrap gap-1 rounded-lg bg-ink-100 p-1 sm:inline-flex">
         {subs.map(([id, label, Icon]) => (
           <button
@@ -77,13 +97,16 @@ export default function Components() {
             )}
           >
             <Icon className="h-4 w-4" /> {label}
+            {id === 'pr' && prWaiting > 0 && <span className="tabular-nums text-orange-600">{prWaiting}</span>}
           </button>
         ))}
       </div>
+      )}
 
       {sub === 'stock' && <StockTab labs={labs} />}
       {sub === 'taken' && <TakenTab />}
       {sub === 'requests' && <RequestsTab purchaseOnly={!desk} />}
+      {sub === 'pr' && <ComponentRequestsTab />}
       {sub === 'purchases' && <PurchasesTab labs={labs} />}
       {sub === 'scrap' && <ScrapTab />}
     </div>
@@ -524,7 +547,9 @@ function RequestsTab({ purchaseOnly }: { purchaseOnly: boolean }) {
   const [route, setRoute] = useState<PartRoute | ''>(purchaseOnly ? 'purchase' : '')
 
   const rows = useMemo(() => (requests ?? []).filter(r =>
-    (!purchaseOnly || (r.route === 'purchase' && buysFor(me, r.trc_id)))
+    // From a ticket; requests for the stock have their own tab (rl_0044).
+    r.ticket_id !== null
+    && (!purchaseOnly || (r.route === 'purchase' && buysFor(me, r.trc_id)))
     && (!route || r.route === route)
     && (show === 'all' || partOpen(r.status))), [requests, purchaseOnly, me, route, show])
 
@@ -588,6 +613,147 @@ function RequestRow({ r }: { r: PartRequest }) {
 
 /* ------------------------------------------------------------------ */
 
+/**
+ * Component requests with no ticket, for a Revive Lab's stock: PR-01 on
+ * (rl_0044; the user, 7 Oct: "the same flow but without any ticket").
+ *
+ * An engineer's goes to the coordinator, who purchases it locally or passes
+ * it to Purchase; once purchased, the coordinator adds it to stock and it is
+ * done. Each shows its whole journey, with the buttons for whoever moves it
+ * next — the same card a ticket shows for its own requests.
+ */
+function ComponentRequestsTab() {
+  const { me } = useAuth()
+  const { data: trcs } = useTrcs()
+  const { data: requests, isLoading } = usePartRequests()
+  const [show, setShow] = useState<'open' | 'all'>('open')
+  const [asking, setAsking] = useState(false)
+  const [notice, setNotice] = useState<{ kind: 'success' | 'error' | 'warning'; text: string } | null>(null)
+  const [billFor, setBillFor] = useState<PartRequest | null>(null)
+  const [orderFor, setOrderFor] = useState<PartRequest | null>(null)
+  const [stockFor, setStockFor] = useState<PartRequest | null>(null)
+  const [declineFor, setDeclineFor] = useState<PartRequest | null>(null)
+  const [viewing, setViewing] = useState<{ images: string[]; index: number } | null>(null)
+
+  // Where this person may ask: the Revive Labs they are an engineer or the coordinator of.
+  const askAt = useMemo(() => (trcs ?? []).filter(t => t.is_active && requestsStockAt(me, t.id)), [trcs, me])
+  const all = useMemo(() => (requests ?? []).filter(r => r.ticket_id === null), [requests])
+  const rows = useMemo(() => all.filter(r => show === 'all' || partOpen(r.status)), [all, show])
+  const open = all.filter(r => partOpen(r.status)).length
+  const waiting = stockRequestsWaitingOn(all, me)
+
+  const paths = useMemo(() => rows.flatMap(r => [r.photo_path, ...r.bill_paths]).filter((p): p is string => !!p), [rows])
+  const { data: links } = useQuery({
+    enabled: paths.length > 0,
+    queryKey: ['revive', 'part-links', paths],
+    staleTime: 50 * 60_000,
+    queryFn: () => signedLinks(paths),
+  })
+
+  if (isLoading) return <Spinner className="h-5 w-5 text-ink-400" />
+
+  const said = (text: string) => setNotice({ kind: 'success', text })
+
+  return (
+    <div className="space-y-4">
+      {notice && <Alert kind={notice.kind}>{notice.text}</Alert>}
+
+      {asking && (
+        <RequestPartForm
+          labs={askAt}
+          onCancel={() => setAsking(false)}
+          onError={text => setNotice({ kind: 'error', text })}
+          onDone={(text, warning) => {
+            setAsking(false); setShow('open')
+            setNotice(warning ? { kind: 'warning', text: `${text} ${warning}` } : { kind: 'success', text })
+          }}
+        />
+      )}
+
+      <div className="card overflow-hidden">
+        <div className="flex flex-wrap items-center gap-2 border-b border-ink-200 bg-ink-50 px-3 py-2">
+          <div className="flex gap-1">
+            {(['open', 'all'] as const).map(v => (
+              <button key={v} type="button" onClick={() => setShow(v)}
+                className={clsx('rounded-md px-3 py-1.5 text-sm font-medium', show === v ? 'bg-surface text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800')}>
+                {v === 'open' ? 'Open' : 'All'}
+                {v === 'open' && open > 0 && <span className={clsx('ml-1.5 tabular-nums', waiting > 0 ? 'text-orange-600' : 'text-ink-400')}>{open}</span>}
+                {v === 'all' && all.length > 0 && <span className="ml-1.5 tabular-nums text-ink-400">{all.length}</span>}
+              </button>
+            ))}
+          </div>
+          {askAt.length > 0 && !asking && (
+            <button type="button" className="btn-primary ml-auto !py-1.5 text-sm" onClick={() => { setNotice(null); setAsking(true) }}>
+              <Plus className="h-4 w-4" /> Request a component
+            </button>
+          )}
+        </div>
+
+        {rows.length === 0 ? (
+          <div className="p-4">
+            {show === 'open' && all.length > 0 ? (
+              <EmptyState icon={ClipboardList} title="Nothing open">
+                All {all.length} {all.length === 1 ? 'is' : 'are'} in stock, declined or cancelled.{' '}
+                <button type="button" className="link-accent font-medium" onClick={() => setShow('all')}>Show all {all.length}</button>
+              </EmptyState>
+            ) : (
+              <EmptyState icon={ClipboardList} title="No component requests yet">
+                A component the Revive Lab needs in stock, asked for without a ticket. Each gets its own number, PR-01 on,
+                and goes into stock once it is purchased.
+              </EmptyState>
+            )}
+          </div>
+        ) : (
+          <ul className="space-y-3 p-3">
+            {rows.map(r => (
+              <RequestItem
+                key={r.id}
+                r={r}
+                links={links ?? {}}
+                mine={partActor(r, me, r.trc_id, null)}
+                desk={runsTrc(me, r.trc_id)}
+                buyer={buysFor(me, r.trc_id)}
+                isEngineer={false}
+                isAsker={r.requested_by === me?.employee_id}
+                head={<>
+                  <span className="font-mono font-semibold text-ink-900">{r.code}</span>
+                  <span className="text-ink-500">for {r.trc_name}’s stock</span>
+                </>}
+                onBill={() => { setNotice(null); setBillFor(r) }}
+                onOrder={() => { setNotice(null); setOrderFor(r) }}
+                onStock={() => { setNotice(null); setStockFor(r) }}
+                onDecline={() => { setNotice(null); setDeclineFor(r) }}
+                onView={(images, index) => setViewing({ images, index })}
+                onNotice={setNotice}
+              />
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {billFor && <BillDialog request={billFor} onClose={() => setBillFor(null)} onDone={text => { setBillFor(null); said(text) }} />}
+      {orderFor && <OrderDialog request={orderFor} onClose={() => setOrderFor(null)} onDone={text => { setOrderFor(null); said(text) }} />}
+      {stockFor && <StockDialog request={stockFor} onClose={() => setStockFor(null)} onDone={text => { setStockFor(null); said(text) }} />}
+      {declineFor && (
+        <DeclineDialog
+          request={declineFor}
+          buyer={buysFor(me, declineFor.trc_id) && !runsTrc(me, declineFor.trc_id)}
+          onClose={() => setDeclineFor(null)}
+          onDone={text => { setDeclineFor(null); said(text) }}
+        />
+      )}
+      <Lightbox
+        images={(viewing?.images ?? []).map((src, i) => ({ src, alt: `Photo ${i + 1}` }))}
+        index={viewing?.index ?? null}
+        onIndex={i => setViewing(v => (v ? { ...v, index: i } : v))}
+        onClose={() => setViewing(null)}
+      />
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+
 type Period = 'month' | 'last' | 'fy' | 'all'
 
 /** From when a period starts, in local time; null for all time. Financial years start in April. */
@@ -620,10 +786,10 @@ function PurchasesTab({ labs }: { labs: Array<{ id: string; name: string }> }) {
   const download = async () => {
     const XLSX = await import('xlsx')
     const rows = bought.map(r => [
-      day(r.purchased_at), r.ticket_code, r.trc_name, PART_ROUTE_LABEL[r.route], r.name, r.qty,
+      day(r.purchased_at), r.ticket_code ?? r.code ?? '', r.trc_name, PART_ROUTE_LABEL[r.route], r.name, r.qty,
       r.vendor ?? '', r.bill_no ?? '', r.bill_amount ?? 0, r.purchased_by_name ?? '',
     ])
-    const ws = XLSX.utils.aoa_to_sheet([['Purchased on', 'Ticket', 'Revive Lab', 'Purchased as', 'Component', 'Qty', 'From', 'Bill no', 'Amount (₹)', 'Purchased by'], ...rows])
+    const ws = XLSX.utils.aoa_to_sheet([['Purchased on', 'Ticket or PR', 'Revive Lab', 'Purchased as', 'Component', 'Qty', 'From', 'Bill no', 'Amount (₹)', 'Purchased by'], ...rows])
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Purchases')
     XLSX.writeFile(wb, `Component purchases - ${new Date().toISOString().slice(0, 10)}.xlsx`)
@@ -670,7 +836,7 @@ function PurchasesTab({ labs }: { labs: Array<{ id: string; name: string }> }) {
               <thead>
                 <tr className="border-b border-ink-200 text-left text-xs font-semibold uppercase tracking-wide text-ink-500">
                   <th className="px-4 py-2 font-medium">Purchased</th>
-                  <th className="px-4 py-2 font-medium">Ticket</th>
+                  <th className="px-4 py-2 font-medium">Ticket / PR</th>
                   <th className="px-4 py-2 font-medium">Component</th>
                   <th className="hidden px-4 py-2 font-medium md:table-cell">From</th>
                   <th className="px-4 py-2 text-right font-medium">Amount</th>
@@ -680,7 +846,11 @@ function PurchasesTab({ labs }: { labs: Array<{ id: string; name: string }> }) {
                 {bought.map(r => (
                   <tr key={r.id} className="hover:bg-ink-50">
                     <td className="px-4 py-2 text-ink-600">{day(r.purchased_at)}</td>
-                    <td className="px-4 py-2"><Link to={`/tickets/${r.ticket_code}`} className="font-mono font-semibold text-ink-900">{r.ticket_code}</Link></td>
+                    <td className="px-4 py-2">
+                      {r.ticket_code
+                        ? <Link to={`/tickets/${r.ticket_code}`} className="font-mono font-semibold text-ink-900">{r.ticket_code}</Link>
+                        : <span className="font-mono font-semibold text-ink-900">{r.code}</span>}
+                    </td>
                     <td className="px-4 py-2 text-ink-900">
                       {r.qty} × {r.name}
                       <span className="block text-xs text-ink-500">{PART_ROUTE_LABEL[r.route]} · {r.trc_name}{r.bill_no ? ` · bill ${r.bill_no}` : ''}</span>

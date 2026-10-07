@@ -229,7 +229,8 @@ export function PartHistoryDialog({ part: p, onClose }: { part: Component; onClo
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-ink-900">
-                    {l.ticket_code ? (
+                    {/* A ticket opens; a PR has no page of its own (rl_0044). */}
+                    {l.ticket_code && !/^PR-/.test(l.ticket_code) ? (
                       <>
                         {look.title(l).split(l.ticket_code)[0]}
                         <Link to={`/tickets/${l.ticket_code}`} className="link-accent font-mono" onClick={onClose}>{l.ticket_code}</Link>

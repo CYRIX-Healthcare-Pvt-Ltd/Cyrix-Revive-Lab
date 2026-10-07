@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
 import clsx from 'clsx'
 import { Boxes, CheckCircle2, ClipboardList, Search, ShoppingCart, Store } from 'lucide-react'
-import { useComponents, useRequestPart, useUseComponent, type Component, type Ticket } from '@/lib/queries'
-import { PART_ROUTE_LABEL, type PartRoute } from '@/lib/tickets'
+import { useAuth } from '@/contexts/AuthContext'
+import { useComponents, useRequestPart, useRequestStockPart, useUseComponent, type Component, type Ticket } from '@/lib/queries'
+import { PART_ROUTE_LABEL, runsTrc, type PartRoute } from '@/lib/tickets'
 import { Spinner } from '@/components/ui'
 import { WhereTag } from '@/components/StockPart'
 import PhotoPick, { type PickedPhoto } from '@/components/PhotoPick'
@@ -157,26 +158,43 @@ export function UseComponentForm({ ticket: t, onDone, onError, onCancel }: {
  * Asking for a component that is not in stock: what it is, how many, a
  * photo of it (required, rl_0019) and a link if there is one, and who buys
  * it — the coordinator as a local purchase, or Purchase.
+ *
+ * On a ticket it is for that repair. Without one it is for a Revive Lab's
+ * stock, and gets its own number, PR-01 on (rl_0044; the user, 7 Oct: "the
+ * same flow but without any ticket"). An engineer's goes to the
+ * coordinator, as on a ticket; the coordinator's own is already decided — a
+ * local purchase is theirs to purchase, a purchase goes straight to Purchase.
  */
-export function RequestPartForm({ ticket: t, onDone, onError, onCancel }: {
-  ticket: Ticket
+export function RequestPartForm({ ticket: t, labs, onDone, onError, onCancel }: {
+  /** For this ticket's repair. */
+  ticket?: Ticket
+  /** Or, with no ticket, for the stock of one of these Revive Labs (rl_0044). */
+  labs?: ReadonlyArray<{ id: string; name: string }>
   onDone: (message: string, warning?: string) => void
   onError: (message: string) => void
   onCancel: () => void
 }) {
-  const { data: stock } = useComponents(t.trc_id)
+  const { me } = useAuth()
+  const [labId, setLabId] = useState(t?.trc_id ?? labs?.[0]?.id ?? '')
+  const labName = t?.trc_name ?? labs?.find(l => l.id === labId)?.name ?? 'the Revive Lab'
+  const { data: stock } = useComponents(labId || null)
   const request = useRequestPart()
+  const requestStock = useRequestStockPart()
   const [name, setName] = useState('')
   const [qty, setQty] = useState('1')
   const [route, setRoute] = useState<PartRoute | ''>('')
   const [photos, setPhotos] = useState<PickedPhoto[]>([])
   const [link, setLink] = useState('')
   const [note, setNote] = useState('')
+  // The coordinator asking for their own stock has nobody to ask: it is decided already.
+  const own = !t && runsTrc(me, labId)
+  const busy = request.isPending || requestStock.isPending
 
   // Worth a look before buying: what the stock already has under that name.
   const inStock = useMemo(() => (name.trim().length >= 3 ? searchStock(stock ?? [], name, 3).filter(c => c.qty > 0) : []), [stock, name])
 
   const run = async () => {
+    if (!t && !labId) { onError('Choose the Revive Lab it is for.'); return }
     if (name.trim().length < 2) { onError('Enter the component name.'); return }
     const n = Number(qty)
     if (!Number.isInteger(n) || n < 1) { onError('Enter how many are needed.'); return }
@@ -184,17 +202,30 @@ export function RequestPartForm({ ticket: t, onDone, onError, onCancel }: {
     if (link.trim() && !/^https?:\/\//i.test(link.trim())) { onError('The link should start with http:// or https://'); return }
     // Whoever buys it needs to see it (rl_0019).
     if (photos.length === 0) { onError('Add a photo of the component.'); return }
+    const fields = { route, name: name.trim(), qty: n, note: note.trim(), link: link.trim(), photo: photos[0]?.blob ?? null }
+    const lost = 'The request was sent, but its photo did not upload.'
     try {
-      const res = await request.mutateAsync({
-        ticketId: t.id, route, name: name.trim(), qty: n,
-        note: note.trim(), link: link.trim(), photo: photos[0]?.blob ?? null,
-      })
-      onDone(
-        route === 'local'
-          ? 'Requested. The coordinator purchases it and adds it to stock.'
-          : 'Requested. The coordinator passes it to Purchase, or purchases it locally if they can.',
-        res.photoFailed ? 'The request was sent, but its photo did not upload.' : undefined,
-      )
+      if (t) {
+        const res = await request.mutateAsync({ ticketId: t.id, ...fields })
+        onDone(
+          route === 'local'
+            ? 'Requested. The coordinator purchases it and adds it to stock.'
+            : 'Requested. The coordinator passes it to Purchase, or purchases it locally if they can.',
+          res.photoFailed ? lost : undefined,
+        )
+      } else {
+        const res = await requestStock.mutateAsync({ trcId: labId, ...fields })
+        onDone(
+          own
+            ? route === 'local'
+              ? `${res.code} is yours to purchase. Attach the bill once it is purchased, then add it to stock.`
+              : `${res.code} has gone to the Purchase team. It comes back to you to add to stock.`
+            : route === 'local'
+              ? `${res.code} requested. The coordinator purchases it and adds it to stock.`
+              : `${res.code} requested. The coordinator passes it to Purchase, or purchases it locally if they can.`,
+          res.photoFailed ? lost : undefined,
+        )
+      }
     } catch (err) {
       onError(err instanceof Error ? err.message : 'That did not go through.')
     }
@@ -202,10 +233,26 @@ export function RequestPartForm({ ticket: t, onDone, onError, onCancel }: {
 
   return (
     <div className="card space-y-3 p-4">
-      <p className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
-        <span className="grid h-7 w-7 place-items-center rounded-lg bg-orange-100 text-orange-700"><ShoppingCart className="h-4 w-4" /></span>
-        Request a component
-      </p>
+      <div>
+        <p className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
+          <span className="grid h-7 w-7 place-items-center rounded-lg bg-orange-100 text-orange-700"><ShoppingCart className="h-4 w-4" /></span>
+          Request a component
+        </p>
+        {!t && (
+          <p className="mt-1 text-xs text-ink-500">
+            For the Revive Lab’s stock, not for a ticket. It gets its own number, PR-01 on, and goes into stock once it is purchased.
+          </p>
+        )}
+      </div>
+
+      {!t && (labs?.length ?? 0) > 1 && (
+        <label className="block">
+          <span className="label">Revive Lab <span className="text-cyrixRed-600">*</span></span>
+          <select className="input mt-1" value={labId} onChange={e => setLabId(e.target.value)}>
+            {labs!.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+          </select>
+        </label>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-[1fr_7rem]">
         <label className="block">
@@ -221,7 +268,9 @@ export function RequestPartForm({ ticket: t, onDone, onError, onCancel }: {
 
       {inStock.length > 0 && (
         <div className="rounded-lg border border-green-200 bg-green-50 p-2.5">
-          <p className="text-xs font-medium text-green-800">Already in stock at {t.trc_name} — use it from stock instead?</p>
+          <p className="text-xs font-medium text-green-800">
+            {t ? `Already in stock at ${labName} — use it from stock instead?` : `Already in stock at ${labName}:`}
+          </p>
           <div className="mt-1.5 space-y-1.5">{inStock.map(c => <StockLine key={c.id} c={c} />)}</div>
         </div>
       )}
@@ -245,8 +294,8 @@ export function RequestPartForm({ ticket: t, onDone, onError, onCancel }: {
                 <span className="block text-sm font-medium text-ink-900">{PART_ROUTE_LABEL[r]}</span>
                 <span className="block text-xs text-ink-500">
                   {r === 'local'
-                    ? `The coordinator at ${t.trc_name} purchases it`
-                    : 'The coordinator passes it to the Purchase team'}
+                    ? own ? 'You purchase it, then add it to stock' : `The coordinator at ${labName} purchases it`
+                    : own ? 'It goes straight to the Purchase team' : 'The coordinator passes it to the Purchase team'}
                 </span>
               </span>
             </button>
@@ -269,12 +318,12 @@ export function RequestPartForm({ ticket: t, onDone, onError, onCancel }: {
       <label className="block">
         <span className="label">Note</span>
         <textarea className="input mt-1" rows={2} value={note} onChange={e => setNote(e.target.value)} maxLength={1000}
-          placeholder="e.g. Same rating or higher; the board's C12" />
+          placeholder={t ? 'e.g. Same rating or higher; the board’s C12' : 'e.g. Running low — two left, and every SMPS repair takes one'} />
       </label>
 
       <div className="flex gap-2">
-        <button type="button" className="btn-primary" onClick={run} disabled={request.isPending}>
-          {request.isPending ? <Spinner className="h-4 w-4" /> : <ShoppingCart className="h-4 w-4" />} Request component
+        <button type="button" className="btn-primary" onClick={run} disabled={busy}>
+          {busy ? <Spinner className="h-4 w-4" /> : <ShoppingCart className="h-4 w-4" />} Request component
         </button>
         <button type="button" className="btn-secondary" onClick={onCancel}>Cancel</button>
       </div>

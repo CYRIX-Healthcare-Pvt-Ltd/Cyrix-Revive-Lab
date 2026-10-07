@@ -570,10 +570,11 @@ export function useComponentUses(ticketId: string | undefined) {
 
 export interface PartRequest {
   id: string
-  ticket_id: string
-  ticket_code: string
-  ticket_status: TicketStatus
-  facility: string
+  /** Null on a request for the Revive Lab's stock, which has its own number instead (rl_0044). */
+  ticket_id: string | null
+  ticket_code: string | null
+  ticket_status: TicketStatus | null
+  facility: string | null
   trc_id: string
   trc_name: string
   route: PartRoute
@@ -616,6 +617,19 @@ export interface PartRequest {
   po_number: string | null
   po_date: string | null
   edd: string | null
+  /** A request for the stock, with no ticket: PR-01 on (rl_0044). */
+  number: number | null
+  code: string | null
+  /** Its own history, for what the columns do not hold: passed on, handed back, cancelled, and why. */
+  events: PartEvent[]
+}
+
+/** One step of a request with no ticket (rl_0044). */
+export interface PartEvent {
+  action: string
+  at: string
+  who: string | null
+  note: string | null
 }
 
 /** One component taken from stock, as the desk's own list shows it (rl_0018). */
@@ -661,9 +675,10 @@ export function useStockUses(status?: StockUseStatus) {
   })
 }
 
-/** Component requests: one ticket's, or every one this person can see. */
-export function usePartRequests(ticketId?: string) {
+/** Component requests: one ticket's, or every one this person can see — those for the stock too (rl_0044). */
+export function usePartRequests(ticketId?: string, enabled = true) {
   return useQuery({
+    enabled,
     queryKey: ['revive', 'parts', ticketId ?? 'all'],
     queryFn: async () => unwrap<PartRequest[]>(
       await supabase.rpc('revive_part_request_list', { p_ticket_id: ticketId ?? null }),
@@ -948,6 +963,29 @@ export const useRequestPart = () => useTicketMutation(
     return { id, photoFailed }
   })
 
+/**
+ * A component for a Revive Lab's stock, with no ticket (rl_0044): it gets
+ * its own number, PR-01 on. Its photo goes up once it exists, as a
+ * ticket's request's does.
+ */
+export const useRequestStockPart = () => useTicketMutation(
+  async (a: { trcId: string; route: PartRoute; name: string; qty: number; note?: string; link?: string; photo?: Blob | null }) => {
+    const res = await rpc('revive_request_stock_part', {
+      p_trc_id: a.trcId, p_route: a.route, p_name: a.name, p_qty: a.qty,
+      p_note: a.note || null, p_link: a.link || null,
+    }) as { id: string; code: string; status: PartStatus }
+    let photoFailed = false
+    if (a.photo) {
+      try {
+        const path = await uploadPartFile(null, res.id, 'photo', a.photo)
+        await rpc('revive_set_part_photo', { p_request_id: res.id, p_path: path })
+      } catch {
+        photoFailed = true
+      }
+    }
+    return { ...res, photoFailed }
+  })
+
 /** Taken on by whoever buys it: the desk for a local purchase, Purchase for a purchase. */
 export const useTakePart = () => useTicketMutation(
   (a: { id: string }) => rpc('revive_take_part', { p_request_id: a.id }))
@@ -989,7 +1027,7 @@ export const useDeclinePart = () => useTicketMutation(
 
 /** Bought: the bill's pages go up first, then the request moves with their paths and the amount. */
 export const usePurchasePart = () => useTicketMutation(
-  async (a: { ticketId: string; id: string; amount: number; bills: Blob[]; billNo?: string; vendor?: string }) => {
+  async (a: { ticketId: string | null; id: string; amount: number; bills: Blob[]; billNo?: string; vendor?: string }) => {
     const paths: string[] = []
     for (const [i, bill] of a.bills.entries()) {
       paths.push(await uploadPartFile(a.ticketId, a.id, `bill-${i + 1}` as 'bill-1', bill))

@@ -4,12 +4,13 @@ import clsx from 'clsx'
 import {
   Bar, BarChart, CartesianGrid, Cell, LabelList, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
-import { AlarmClock, ArrowRight, BellRing, Building2, ChartColumn, Check, HardHat, Inbox, PackagePlus, TrendingUp, Users } from 'lucide-react'
+import { AlarmClock, ArrowRight, BellRing, Building2, ChartColumn, Check, ClipboardList, HardHat, Inbox, PackagePlus, TrendingUp, Users } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { useMembers, useMyTeam, useTickets, useTrcs, useVisibleEvents, type Ticket } from '@/lib/queries'
+import { useMembers, useMyTeam, usePartRequests, useTickets, useTrcs, useVisibleEvents, type PartRequest, type Ticket } from '@/lib/queries'
 import { dateTime as dateTimeOf, dayDate } from '@/lib/when'
 import {
-  REPAIRING, STATUS, STATUS_ORDER, TONE_DOT, TONE_FILL, TONE_TEXT, canRaise, itemsSummary, observesOnly, statusGroups, ticketTabs, waitingOnMe,
+  REPAIRING, STATUS, STATUS_ORDER, TONE_DOT, TONE_FILL, TONE_TEXT, canRaise, itemsSummary, observesOnly, partActor, partStatusLook, statusGroups,
+  ticketTabs, waitingOnMe,
 } from '@/lib/tickets'
 import { formatSpan, ticketTat, type TatBreakdown, type TatEvent } from '@/lib/tat'
 import { EmptyState, PageLoader, ReturnedTag, SectorTag, StatTile, TransferTag, WarehouseChip } from '@/components/ui'
@@ -98,6 +99,12 @@ export default function Dashboard() {
   const desk = !!me && (me.is_coordinator || me.is_manager || me.is_admin)
   const { data: members } = useMembers(desk)
   const { data: team } = useMyTeam()
+  // Component requests for the stock waiting on the reader — the coordinator's to take on or add to
+  // stock, Purchase's to order (rl_0044). No ticket carries them, so they are counted and listed in
+  // Waiting on you beside the tickets (the user, 7 Oct: "will it show in waiting for you").
+  const seesComponents = !!me && (me.is_coordinator || me.is_manager || me.is_admin || !!me.is_purchase)
+  const { data: parts } = usePartRequests(undefined, seesComponents)
+  const prMine = useMemo(() => (parts ?? []).filter(r => r.ticket_id === null && partActor(r, me, r.trc_id, null)), [parts, me])
   const [params, setParams] = useSearchParams()
   const period: Period = PERIODS.some(p => p.id === params.get('period')) ? params.get('period') as Period : 'month'
   const words = PERIODS.find(p => p.id === period)!.words
@@ -265,10 +272,14 @@ export default function Dashboard() {
       </div>
 
       {/* grid-fill: the fifth tile takes a whole row on a phone rather than half of one. */}
-      <div className={clsx('grid-fill grid grid-cols-2 gap-3', noWaiting ? 'lg:grid-cols-4' : 'lg:grid-cols-5')}>
+      <div className={clsx('grid-fill grid grid-cols-2 gap-3', TILE_COLS[4 + (noWaiting ? 0 : 1) + (seesComponents ? 1 : 0)])}>
         <StatTile label="Open" value={stats.open} sub={`of ${stats.total} tickets`} />
         {!noWaiting && (
-          <StatTile label="Waiting on you" value={stats.mine.length} sub="your move next" tone={stats.mine.length ? 'brand' : 'default'} />
+          <StatTile label="Waiting on you" value={stats.mine.length} sub="tickets, your move next" tone={stats.mine.length ? 'brand' : 'default'} />
+        )}
+        {/* Component requests for the stock, apart from the tickets (the user, 7 Oct: "like 2 modules"). */}
+        {seesComponents && (
+          <StatTile label="Component requests" value={prMine.length} sub="PR waiting on you" tone={prMine.length ? 'brand' : 'default'} />
         )}
         <StatTile label="With Revive Lab engineer" value={stats.inRepair} sub="assigned or being repaired" />
         <StatTile
@@ -304,7 +315,7 @@ export default function Dashboard() {
               <div className="neon-card-body">
                 <div className="flex items-center justify-between border-b border-ink-200 bg-ink-50 px-4 py-2.5">
                   <h3 className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
-                    <IconChip icon={BellRing} tone="red" /> Waiting on you
+                    <IconChip icon={BellRing} tone="red" /> Waiting on you · Tickets
                   </h3>
                   <Link
                     to="/tickets?view=mine"
@@ -343,6 +354,44 @@ export default function Dashboard() {
                     </ul>
                   </section>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* Component requests for the stock (rl_0044): no ticket carries them, so a card of their own,
+              apart from the tickets (the user, 7 Oct: "show separate ie rl an pr, like 2 modules"). */}
+          {prMine.length > 0 && (
+            <div className="neon-card">
+              <div className="neon-card-body">
+                <div className="flex items-center justify-between border-b border-ink-200 bg-ink-50 px-4 py-2.5">
+                  <h3 className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
+                    <IconChip icon={ClipboardList} tone="orange" /> Waiting on you · Component requests
+                  </h3>
+                  <Link
+                    to="/components?tab=pr"
+                    className="rounded-full bg-cyrixRed-600 px-2.5 py-0.5 text-xs font-semibold tabular-nums text-white hover:bg-cyrixRed-700"
+                    title="Open them on Component requests"
+                  >
+                    {prMine.length}
+                  </Link>
+                </div>
+                <ul className="divide-y divide-ink-100">
+                  {prMine.map(r => {
+                    const since = prWaitingSince(r)
+                    return (
+                      <li key={r.id}>
+                        <Link to="/components?tab=pr" className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 hover:bg-ink-50">
+                          <span className="font-mono text-sm font-semibold text-ink-900">{r.code}</span>
+                          <span className="min-w-0 flex-1 truncate text-sm text-ink-600">
+                            {r.qty} × {r.name} · {partStatusLook(r).label}
+                          </span>
+                          <span className="truncate text-xs text-ink-400 sm:w-32 sm:shrink-0 sm:text-right" title={r.trc_name}>{r.trc_name}</span>
+                          <SinceTag label={since.label} at={since.at} />
+                        </Link>
+                      </li>
+                    )
+                  })}
+                </ul>
               </div>
             </div>
           )}
@@ -807,19 +856,41 @@ function longestWaitFirst<T extends Ticket>(rows: readonly T[]): T[] {
 function WaitedFor({ ticket: t }: { ticket: Ticket }) {
   const since = waitingSince(t)
   if (!since) return null
-  const days = daysSince(since.at)
+  return <SinceTag label={since.label} at={since.at} />
+}
+
+/** Tailwind sees each class whole: the tile row, four to six across on a computer. */
+const TILE_COLS: Record<number, string> = { 4: 'lg:grid-cols-4', 5: 'lg:grid-cols-5', 6: 'lg:grid-cols-6' }
+
+/** The day something started waiting and how many days that is, the same width on every row. */
+function SinceTag({ label, at }: { label: string; at: string }) {
+  const days = daysSince(at)
   return (
     <span
       className="inline-flex items-center justify-end gap-1.5 whitespace-nowrap text-xs text-ink-500 sm:w-60"
-      title={`${since.label} ${dateTimeOf(since.at)}`}
+      title={`${label} ${dateTimeOf(at)}`}
     >
-      <span>{since.label} {dayDate(since.at)}</span>
+      <span>{label} {dayDate(at)}</span>
       <span className={clsx('w-16 shrink-0 rounded-full py-0.5 text-center font-semibold tabular-nums',
         days > 0 ? 'bg-ink-100 text-ink-900' : 'bg-ink-50 text-ink-500')}>
         {days === 0 ? 'today' : `${days} ${days === 1 ? 'day' : 'days'}`}
       </span>
     </span>
   )
+}
+
+/** When a component request for the stock came to the reader: the step that handed it to them (rl_0044). */
+function prWaitingSince(r: PartRequest): { label: string; at: string } {
+  const last = (action: string) => [...r.events].reverse().find(e => e.action === action)?.at
+  switch (r.status) {
+    case 'forwarded': return { label: 'Passed on', at: last('forwarded') ?? r.requested_at }
+    case 'accepted': return { label: 'Taken on', at: r.accepted_at ?? r.requested_at }
+    case 'bought': return { label: r.po_number ? 'Ordered' : 'Purchased', at: r.purchased_at ?? r.requested_at }
+    default: {
+      const back = last('handed_back')
+      return back ? { label: 'Handed back', at: back } : { label: 'Requested', at: r.requested_at }
+    }
+  }
 }
 
 /**

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   ticketCode, parseTicketCode, actionsFor, awaitingManager, runsTrc, managesTrc, observesOnly, waitingOnMe, cleanItems, itemsSummary,
-  partsWaitingOn, ticketTabs, serves, approversOf, orList, statusLook, canRaise, partActor, partStatusLook,
+  partsWaitingOn, partOpen, requestsStockAt, stockRequestsWaitingOn, ticketTabs, serves, approversOf, orList, statusLook, canRaise, partActor, partStatusLook,
   ITEM_KIND_LABEL, PART_PROGRESS, PART_STATUS, poLabel, canClassify, statusGroups, roundOf, ordinal, mergeDeskRaise,
   type Me, type TicketLike,
 } from './tickets'
@@ -707,5 +707,35 @@ describe('the Revive Lab Observer (rl_0039)', () => {
     const theirs = ticket({ status: 'in_transit_return', stakeholder_id: 'obs' })
     expect(actionsFor(theirs, observer)).toEqual(['received', 'hand_over'])
     expect(waitingOnMe(theirs, observer)).toBe(true)
+  })
+})
+
+describe('component requests for the stock (rl_0044)', () => {
+  it('its engineers and its desk may ask; Purchase, a manager and other Revive Labs may not', () => {
+    expect(requestsStockAt(me({ is_engineer: true, trc_ids: [REG] }), REG)).toBe(true)
+    expect(requestsStockAt(me({ is_engineer: true, trc_ids: [REG] }), PRJ)).toBe(false)
+    expect(requestsStockAt(me({ is_coordinator: true, trc_ids: [PRJ] }), PRJ)).toBe(true)
+    expect(requestsStockAt(me({ is_admin: true }), PRJ)).toBe(true)
+    expect(requestsStockAt(me({ is_purchase: true, trc_ids: [REG] }), REG)).toBe(false)
+    expect(requestsStockAt(me({ is_manager: true, trc_ids: [REG] }), REG)).toBe(false)
+  })
+
+  it('in stock is done: not open', () => {
+    expect(partOpen('stocked')).toBe(false)
+    expect(PART_STATUS.stocked.label).toBe('In stock')
+  })
+
+  it('counts what waits on the person, and only requests with no ticket', () => {
+    const rs = [
+      { ticket_id: null, trc_id: REG, route: 'local' as const, status: 'requested' as const },
+      { ticket_id: null, trc_id: REG, route: 'purchase' as const, status: 'forwarded' as const },
+      { ticket_id: null, trc_id: REG, route: 'local' as const, status: 'bought' as const },
+      { ticket_id: null, trc_id: REG, route: 'local' as const, status: 'stocked' as const },
+      { ticket_id: 't1', trc_id: REG, route: 'local' as const, status: 'requested' as const },
+      { ticket_id: null, trc_id: PRJ, route: 'local' as const, status: 'requested' as const },
+    ]
+    expect(stockRequestsWaitingOn(rs, me({ is_coordinator: true, trc_ids: [REG] }))).toBe(2)
+    expect(stockRequestsWaitingOn(rs, me({ is_purchase: true, trc_ids: [REG] }))).toBe(1)
+    expect(stockRequestsWaitingOn(rs, me({ is_engineer: true, trc_ids: [REG] }))).toBe(0)
   })
 })
