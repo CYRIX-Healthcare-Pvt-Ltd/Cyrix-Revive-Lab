@@ -1,8 +1,8 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import {
-  ArrowDownUp, Building2, ChevronDown, CircleDot, Download, FilterX, Hospital, Inbox, Layers, Map as MapIcon, MapPin, PackagePlus,
+  ArrowDownUp, Building2, Check, ChevronDown, CircleDot, Download, FilterX, Hospital, Inbox, Layers, Map as MapIcon, MapPin, PackagePlus,
   Search, SlidersHorizontal, Tag, TriangleAlert, Users, Wrench, type LucideIcon,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
@@ -117,6 +117,9 @@ export default function Tickets() {
   // from a ticket finds it as it was left.
   const setParam = (key: string, value: string | null) =>
     setParams(p => { if (value) p.set(key, value); else p.delete(key); return p }, { replace: true })
+  // A filter's choices, as many as are ticked.
+  const setMany = (key: string, values: string[]) =>
+    setParams(p => { p.delete(key); for (const v of values) p.append(key, v); return p }, { replace: true })
 
   // The tabs for what this person does (tickets.ts); an old link to a tab
   // they do not have lands on All.
@@ -124,20 +127,20 @@ export default function Tickets() {
   const asked = params.get('view') as TabId | null
   const tab = tabs.find(x => x.id === asked) ?? tabs[0]
   const view = tab.id
-  const trcId = params.get('lab') ?? ''
+  const trcId = params.getAll('lab')
   // Where the spare came from on the map, and under which BEMMP (the user, 1 Oct); 'none' is a warehouse's, which has neither.
-  const inState = params.get('state') ?? ''
-  const inDistrict = params.get('district') ?? ''
-  const bemmp = params.get('bemmp') ?? ''
-  const status = params.get('status') ?? ''
+  const inState = params.getAll('state')
+  const inDistrict = params.getAll('district')
+  const bemmp = params.getAll('bemmp')
+  const status = params.getAll('status')
   // A hospital's spares or a warehouse's (rl_0020); asked only once there are any from a warehouse.
-  const from = params.get('from') ?? ''
+  const from = params.getAll('from')
   // The category and the criticality the Revive Lab gave it (rl_0024); 'none' is not classified yet.
-  const cat = params.get('cat') ?? ''
-  const crit = params.get('crit') ?? ''
+  const cat = params.getAll('cat')
+  const crit = params.getAll('crit')
   // The report of this person's a ticket's field engineer is under ('none': not their team's), and the Revive Lab engineer.
-  const team = params.get('team') ?? ''
-  const eng = params.get('eng') ?? ''
+  const team = params.getAll('team')
+  const eng = params.getAll('eng')
   const anyWarehouse = useMemo(() => (tickets ?? []).some(t => t.source === 'warehouse'), [tickets])
   // The search box answers to every key at once; the address follows it,
   // and a link that clears the address clears the box.
@@ -190,19 +193,21 @@ export default function Tickets() {
     anything stays offered, at nought, so it can be seen and cleared.
   */
   type Filter = 'lab' | 'state' | 'district' | 'bemmp' | 'status' | 'from' | 'cat' | 'crit' | 'team' | 'eng'
+  // Nothing ticked lets everything through; otherwise any one ticked choice will do.
+  const any = (chosen: string[], v: string) => chosen.length === 0 || chosen.includes(v)
   const passes = (t: Ticket, skip: Filter | null = null) =>
-    (skip === 'lab' || !trcId || t.trc_id === trcId)
-    && (skip === 'state' || !inState || (t.state ?? 'none') === inState)
+    (skip === 'lab' || any(trcId, t.trc_id))
+    && (skip === 'state' || any(inState, t.state ?? 'none'))
     // A district is inside its state: the states on offer are counted without it,
     // so another state can be chosen straight away — and the district then goes.
-    && (skip === 'district' || skip === 'state' || !inDistrict || (t.district ?? 'none') === inDistrict)
-    && (skip === 'bemmp' || !bemmp || (t.bemmp_code ?? 'none') === bemmp)
-    && (skip === 'team' || !team || (teamOf(t)?.id ?? 'none') === team)
-    && (skip === 'eng' || !eng || (t.engineer_id ?? 'none') === eng)
-    && (skip === 'status' || !status || t.status === status)
-    && (skip === 'from' || !from || (t.source ?? 'hospital') === from)
-    && (skip === 'cat' || !cat || (t.spare_category ?? 'none') === cat)
-    && (skip === 'crit' || !crit || (t.criticality ?? 'none') === crit)
+    && (skip === 'district' || skip === 'state' || any(inDistrict, t.district ?? 'none'))
+    && (skip === 'bemmp' || any(bemmp, t.bemmp_code ?? 'none'))
+    && (skip === 'team' || any(team, teamOf(t)?.id ?? 'none'))
+    && (skip === 'eng' || any(eng, t.engineer_id ?? 'none'))
+    && (skip === 'status' || any(status, t.status))
+    && (skip === 'from' || any(from, t.source ?? 'hospital'))
+    && (skip === 'cat' || any(cat, t.spare_category ?? 'none'))
+    && (skip === 'crit' || any(crit, t.criticality ?? 'none'))
 
   const facets = useMemo(() => {
     const tally = (skip: Filter, key: (t: Ticket) => string, name: (t: Ticket) => string) => {
@@ -229,25 +234,26 @@ export default function Tickets() {
     const bemmps = byLabel(tally('bemmp', t => t.bemmp_code ?? 'none', t => t.bemmp_code ?? 'No BEMMP'))
     const teams = byLabel(tally('team', t => teamOf(t)?.id ?? 'none', t => teamOf(t)?.name ?? 'Not from your team'))
     const engineers = byLabel(tally('eng', t => t.engineer_id ?? 'none', t => t.engineer_name ?? 'No engineer yet'))
-    const keep = (list: Facet[], value: string, label: string) =>
-      value && !list.some(f => f.value === value) ? [...list, { value, label, n: 0 }] : list
+    // Each ticked choice that no longer matches anything stays offered, at nought.
+    const keep = (list: Facet[], chosen: string[], label: (v: string) => string) =>
+      [...list, ...chosen.filter(v => !list.some(f => f.value === v)).map(v => ({ value: v, label: label(v), n: 0 }))]
     return {
-      labs: keep(labs, trcId, 'That Revive Lab'),
-      states: keep(states, inState, inState === 'none' ? 'No state' : inState),
-      districts: keep(districts, inDistrict, inDistrict === 'none' ? 'No district' : inDistrict),
-      bemmps: keep(bemmps, bemmp, bemmp === 'none' ? 'No BEMMP' : bemmp),
-      statuses: keep(statuses, status, STATUS[status as TicketStatus]?.short ?? status),
+      labs: keep(labs, trcId, () => 'That Revive Lab'),
+      states: keep(states, inState, v => (v === 'none' ? 'No state' : v)),
+      districts: keep(districts, inDistrict, v => (v === 'none' ? 'No district' : v)),
+      bemmps: keep(bemmps, bemmp, v => (v === 'none' ? 'No BEMMP' : v)),
+      statuses: keep(statuses, status, v => STATUS[v as TicketStatus]?.short ?? v),
       sources: keep(['hospital', 'warehouse'].filter(s => sources.has(s)).map(s => sources.get(s)!), from,
-        from === 'warehouse' ? 'From warehouses' : 'From hospitals'),
+        v => (v === 'warehouse' ? 'From warehouses' : 'From hospitals')),
       cats: keep(['A', 'B', 'C', 'none'].filter(s => cats.has(s)).map(s => cats.get(s)!), cat,
-        cat === 'none' ? 'No category yet' : `Category ${cat}`),
+        v => (v === 'none' ? 'No category yet' : `Category ${v}`)),
       crits: keep(['critical', 'non_critical', 'none'].filter(s => crits.has(s)).map(s => crits.get(s)!), crit,
-        crit === 'critical' ? 'Critical' : crit === 'non_critical' ? 'Non-critical' : 'Not said yet'),
-      teams: keep(teams, team, 'That team'),
-      engineers: keep(engineers, eng, 'That engineer'),
+        v => (v === 'critical' ? 'Critical' : v === 'non_critical' ? 'Non-critical' : 'Not said yet')),
+      teams: keep(teams, team, () => 'That team'),
+      engineers: keep(engineers, eng, () => 'That engineer'),
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searched, trcId, inState, inDistrict, bemmp, status, from, cat, crit, team, eng, teamOf])
+  }, [searched, params.toString(), teamOf])
 
   const shown = useMemo(() => {
     const rows = searched.filter(t => passes(t))
@@ -265,17 +271,18 @@ export default function Tickets() {
       return Date.parse(b.created_at) - Date.parse(a.created_at)
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searched, trcId, inState, inDistrict, bemmp, status, from, cat, crit, team, eng, sortKey, asc, teamOf])
+  }, [searched, params.toString(), sortKey, asc, teamOf])
 
   // How many filters are narrowing the list, and the way back to all of it.
-  const narrowing = [trcId, inState, inDistrict, bemmp, status, from, cat, crit, team, eng].filter(Boolean).length
+  const narrowing = [trcId, inState, inDistrict, bemmp, status, from, cat, crit, team, eng].filter(v => v.length > 0).length
   const clearFilters = () => setParams(p => {
     for (const k of ['lab', 'state', 'district', 'bemmp', 'status', 'from', 'cat', 'crit', 'team', 'eng']) p.delete(k)
     return p
   }, { replace: true })
   // A district belongs to one state: choosing another state lets the district go.
-  const chooseState = (v: string | null) => setParams(p => {
-    if (v) p.set('state', v); else p.delete('state')
+  const chooseState = (values: string[]) => setParams(p => {
+    p.delete('state')
+    for (const v of values) p.append('state', v)
     p.delete('district')
     return p
   }, { replace: true })
@@ -411,30 +418,30 @@ export default function Tickets() {
           <div id="ticket-filters" className={clsx('border-t border-ink-200/70 px-3 py-2.5 sm:block', !filtersOpen && 'hidden')}>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
               <FilterSelect icon={Building2} tone="violet" label="Filter by Revive Lab" all="All Revive Labs"
-                value={trcId} options={facets.labs} onChange={v => setParam('lab', v)} />
+                value={trcId} options={facets.labs} onChange={v => setMany('lab', v)} />
               <FilterSelect icon={MapIcon} tone="sky" label="Filter by state" all="Any state"
                 value={inState} options={facets.states} onChange={chooseState} />
               <FilterSelect icon={MapPin} tone="cyan" label="Filter by district" all="Any district"
-                value={inDistrict} options={facets.districts} onChange={v => setParam('district', v)} />
+                value={inDistrict} options={facets.districts} onChange={v => setMany('district', v)} />
               <FilterSelect icon={Layers} tone="blue" label="Filter by BEMMP" all="Any BEMMP"
-                value={bemmp} options={facets.bemmps} onChange={v => setParam('bemmp', v)} />
-              {(anyWarehouse || from) && (
+                value={bemmp} options={facets.bemmps} onChange={v => setMany('bemmp', v)} />
+              {(anyWarehouse || from.length > 0) && (
                 <FilterSelect icon={Hospital} tone="orange" label="Filter by where it came from" all="Hospital or warehouse"
-                  value={from} options={facets.sources} onChange={v => setParam('from', v)} />
+                  value={from} options={facets.sources} onChange={v => setMany('from', v)} />
               )}
               <FilterSelect icon={CircleDot} tone="amber" label="Filter by status" all="Any status"
-                value={status} options={facets.statuses} onChange={v => setParam('status', v)} />
+                value={status} options={facets.statuses} onChange={v => setMany('status', v)} />
               <FilterSelect icon={Tag} tone="indigo" label="Filter by category" all="Any category"
-                value={cat} options={facets.cats} onChange={v => setParam('cat', v)} />
+                value={cat} options={facets.cats} onChange={v => setMany('cat', v)} />
               <FilterSelect icon={TriangleAlert} tone="rose" label="Filter by criticality" all="Any criticality"
-                value={crit} options={facets.crits} onChange={v => setParam('crit', v)} />
-              {(showTeam || team) && (
+                value={crit} options={facets.crits} onChange={v => setMany('crit', v)} />
+              {(showTeam || team.length > 0) && (
                 <FilterSelect icon={Users} tone="fuchsia" label="Filter by your team" all="All your teams"
-                  value={team} options={facets.teams} onChange={v => setParam('team', v)} />
+                  value={team} options={facets.teams} onChange={v => setMany('team', v)} />
               )}
-              {(desk || eng) && (
+              {(desk || eng.length > 0) && (
                 <FilterSelect icon={Wrench} tone="teal" label="Filter by Revive Lab engineer" all="Any Revive Lab engineer"
-                  value={eng} options={facets.engineers} onChange={v => setParam('eng', v)} />
+                  value={eng} options={facets.engineers} onChange={v => setMany('eng', v)} />
               )}
               {narrowing > 0 && (
                 <button
@@ -650,48 +657,107 @@ export default function Tickets() {
 }
 
 /**
- * One filter: a dropdown with its own icon and colour. Quiet while it lets
- * everything through; lit in its colour while it is narrowing the list, so
- * a glance down the row says which are on. The choices are the browser's
- * own list — it is what a phone opens as a wheel — and each says how many
- * tickets it would show.
+ * One filter: a button with its own icon and colour that opens a list of
+ * ticks, so several can be chosen at once (the user, 7 Oct: "better add
+ * multiple selection check box"). Quiet while it lets everything through;
+ * lit in its colour while it is narrowing the list, so a glance down the
+ * row says which are on. Each choice says how many tickets it would show.
  */
 function FilterSelect({ icon: Icon, tone, label, all, value, options, onChange }: {
   icon: LucideIcon
   tone: Tone
-  /** What it filters by, for a screen reader: the box itself shows only the choice. */
+  /** What it filters by, for a screen reader and at the top of the list. */
   label: string
-  /** What the box says while it lets everything through: "Any status". */
+  /** What the button says while it lets everything through: "Any status". */
   all: string
-  value: string
+  value: string[]
   options: Facet[]
-  onChange: (value: string | null) => void
+  onChange: (value: string[]) => void
 }) {
-  const on = value !== ''
+  const [open, setOpen] = useState(false)
+  // Opens leftward when there is no room to the right (the right-hand column on a phone).
+  const [toLeft, setToLeft] = useState(false)
+  const box = useRef<HTMLDivElement>(null)
+  const button = useRef<HTMLButtonElement>(null)
+  const on = value.length > 0
+  const chosen = options.filter(f => value.includes(f.value))
+  const said = !on ? all : chosen.length === 1 ? chosen[0].label : `${chosen[0]?.label ?? ''} +${value.length - 1}`
+
+  useEffect(() => {
+    if (!open) return
+    const r = button.current?.getBoundingClientRect()
+    if (r) setToLeft(r.left + 256 > window.innerWidth - 8)
+    const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false) }
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') { setOpen(false); button.current?.focus() } }
+    document.addEventListener('pointerdown', away)
+    document.addEventListener('keydown', esc)
+    return () => { document.removeEventListener('pointerdown', away); document.removeEventListener('keydown', esc) }
+  }, [open])
+
+  const flip = (v: string) => onChange(value.includes(v) ? value.filter(x => x !== v) : [...value, v])
+
   return (
-    <label
-      className={clsx(
-        'relative flex min-w-0 items-center rounded-lg border transition-colors',
-        'focus-within:border-[color:var(--score-accent)] focus-within:ring-1 focus-within:ring-[color:var(--score-accent)]',
-        on ? clsx(TONE_EDGE[tone], TONE_CLASS[tone]) : 'border-ink-200 bg-surface text-ink-700 hover:border-ink-300',
-      )}
-    >
-      <Icon aria-hidden className={clsx('pointer-events-none absolute left-2.5 h-4 w-4', !on && TONE_TEXT[tone])} />
-      <select
-        aria-label={label}
-        value={value}
-        onChange={e => onChange(e.target.value || null)}
+    <div ref={box} className="relative min-w-0">
+      <button
+        ref={button}
+        type="button"
+        aria-label={`${label}: ${on ? chosen.map(f => f.label).join(', ') : all}`}
+        aria-haspopup="true"
+        aria-expanded={open}
+        onClick={() => setOpen(o => !o)}
         className={clsx(
-          'w-full min-w-0 cursor-pointer appearance-none truncate rounded-lg bg-transparent py-1.5 pl-8 pr-8 text-sm focus:outline-none',
-          // The list the browser opens states its own colours: on Windows it does not take them from the page.
-          '[&>option]:bg-surface [&>option]:font-normal [&>option]:text-ink-900',
-          on && 'font-semibold',
+          'relative flex w-full min-w-0 items-center rounded-lg border py-1.5 pl-8 pr-8 text-left text-sm transition-colors',
+          'focus:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--score-accent)]',
+          on ? clsx(TONE_EDGE[tone], TONE_CLASS[tone], 'font-semibold') : 'border-ink-200 bg-surface text-ink-700 hover:border-ink-300',
         )}
       >
-        <option value="">{all}</option>
-        {options.map(f => <option key={f.value} value={f.value}>{f.label} ({f.n})</option>)}
-      </select>
-      <ChevronDown aria-hidden className="pointer-events-none absolute right-2.5 h-4 w-4 opacity-60" />
-    </label>
+        <Icon aria-hidden className={clsx('pointer-events-none absolute left-2.5 h-4 w-4', !on && TONE_TEXT[tone])} />
+        <span className="block min-w-0 truncate">{said}</span>
+        <ChevronDown aria-hidden className={clsx('pointer-events-none absolute right-2.5 h-4 w-4 opacity-60 transition-transform', open && 'rotate-180')} />
+      </button>
+      {open && (
+        <div
+          role="group"
+          aria-label={label}
+          className={clsx(
+            'absolute top-full z-30 mt-1 w-64 max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-xl border border-ink-200 bg-surface shadow-lg',
+            toLeft ? 'right-0' : 'left-0',
+          )}
+        >
+          <div className="flex items-center justify-between gap-2 border-b border-ink-100 px-3 py-2">
+            <span className="truncate text-xs font-semibold text-ink-500">{label.replace(/^Filter by /, 'By ')}</span>
+            {on && (
+              <button type="button" onClick={() => onChange([])} className="shrink-0 text-xs font-medium text-ink-600 hover:text-ink-900 hover:underline">
+                Clear
+              </button>
+            )}
+          </div>
+          <ul className="max-h-72 overflow-y-auto py-1">
+            {options.length === 0 && <li className="px-3 py-2 text-sm text-ink-500">Nothing to choose here</li>}
+            {options.map(f => {
+              const ticked = value.includes(f.value)
+              return (
+                <li key={f.value}>
+                  <label className="flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-sm text-ink-800 hover:bg-ink-50">
+                    <input type="checkbox" checked={ticked} onChange={() => flip(f.value)} className="peer sr-only" />
+                    <span
+                      aria-hidden
+                      className={clsx(
+                        'grid h-4 w-4 shrink-0 place-items-center rounded-[5px] border-[1.5px] transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-ink-300',
+                        ticked ? 'border-ink-900 bg-ink-900' : 'border-ink-300',
+                      )}
+                    >
+                      {ticked && <Check className="h-3 w-3" strokeWidth={3.5} style={{ color: 'rgb(var(--surface))' }} />}
+                    </span>
+                    <span className={clsx('min-w-0 flex-1 truncate', ticked && 'font-medium text-ink-900')}>{f.label}</span>
+                    <span className={clsx('shrink-0 tabular-nums text-xs', f.n === 0 ? 'text-ink-300' : 'text-ink-500')}>{f.n}</span>
+                  </label>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
+    </div>
   )
 }
