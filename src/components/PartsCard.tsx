@@ -8,7 +8,7 @@ import {
 import { useAuth } from '@/contexts/AuthContext'
 import {
   useApproveUse, useCancelPart, useCancelUse, useComponentUses, useConfirmPart, useDeclinePart, useDeclineUse,
-  useForwardPart, useMakeLocal, useOrderPart, usePartNo, usePartRequests, usePurchasePart, useSetPartProgress, useStockPart,
+  useComponents, useForwardPart, useMakeLocal, useOrderPart, usePartNo, usePartRequests, usePurchasePart, useSetPartProgress, useStockPart,
   useTakePart,
   type ComponentUse, type PartRequest, type Ticket,
 } from '@/lib/queries'
@@ -579,13 +579,29 @@ export function StockDialog({ request: r, onClose, onDone }: {
   const [touchedPartNo, setTouchedPartNo] = useState(false)
   const [qty, setQty] = useState(String(r.qty))
   const [useQty, setUseQty] = useState(pr ? '0' : String(r.qty))
+  const [bin, setBin] = useState('')
+  const [location, setLocation] = useState('')
+  const [touchedWhere, setTouchedWhere] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const suggestion = usePartNo(r.trc_id, value, item)
+  const { data: labStock } = useComponents(r.trc_id)
 
   // The number follows the value and item until somebody types their own.
   useEffect(() => {
     if (!touchedPartNo && suggestion.data) setPartNo(suggestion.data)
   }, [suggestion.data, touchedPartNo])
+
+  // Where it is kept (rl_0045; the user, 7 Oct: "where is the bin, location field?"). A part already in
+  // stock brings its own BIN and Location, until somebody types others — which moves it.
+  const existing = useMemo(() => {
+    const p = partNo.trim().toLowerCase()
+    return p ? (labStock ?? []).find(c => c.part_no.trim().toLowerCase() === p) ?? null : null
+  }, [labStock, partNo])
+  useEffect(() => {
+    if (touchedWhere) return
+    setBin(existing?.bin ?? '')
+    setLocation(existing?.location ?? '')
+  }, [existing?.id, existing?.bin, existing?.location, touchedWhere])
 
   const bought = Number(qty)
   const toRepair = Number(useQty)
@@ -600,6 +616,7 @@ export function StockDialog({ request: r, onClose, onDone }: {
       await stock.mutateAsync({
         id: r.id, value: value.trim(), item: item.trim(), package: pack.trim(),
         partNo: partNo.trim() || null, qty: bought, useQty: toRepair,
+        bin: bin.trim(), location: location.trim(),
       })
       onDone(pr
         ? `${bought} into stock as ${partNo.trim() || 'a new part'}. ${r.code} is done.`
@@ -638,11 +655,22 @@ export function StockDialog({ request: r, onClose, onDone }: {
           <span className="label">Part number</span>
           <input className="input mt-1 font-mono" value={partNo} maxLength={40}
             onChange={e => { setPartNo(e.target.value); setTouchedPartNo(true) }} />
-          <span className="mt-1 block text-xs text-ink-500">
-            {suggestion.isFetching ? 'Looking it up…'
-              : known ? 'This Revive Lab’s number for that value and item — new ones are made up here.'
-                : 'Typed in by hand.'}
-          </span>
+          {/* Its own number says nothing more (the user, 7 Oct: "remove this sentence"). */}
+          {(suggestion.isFetching || !known) && (
+            <span className="mt-1 block text-xs text-ink-500">
+              {suggestion.isFetching ? 'Looking it up…' : 'Typed in by hand.'}
+            </span>
+          )}
+        </label>
+        <label className="block">
+          <span className="label">BIN</span>
+          <input className="input mt-1" value={bin} maxLength={40} placeholder="B1"
+            onChange={e => { setBin(e.target.value); setTouchedWhere(true) }} />
+        </label>
+        <label className="block">
+          <span className="label">Location</span>
+          <input className="input mt-1" value={location} maxLength={40} placeholder="A2"
+            onChange={e => { setLocation(e.target.value); setTouchedWhere(true) }} />
         </label>
       </div>
 

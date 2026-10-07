@@ -1014,12 +1014,13 @@ export const useOrderPart = () => useTicketMutation(
 export const useMakeLocal = () => useTicketMutation(
   (a: { id: string; note?: string }) => rpc('revive_make_local', { p_request_id: a.id, p_note: a.note || null }))
 
-/** What was bought, written into stock and sent to the engineer. */
+/** What was bought, written into stock — with where it is kept (rl_0045) — and sent to the engineer. */
 export const useStockPart = () => useTicketMutation(
-  (a: { id: string; value: string; item: string; package: string; partNo?: string | null; qty: number; useQty: number }) =>
+  (a: { id: string; value: string; item: string; package: string; partNo?: string | null; qty: number; useQty: number; bin?: string; location?: string }) =>
     rpc('revive_stock_part', {
       p_request_id: a.id, p_value: a.value, p_item: a.item, p_package: a.package,
       p_part_no: a.partNo || null, p_qty: a.qty, p_use_qty: a.useQty,
+      p_bin: a.bin || null, p_location: a.location || null,
     }))
 
 export const useDeclinePart = () => useTicketMutation(
