@@ -383,7 +383,7 @@ export function orList(names: readonly string[]): string {
   return `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}`
 }
 
-export type ApprovalKind = 'raise' | 'transfer'
+export type ApprovalKind = 'raise' | 'transfer' | 'return'
 export type ApprovalStatus = 'pending' | 'approved' | 'declined' | 'cancelled' | 'sent'
 
 /** A request to go to another Revive Lab, and what became of it (rl_0014). */
@@ -408,7 +408,16 @@ export interface Approval {
   decided_by_name: string | null
   decided_at: string | null
   decision_note: string | null
+  /** Another state's Revive Lab: the BEMMP's project head approves first (rl_0047). */
+  head_id?: string | null
+  head_name?: string | null
+  head_decided_at?: string | null
+  head_note?: string | null
 }
+
+/** Another state's Revive Lab with a project head: the head alone approves it (rl_0048). */
+export const waitsOnHead = (a: Pick<Approval, 'status' | 'head_id'> | null | undefined): boolean =>
+  !!a && a.status === 'pending' && !!a.head_id
 
 /** Not repairable: what the engineer proposes becomes of it. */
 export type Proposal = 'scrap' | 'return' | 'oem'
@@ -511,7 +520,7 @@ export interface TicketLike {
   proposal?: Proposal | null
   /** Not repairable: when a manager approved it (rl_0034). */
   nr_approved_at?: string | null
-  approval?: Pick<Approval, 'kind' | 'status'> | null
+  approval?: Pick<Approval, 'kind' | 'status' | 'head_id'> | null
   /** Its latest transfer to another field engineer (rl_0028). */
   handover?: { status: 'pending' | 'accepted' | 'declined' | 'cancelled'; to_id: string } | null
 }
@@ -619,7 +628,11 @@ export function actionsFor(t: TicketLike, me: Me | null | undefined): Action[] {
   // Going to another Revive Lab (rl_0014): the Regional Revive Lab admins
   // decide; approved, whoever asked sends it — the field engineer for their
   // own ticket, the desk for a transfer.
-  if (me.approves && t.status === 'awaiting_approval') out.push('approve', 'decline_approval')
+  // Another state's Revive Lab: its BEMMP's project head; with no head, the Regional admins (rl_0048).
+  if (t.status === 'awaiting_approval') {
+    const head = waitsOnHead(t.approval)
+    if (head ? t.approval!.head_id === me.employee_id || me.is_sw_admin : me.approves) out.push('approve', 'decline_approval')
+  }
   if (t.status === 'approved' && open && (open.kind === 'raise' ? sender : desk)) out.push('send')
   // Not approved: their own state's or a Regional Revive Lab instead.
   if (sender && t.status === 'not_approved') out.push('reroute')
@@ -661,6 +674,8 @@ export function actionsFor(t: TicketLike, me: Me | null | undefined): Action[] {
   if (mine && (t.status === 'assigned' || t.status === 'in_repair')) out.push('return')
   if (desk && (t.status === 'accepted' || t.status === 'assigned' || t.status === 'in_repair')) out.push('transfer')
   if (desk && open?.kind === 'transfer' && (t.status === 'awaiting_approval' || t.status === 'approved')) out.push('cancel_transfer')
+  // A return to another state's Revive Lab, asked for by the field engineer (rl_0047).
+  if (t.stakeholder_id === me.employee_id && open?.kind === 'return' && t.status === 'awaiting_approval') out.push('cancel_transfer')
   // A ticket raised for another state's Revive Lab that never went anywhere.
   if (sender && (t.status === 'not_approved' || (open?.kind === 'raise' && (t.status === 'awaiting_approval' || t.status === 'approved')))) {
     out.push('discard')

@@ -214,7 +214,7 @@ export function nextMove(t: ReportTicket): string {
   const lab = t.trc_name
   const eng = t.engineer_name ?? 'the Revive Lab engineer'
   switch (t.status) {
-    case 'awaiting_approval': return 'A Revive Lab admin, to approve'
+    case 'awaiting_approval': return 'The project head or a Revive Lab admin, to approve'
     case 'not_approved': return `${t.stakeholder_name}, to send it elsewhere or discard it`
     case 'approved': return 'To be sent on, now approved'
     case 'pending_acceptance':

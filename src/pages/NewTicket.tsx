@@ -6,10 +6,10 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import {
-  useBemmpProjects, useMembers, useOverdueReturns, useOverdueReturnsOf, useRaiseTicket, useTickets, useTrcs, useWarehouses, type Person, type Trc,
+  useBemmpProjects, useOverdueReturns, useOverdueReturnsOf, useRaiseTicket, useTickets, useTrcs, useWarehouses, type Person, type Trc,
 } from '@/lib/queries'
 import {
-  approversOf, cleanItems, orList, runsTrc, serves, stateLabel,
+  cleanItems, runsTrc, serves, stateLabel,
   type ContractType, type Criticality, type SpareCategory, type TicketSource,
 } from '@/lib/tickets'
 import Choices, { type ChoiceOption } from '@/components/Choices'
@@ -37,10 +37,9 @@ import CourierSelect from '@/components/CourierSelect'
  * dispatch is the inbound courier's date. The back of the card — Action
  * taken, Final status — belongs to the Close repair and Received back steps.
  *
- * Another state's Revive Lab is not in the list. It is asked for, with a
- * reason: the ticket is raised as waiting for approval, and once the
- * Regional Revive Lab admins approve it, the field engineer sends it
- * (rl_0014).
+ * Another state's Revive Lab: where the BEMMP has a project head, it is
+ * asked for with a reason and the head approves it before the field
+ * engineer sends it; with no head it is simply in the list (rl_0049).
  *
  * Who is asking decides which card it is, and nobody is asked. A field
  * engineer sending a spare in raises it for themselves. A Revive Lab's
@@ -63,7 +62,6 @@ export default function NewTicket() {
   const { data: trcs, isLoading } = useTrcs()
   const { data: bemmp } = useBemmpProjects()
   const { data: tickets } = useTickets()
-  const { data: members } = useMembers()
   const { data: warehouses } = useWarehouses()
   const { data: late, isLoading: checkingLate } = useOverdueReturns()
   const raise = useRaiseTicket()
@@ -124,17 +122,20 @@ export default function NewTicket() {
   const bemmpChoices = useMemo(() => (bemmp ?? []).filter(b => b.is_active && serves(b, state)), [bemmp, state])
   // The state's own Revive Labs and the Regional ones — for the desk, only
   // those of its own. A Kerala card at the Jodhpur Revive Lab was offered once.
+  const headId = (bemmp ?? []).find(b => b.id === form.bemmpId)?.head_id ?? null
   const labChoices = useMemo(
-    () => (state ? (atLab ? deskTrcs : active).filter(t => serves(t, state)) : []),
-    [atLab, deskTrcs, active, state],
+    () => (state ? (atLab ? deskTrcs : active).filter(t => serves(t, state) || (!atLab && !headId)) : []),
+    [atLab, deskTrcs, active, state, headId],
   )
   const warehouseChoices = useMemo(
     () => (warehouses ?? []).filter(w => w.is_active && serves(w, state)),
     [warehouses, state],
   )
+  // The BEMMP's project head approves another state's Revive Lab; with none, it is just another choice (rl_0049).
+  const head = (bemmp ?? []).find(b => b.id === form.bemmpId && b.head_id) ?? null
   const elsewhere = useMemo(() => (atLab || !state ? [] : active.filter(t => !serves(t, state))), [atLab, active, state])
+  const asksHead = !!head && elsewhere.length > 0
   const farLab = far ? active.find(t => t.id === far.trcId) ?? null : null
-  const approvers = useMemo(() => approversOf(members ?? [], trcs ?? []), [members, trcs])
   // Pvt asks whether the spare is billed to the customer.
   const asksBilling = !!bemmpChoices.find(b => b.id === form.bemmpId)?.asks_billing
   // Pvt asks the contract too: AMC, or CAMC — and a CAMC spare is always critical.
@@ -406,7 +407,7 @@ export default function NewTicket() {
                   )}
                 </label>
               )}
-              {!far && elsewhere.length > 0 && (
+              {!far && asksHead && (
                 <button type="button" onClick={() => setAsking(true)} className="link-accent mt-2 inline-flex items-center gap-1.5 text-sm font-medium">
                   <ArrowUpRight className="h-4 w-4" /> Send to another state&rsquo;s Revive Lab
                 </button>
@@ -499,7 +500,7 @@ export default function NewTicket() {
         <div className="flex flex-wrap items-center justify-end gap-2">
           {far && (
             <p className="w-full text-xs text-ink-500 sm:mr-auto sm:w-auto">
-              {approvers.length ? `${orList(approvers)} approves` : 'The Regional Revive Lab admins approve'} it before you send it.
+              {head?.head?.full_name ?? 'The project head'} approves it before you send it.
             </p>
           )}
           <button type="button" className="btn-secondary" onClick={() => navigate(-1)} disabled={busy}>Cancel</button>
@@ -512,9 +513,8 @@ export default function NewTicket() {
 
       {asking && (
         <AskAnotherState
-          state={state}
           labs={elsewhere}
-          approvers={approvers}
+          headName={head?.head?.full_name ?? 'the project head'}
           initial={far}
           onClose={closeAsking}
           onChoose={pick => { setFar(pick); setAsking(false) }}
@@ -561,10 +561,9 @@ function FarChoice({ lab, reason, onChange, onUndo }: {
  * Asking for another state's Revive Lab: which one, and why. Its own state,
  * so typing the reason does not redraw the whole route card underneath.
  */
-function AskAnotherState({ state, labs, approvers, initial, onClose, onChoose }: {
-  state: string
+function AskAnotherState({ labs, headName, initial, onClose, onChoose }: {
   labs: readonly Trc[]
-  approvers: string[]
+  headName: string
   initial: { trcId: string; reason: string } | null
   onClose: () => void
   onChoose: (pick: { trcId: string; reason: string }) => void
@@ -582,8 +581,7 @@ function AskAnotherState({ state, labs, approvers, initial, onClose, onChoose }:
   return (
     <Dialog title="Another state’s Revive Lab" icon={<IconChip icon={ShieldQuestion} tone="fuchsia" />} onClose={onClose}>
       <p className="text-sm text-ink-600">
-        The route card offers {state}&rsquo;s Revive Labs and the Regional ones. Any other is approved first by the
-        Regional Revive Lab admins{approvers.length ? <> — {orList(approvers)}</> : null}. Raise the ticket now; once it
+        Another state&rsquo;s Revive Lab is approved first by {headName}, the project head. Raise the ticket now; once it
         is approved, you send it from the ticket.
       </p>
       <label className="block">

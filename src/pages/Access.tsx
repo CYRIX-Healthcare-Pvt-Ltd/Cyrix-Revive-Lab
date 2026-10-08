@@ -390,6 +390,61 @@ export function ReviveLabAccess() {
 /* ------------------------------------------------------------------ */
 
 /**
+ * A BEMMP's project head, by name or E-code (rl_0047; the user, 8 Oct: "type
+ * name also in head field? so suggestion comes"). Empty clears it.
+ */
+function HeadPicker({ value, name, onChange }: {
+  value: string
+  name: string
+  onChange: (ecode: string, name: string) => void
+}) {
+  const [q, setQ] = useState(name ? `${name} (${value})` : value)
+  const [open, setOpen] = useState(false)
+  const term = useDeferredValue(q.trim())
+  const { data: found } = useQuery({
+    enabled: open && term.length >= 2,
+    queryKey: ['revive', 'people', term.toLowerCase()],
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('revive_find_people', { p_q: term })
+      if (error) throw new Error(friendlyError(error))
+      return (data ?? []) as { id: string; ecode: string; full_name: string; designation: string | null }[]
+    },
+  })
+  return (
+    <span className="relative inline-block">
+      <input
+        className="input !py-1 w-56"
+        value={q}
+        onChange={e => { setQ(e.target.value); setOpen(true); { const v = e.target.value.trim(); onChange(/^[A-Za-z_]*d+$/.test(v) ? v.toUpperCase() : v ? value : '', '') } }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        placeholder="Project head — name or E-code"
+        aria-label="Project head"
+      />
+      {open && (found ?? []).length > 0 && (
+        <span className="absolute left-0 top-full z-20 mt-1 block max-h-60 w-72 overflow-y-auto rounded-lg border border-ink-200 bg-surface py-1 shadow-lg">
+          {(found ?? []).slice(0, 8).map(p => (
+            <button
+              key={p.id}
+              type="button"
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => { onChange(p.ecode, p.full_name); setQ(`${p.full_name} (${p.ecode})`); setOpen(false) }}
+              className="block w-full px-3 py-1.5 text-left text-sm hover:bg-ink-50"
+            >
+              <span className="text-ink-900">{p.full_name}</span>
+              <span className="text-xs text-ink-500"> · {p.ecode}{p.designation ? ` · ${p.designation}` : ''}</span>
+            </button>
+          ))}
+        </span>
+      )}
+    </span>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+
+/**
  * The BEMMP programmes a route card can name — AP, KL, RJ, UP, Pvt …
  *
  * A list rather than free text, so "KL", "Kerala" and "kl bemmp" do not
@@ -400,7 +455,12 @@ export function ReviveLabAccess() {
  * Each is a state's programme, or Regional — Pvt runs in every state. The
  * route card offers only the chosen state's and the Regional ones.
  */
-interface Bemmp { id: string; code: string; state: string | null; is_active: boolean; sort_order: number }
+interface Bemmp {
+  id: string; code: string; state: string | null; is_active: boolean; sort_order: number
+  /** Approves a move to another state's Revive Lab first (rl_0047). Optional. */
+  head_id: string | null
+  head: { full_name: string; ecode: string } | null
+}
 
 function BemmpTable({ canEdit }: { canEdit: boolean }) {
   const qc = useQueryClient()
@@ -408,9 +468,10 @@ function BemmpTable({ canEdit }: { canEdit: boolean }) {
     queryKey: ['revive', 'bemmp'],
     queryFn: async () => {
       const { data, error } = await supabase.from('revive_bemmp_projects')
-        .select('id, code, state, is_active, sort_order').order('sort_order').order('code')
+        .select('id, code, state, is_active, sort_order, head_id, head:employees!revive_bemmp_projects_head_id_fkey(full_name, ecode)')
+        .order('sort_order').order('code')
       if (error) throw new Error(friendlyError(error))
-      return data as Bemmp[]
+      return data as unknown as Bemmp[]
     },
   })
   const save = useMutation({
@@ -424,8 +485,12 @@ function BemmpTable({ canEdit }: { canEdit: boolean }) {
   })
   const [adding, setAdding] = useState('')
   const [addingState, setAddingState] = useState<string | null | undefined>(undefined)
-  const [editing, setEditing] = useState<{ id: string; code: string; state: string | null | undefined } | null>(null)
+  const [editing, setEditing] = useState<{ id: string; code: string; state: string | null | undefined; head: string; headName: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const setHead = useMutation({
+    mutationFn: (h: { id: string; ecode: string }) => call('revive_set_bemmp_head', { p_id: h.id, p_ecode: h.ecode || null }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['revive', 'bemmp'] }),
+  })
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -442,7 +507,13 @@ function BemmpTable({ canEdit }: { canEdit: boolean }) {
   const saveEdit = async (b: Bemmp) => {
     if (!editing) return
     setError(null)
-    try { await save.mutateAsync({ id: b.id, code: editing.code, active: b.is_active, state: editing.state }); setEditing(null) }
+    try {
+      await save.mutateAsync({ id: b.id, code: editing.code, active: b.is_active, state: editing.state })
+      if (editing.head.trim().toUpperCase() !== (b.head?.ecode ?? '').toUpperCase()) {
+        await setHead.mutateAsync({ id: b.id, ecode: editing.head.trim() })
+      }
+      setEditing(null)
+    }
     catch (err) { setError(err instanceof Error ? err.message : 'Could not save that.') }
   }
 
@@ -469,9 +540,10 @@ function BemmpTable({ canEdit }: { canEdit: boolean }) {
                   aria-label="BEMMP code"
                 />
                 <StateSelect className="!py-1 w-52" value={editing.state} onChange={state => setEditing({ ...editing, state })} />
+                <HeadPicker value={editing.head} name={editing.headName} onChange={(head, headName) => setEditing({ ...editing, head, headName })} />
                 <button type="button" className="btn-primary !px-3 !py-1 text-xs" onClick={() => void saveEdit(b)}
-                  disabled={save.isPending || !editing.code.trim() || editing.state === undefined}>
-                  {save.isPending && <Spinner className="h-3.5 w-3.5" />} Save
+                  disabled={save.isPending || setHead.isPending || !editing.code.trim() || editing.state === undefined}>
+                  {(save.isPending || setHead.isPending) && <Spinner className="h-3.5 w-3.5" />} Save
                 </button>
                 <button type="button" className="btn-secondary !px-3 !py-1 text-xs" onClick={() => setEditing(null)}>Cancel</button>
               </span>
@@ -485,11 +557,12 @@ function BemmpTable({ canEdit }: { canEdit: boolean }) {
               >
                 <span className={clsx(!b.is_active && 'line-through')}>{b.code}</span>
                 <span className="text-xs text-ink-500">{b.state ?? 'Regional'}</span>
+                {b.head && <span className="text-xs text-ink-500">· Head: {b.head.full_name}</span>}
                 {canEdit && (
                   <>
                     <button
                       type="button"
-                      onClick={() => { setError(null); setEditing({ id: b.id, code: b.code, state: b.state }) }}
+                      onClick={() => { setError(null); setEditing({ id: b.id, code: b.code, state: b.state, head: b.head?.ecode ?? '', headName: b.head?.full_name ?? '' }) }}
                       className="text-xs font-medium text-ink-500 hover:text-ink-900"
                     >
                       Edit
@@ -499,9 +572,9 @@ function BemmpTable({ canEdit }: { canEdit: boolean }) {
                       onClick={() => void toggle(b)}
                       disabled={save.isPending}
                       className="text-xs font-medium text-ink-500 hover:text-ink-900"
-                      title={b.is_active ? 'Retire — tickets that name it keep it' : 'Bring back'}
+                      title={b.is_active ? 'Disable — tickets that name it keep it' : 'Enable'}
                     >
-                      {b.is_active ? 'Retire' : 'Restore'}
+                      {b.is_active ? 'Disable' : 'Enable'}
                     </button>
                   </>
                 )}
@@ -643,9 +716,9 @@ function WarehouseTable({ canEdit }: { canEdit: boolean }) {
                       onClick={() => void toggle(w)}
                       disabled={save.isPending}
                       className="text-xs font-medium text-ink-500 hover:text-ink-900"
-                      title={w.is_active ? 'Retire — tickets that name it keep it' : 'Bring back'}
+                      title={w.is_active ? 'Disable — tickets that name it keep it' : 'Enable'}
                     >
-                      {w.is_active ? 'Retire' : 'Restore'}
+                      {w.is_active ? 'Disable' : 'Enable'}
                     </button>
                   </>
                 )}

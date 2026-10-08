@@ -435,6 +435,9 @@ export interface BemmpProject {
   state: string | null
   /** The route card asks AMC or CAMC under this one — Pvt (rl_0024). */
   asks_contract: boolean
+  /** Approves a spare going to another state's Revive Lab; none, and it simply goes (rl_0049). */
+  head_id: string | null
+  head: { full_name: string } | null
 }
 
 /** The BEMMP programmes a ticket can belong to. Admins keep the list. */
@@ -470,7 +473,7 @@ export function useBemmpProjects() {
     staleTime: 5 * 60_000,
     queryFn: async () => unwrap<BemmpProject[]>(
       await supabase.from('revive_bemmp_projects')
-        .select('id, code, is_active, sort_order, asks_billing, asks_contract, state')
+        .select('id, code, is_active, sort_order, asks_billing, asks_contract, state, head_id, head:employees!revive_bemmp_projects_head_id_fkey(full_name)')
         .order('sort_order').order('code'),
     ),
   })
@@ -1119,17 +1122,24 @@ export const useReturnToLab = () => useTicketMutation(
     photos: Blob[]; video?: Blob | null; voice?: Blob | null
     /** The round this return starts: the ticket's round, plus one. */
     round: number
+    /** Where it goes (rl_0046): the same Revive Lab, or another the route card offers. */
+    trcId?: string | null
   }) => {
     const photos = await uploadStage(a.id, 'resend', a.photos, a.round)
     const video = a.video ? await uploadStageFile(a.id, inRound('resend-video', a.round), a.video) : null
     const voice = a.voice ? await uploadStageFile(a.id, inRound('resend-voice', a.round), a.voice) : null
     return rpc('revive_return_to_lab', {
       p_ticket_id: a.id, p_reason: a.reason, p_courier: a.courier, p_awb: a.awb, p_dispatched_on: a.on || null,
-      p_photos: photos, p_video: video, p_voice: voice,
+      p_photos: photos, p_video: video, p_voice: voice, p_trc_id: a.trcId || null,
     })
   })
 
-/** A transfer is asked for; the Regional Revive Lab admins approve it before it is sent (rl_0014). */
+/** Still not working, for another state's Revive Lab: asked for, then returned once approved (rl_0047). */
+export const useRequestReturn = () => useTicketMutation(
+  (a: { id: string; toTrcId: string; reason: string }) =>
+    rpc('revive_request_return', { p_ticket_id: a.id, p_to_trc_id: a.toTrcId, p_reason: a.reason }))
+
+/** A transfer is asked for; another state's needs its project head first, else it is approved at once (rl_0049). */
 export const useRequestTransfer = () => useTicketMutation(
   (a: { id: string; toTrcId: string; reason: string }) =>
     rpc('revive_request_transfer', { p_ticket_id: a.id, p_to_trc_id: a.toTrcId, p_reason: a.reason }))

@@ -14,12 +14,12 @@ import {
   useAccept, useAddObservation, useAnswerHandover, useApprove, useApproveNotRepairable, useAssign, useDeclineNotRepairable, useCancelHandover, useCancelTransfer, useCloseTicket, useCompleteRepair,
   useFindPeople, useHandOver, usePhoneOf,
   useDeclineApproval, useDiscard, useDispatch, useHops, useMarkReceived, useMembers, useRequestTransfer, useReroute,
-  usePartRequests, useReturnToDesk, useReturnToLab, useScrap, useSend, useSetClassification, useSetExpectedDate, useStartRepair, useTickets,
+  usePartRequests, useBemmpProjects, useRequestReturn, useReturnToDesk, useReturnToLab, useScrap, useSend, useSetClassification, useSetExpectedDate, useStartRepair, useTickets,
   useTrail, useTrcs, useUpdateCourier,
   type FieldReturn, type PastRound, type Person, type Ticket, type TrailEvent,
 } from '@/lib/queries'
 import {
-  actionsFor, approversOf, awaitingManager, canClassify, itemsSummary, mergeDeskRaise, orList, ordinal, parseTicketCode, roundOf, serves, stateLabel,
+  actionsFor, approversOf, awaitingManager, canClassify, itemsSummary, mergeDeskRaise, orList, ordinal, parseTicketCode, roundOf, serves, stateLabel, waitsOnHead,
   CATEGORY_TAT_DAYS, CRITICALITY_LABEL,
   ITEM_KIND_LABEL, OUTCOME_LABEL, REPAIRING, STATUS, TONE_DOT, TONE_SOFT, TONE_TEXT, TRC_KIND_LABEL, statusLook,
   type Action, type Approval, type Criticality, type Outcome, type Proposal, type SpareCategory, type TicketItem,
@@ -347,10 +347,14 @@ function WhereItIs({ ticket: t }: { ticket: Ticket }) {
     </>
   )
   switch (t.status) {
-    case 'awaiting_approval':
+    case 'awaiting_approval': {
+      const who = waitsOnHead(a) ? `${a!.head_name}, the project head` : 'approval'
       return a?.kind === 'transfer'
-        ? <>{at} · transfer to {a.to_trc_name} waiting on the Regional Revive Lab admins</>
-        : <>For {t.trc_name} · waiting on the Regional Revive Lab admins to approve it</>
+        ? <>{at} · transfer to {a.to_trc_name} waiting on {who}</>
+        : a?.kind === 'return'
+          ? <>With {t.stakeholder_name} · return to {a.to_trc_name} waiting on {who}</>
+          : <>For {t.trc_name} · waiting on {who} to approve it</>
+    }
     case 'approved':
       return a?.kind === 'transfer'
         ? <>{at} · transfer to {a.to_trc_name} approved · waiting on the coordinator to send it</>
@@ -430,7 +434,7 @@ function ApprovalNote({ ticket: t, approval: a }: { ticket: Ticket; approval: Ap
         <look.icon className={clsx('mt-0.5 h-4 w-4 shrink-0', look.mark)} />
         <span>
           {t.status === 'awaiting_approval'
-            ? <>{a.kind === 'transfer' ? 'Transfer requested to ' : 'Requested for '}{to}</>
+            ? <>{a.kind === 'transfer' ? 'Transfer requested to ' : a.kind === 'return' ? 'Return requested to ' : 'Requested for '}{to}</>
             : t.status === 'approved'
               ? <>Approved for {to}{a.to_trc_id !== a.asked_trc_id && <span className="font-normal"> instead of {a.asked_trc_name}</span>}</>
               : <>{a.to_trc_name} not approved</>}
@@ -439,7 +443,10 @@ function ApprovalNote({ ticket: t, approval: a }: { ticket: Ticket; approval: Ap
       <div className="mt-1 space-y-1 pl-6">
         <p className="whitespace-pre-wrap text-sm text-ink-700">{a.reason}</p>
         <p className="text-xs text-ink-500">Requested by {a.requested_by_name} · {when(a.requested_at)}</p>
-        {t.status === 'awaiting_approval' && approvers.length > 0 && (
+        {t.status === 'awaiting_approval' && waitsOnHead(a) && (
+          <p className="text-xs text-ink-500">Waiting on {a.head_name}, the project head</p>
+        )}
+        {t.status === 'awaiting_approval' && !waitsOnHead(a) && approvers.length > 0 && (
           <p className="text-xs text-ink-500">Waiting on {orList(approvers)}</p>
         )}
         {t.status !== 'awaiting_approval' && a.decided_by_name && (
@@ -1352,6 +1359,7 @@ function ActionForm({
   const reroute = useReroute()
   const closeTicket = useCloseTicket()
   const returnToLab = useReturnToLab()
+  const requestReturn = useRequestReturn()
   // Which time round it is: a later round's photographs are its own (rl_0027).
   const round = roundOf(t)
   // No date on the ticket before the day it was raised (the user, 23 Sep).
@@ -1376,9 +1384,21 @@ function ActionForm({
   const [working, setWorking] = useState<'' | 'yes' | 'no'>('')
   // Not working: close the ticket there, or send it back to be repaired again (the user, 23 Sep).
   const [afterwards, setAfterwards] = useState<'close' | 'return' | null>(null)
-  const returning = action === 'close_ticket' && working === 'no' && afterwards === 'return'
-  const [engineerId, setEngineerId] = useState(reassign ? '' : t.engineer_id ?? '')
   const [toTrc, setToTrc] = useState('')
+  // Another state's Revive Lab waits on the ticket's BEMMP project head; with no head, nobody (rl_0049).
+  const { data: bemmps } = useBemmpProjects()
+  const ticketHead = (bemmps ?? []).find(b => b.id === t.bemmp_id && b.head_id) ?? null
+  const needsHead = (id: string) => {
+    const x = (trcs ?? []).find(l => l.id === id)
+    return !!ticketHead && !!x && x.id !== t.trc_id && !!x.state && x.state !== t.state
+  }
+  const backing = action === 'close_ticket' && working === 'no' && afterwards === 'return'
+  // Another state's Revive Lab is asked for first: its project head, then the Regional admins (rl_0047).
+  const approvedFor = t.approval?.kind === 'return' && t.approval.status === 'approved' ? t.approval.to_trc_id : null
+  const picked = (trcs ?? []).find(x => x.id === toTrc)
+  const needsOk = backing && !!picked && needsHead(picked.id) && picked.id !== approvedFor
+  const returning = backing && !needsOk
+  const [engineerId, setEngineerId] = useState(reassign ? '' : t.engineer_id ?? '')
   // The field engineer's own courier details start from what is on the card.
   const fromCard = action === 'courier' || action === 'reroute' || action === 'accept' || sendingRaise
   const [courier, setCourier] = useState(fromCard ? t.in_courier ?? '' : '')
@@ -1403,11 +1423,12 @@ function ActionForm({
 
   const engineers = (members ?? [])
     .filter(m => m.is_engineer && m.trc_ids.includes(t.trc_id) && m.employee_id !== t.engineer_id)
-  const approvers = approversOf(members ?? [], trcs ?? [])
   // Any other Revive Lab: every transfer is approved first, wherever it goes.
   const destinations = (trcs ?? []).filter(x => x.is_active && x.id !== t.trc_id)
   // Not approved: the state's own Revive Labs and the Regional ones, which need no approval.
   const nearby = (trcs ?? []).filter(x => x.is_active && serves(x, t.state))
+  // Going back (rl_0046, rl_0047): any Revive Lab; another state's once approved.
+  const backTo = (trcs ?? []).filter(x => x.is_active)
   const labName = (id: string) => trcs?.find(x => x.id === id)?.name ?? 'that Revive Lab'
 
   const busy = [accept, assign, observe, giveBack, complete, dispatch, received, transfer, updateCourier, send, reroute, closeTicket, returnToLab]
@@ -1483,20 +1504,29 @@ function ActionForm({
             : `${t.code} is back with you. Once it is fitted, close the ticket — or, if it does not work, return it to ${t.trc_name}.`); break
         case 'close_ticket':
           if (!working) { onError('Say whether it works.'); return }
-          if (working === 'no' && !afterwards) { onError(`Say what happens to it now: close the ticket, or return it to ${t.trc_name}.`); return }
+          if (working === 'no' && !afterwards) { onError('Say what happens to it now: close the ticket, or return it to a Revive Lab.'); return }
+          if (backing && !toTrc) { onError('Choose the Revive Lab it is going to.'); return }
+          if (needsOk) {
+            if (note.trim().length < 5) { onError('Say why it should go there.'); return }
+            await requestReturn.mutateAsync({ id: t.id, toTrcId: toTrc, reason: note })
+            onDone(`Asked to send ${t.code} to ${labName(toTrc)}. Once it is approved, return it from here.`)
+            break
+          }
           if (returning) {
             if (note.trim().length < 5) { onError('Say why it is going back — what is not working.'); return }
             if (shots.length === 0) { onError('Add a photo of the spare — one at least.'); return }
             if (!courier.trim()) { onError('Enter the courier it is going back with.'); return }
             if (!awb.trim()) { onError('Enter the tracking / AWB number.'); return }
             if (!on) { onError('Enter the date of dispatch.'); return }
+            if (!toTrc) { onError('Choose the Revive Lab it is going to.'); return }
             await returnToLab.mutateAsync({
+              trcId: toTrc,
               id: t.id, reason: note, courier, awb, on,
               photos: shots.map(p => p.blob), video, voice,
               // The round this return starts: its files are named for it.
               round: round + 1,
             })
-            onDone(`${t.code} is on its way back to ${t.trc_name}. Its coordinator accepts it when it arrives, and it is repaired again — the first time stays in the history.`)
+            onDone(`${t.code} is on its way to ${labName(toTrc)}. Its coordinator accepts it when it arrives, and it is repaired again — the first time stays in the history.`)
             break
           }
           if (note.trim().length < 2) { onError('Give the final status.'); return }
@@ -1510,7 +1540,9 @@ function ActionForm({
           if (!toTrc) { onError('Choose the Revive Lab it is going to.'); return }
           if (note.trim().length < 5) { onError('Say why it is being transferred.'); return }
           await transfer.mutateAsync({ id: t.id, toTrcId: toTrc, reason: note })
-          onDone(`Transfer to ${labName(toTrc)} requested. Once the Regional Revive Lab admins approve it, send it from here.`); break
+          onDone(needsHead(toTrc)
+            ? `Transfer to ${labName(toTrc)} requested. Once ${ticketHead?.head?.full_name ?? 'the project head'} approves it, send it from here.`
+            : `Transfer to ${labName(toTrc)} is ready. Send it from here with the courier details.`); break
         case 'send':
           await send.mutateAsync({ id: t.id, courier, awb, on, note })
           onDone(sendingRaise
@@ -1568,10 +1600,11 @@ function ActionForm({
               <LabOptions labs={destinations} first={t.state} />
             </select>
           </label>
-          <p className="text-xs text-ink-500">
-            The Regional Revive Lab admins{approvers.length ? <> — {orList(approvers)} —</> : null} approve it first.
-            Then it comes back here to send, with the courier details.
-          </p>
+          {toTrc && needsHead(toTrc) && (
+            <p className="text-xs text-ink-500">
+              {ticketHead?.head?.full_name ?? 'The project head'} approves it first. Then it comes back here to send.
+            </p>
+          )}
         </>
       )}
 
@@ -1592,7 +1625,7 @@ function ActionForm({
             {sendingRaise ? t.trc_name : t.approval?.to_trc_name}
             <span className="text-xs text-ink-500"> · {stateLabel(sendingRaise ? t.trc_state : t.approval?.to_trc_state)}</span>
           </p>
-          <p className="mt-1 text-xs text-ink-500">Approved by {t.approval?.decided_by_name ?? 'the Regional Revive Lab admins'}. They accept it when it arrives.</p>
+          <p className="mt-1 text-xs text-ink-500">{t.approval?.decided_by_name ? <>Approved by {t.approval.decided_by_name}. </> : null}They accept it when it arrives.</p>
         </div>
       )}
 
@@ -1740,14 +1773,35 @@ function ActionForm({
           required
           options={[
             { value: 'close', label: 'Close the ticket', hint: 'It ends here', tone: 'slate', icon: CircleCheck },
-            { value: 'return', label: `Return to ${t.trc_name}`, hint: 'Repair again', tone: 'orange', icon: RotateCcw },
+            { value: 'return', label: 'Return to a Revive Lab', hint: 'Repair again', tone: 'orange', icon: RotateCcw },
           ]}
           value={afterwards}
-          onChange={setAfterwards}
-          note={afterwards === 'return'
-            ? `The same ticket goes back: ${t.trc_name}'s coordinator accepts it when it arrives, and the repair starts again. Everything so far stays in its history.`
-            : undefined}
+          onChange={v => { setAfterwards(v); if (v === 'return' && !toTrc) setToTrc(approvedFor ?? t.trc_id) }}
         />
+      )}
+
+      {backing && (
+        <label className="block">
+          <span className="label">Revive Lab <span className="text-cyrixRed-600">*</span></span>
+          <select className="input mt-1" value={toTrc} onChange={e => setToTrc(e.target.value)}>
+            <option value="">Choose…</option>
+            <LabOptions labs={backTo} first={t.state} />
+          </select>
+        </label>
+      )}
+
+      {needsOk && (
+        <label className="block">
+          <span className="label">Why should it go to {picked?.name}? <span className="text-cyrixRed-600">*</span></span>
+          <textarea
+            className="input mt-1"
+            rows={2}
+            maxLength={500}
+            value={note}
+            onChange={e => setNote(e.target.value)}
+            placeholder="e.g. Same fault again; that Revive Lab has the test jig"
+          />
+        </label>
       )}
 
       {returning && (
@@ -2052,6 +2106,7 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
   // Approving a transfer for the Revive Lab it is already at would be no transfer.
   const approvable = (trcs ?? []).filter(x => x.is_active && !(a?.kind === 'transfer' && x.id === a.from_trc_id))
   const backTo = a?.back_to ? STATUS[a.back_to]?.short.toLowerCase() : null
+  const headStage = waitsOnHead(a)
 
   const run = async () => {
     setError(null)
@@ -2071,21 +2126,27 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
         void removeVideoOf(t.id)
         onDone(`${t.code} moved to scrap and closed.`)
       } else if (action === 'approve') {
-        if (!toTrc) { setError('Choose the Revive Lab it is approved for.'); return }
-        await approve.mutateAsync({ id: t.id, toTrcId: toTrc, note })
-        const name = trcs?.find(x => x.id === toTrc)?.name ?? a?.to_trc_name
+        // The project head approves what was asked; the Regional admins may choose another.
+        const target = headStage ? a!.to_trc_id : toTrc
+        if (!target) { setError('Choose the Revive Lab it is approved for.'); return }
+        await approve.mutateAsync({ id: t.id, toTrcId: target, note })
+        const name = trcs?.find(x => x.id === target)?.name ?? a?.to_trc_name
         onDone(a?.kind === 'transfer'
           ? `Approved. ${t.trc_name} sends it to ${name}.`
-          : `Approved for ${name}. ${t.stakeholder_name} sends it now.`)
+          : a?.kind === 'return'
+            ? `Approved for ${name}. ${t.stakeholder_name} returns it there now.`
+            : `Approved for ${name}. ${t.stakeholder_name} sends it now.`)
       } else if (action === 'decline_approval') {
         if (note.trim().length < 3) { setError('Say why it is not approved.'); return }
         await decline.mutateAsync({ id: t.id, note })
         onDone(a?.kind === 'transfer'
           ? `Not approved. It carries on at ${t.trc_name}.`
-          : `Not approved. ${t.stakeholder_name} sends it to a ${t.state ?? 'nearby'} or Regional Revive Lab, or discards it.`)
+          : a?.kind === 'return'
+            ? `Not approved. It stays with ${t.stakeholder_name}.`
+            : `Not approved. ${t.stakeholder_name} sends it to a ${t.state ?? 'nearby'} or Regional Revive Lab, or discards it.`)
       } else if (action === 'cancel_transfer') {
         await cancelTransfer.mutateAsync({ id: t.id, note })
-        onDone('Transfer cancelled. It carries on here.')
+        onDone(a?.kind === 'return' ? 'Request cancelled. It stays with you.' : 'Transfer cancelled. It carries on here.')
       } else if (action === 'discard') {
         await discard.mutateAsync({ id: t.id, note })
         void removeVideoOf(t.id)
@@ -2154,13 +2215,15 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
           <p className="text-sm text-ink-600">
             {a.requested_by_name} asks to {a.kind === 'transfer'
               ? <>transfer {t.code} from {a.from_trc_name} to {a.asked_trc_name}</>
-              : <>send {t.code}, a {t.state} spare, to {a.asked_trc_name}</>}:
+              : a.kind === 'return'
+                ? <>return {t.code}, still not working, to {a.asked_trc_name} instead of {a.from_trc_name}</>
+                : <>send {t.code}, a {t.state} spare, to {a.asked_trc_name}</>}:
           </p>
           <p className="whitespace-pre-wrap rounded-lg bg-ink-50 px-3 py-2 text-sm text-ink-800">{a.reason}</p>
         </div>
       )}
 
-      {action === 'approve' && (
+      {action === 'approve' && !headStage && (
         <label className="block">
           <span className="label">Approve for <span className="text-cyrixRed-600">*</span></span>
           <select className="input mt-1" value={toTrc} onChange={e => setToTrc(e.target.value)}>
@@ -2177,7 +2240,9 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
         <p className="text-sm text-ink-600">
           {a?.kind === 'transfer'
             ? <>It carries on at {t.trc_name}{backTo ? <>, {backTo}</> : null}.</>
-            : <>It goes back to {t.stakeholder_name}, to send to a {t.state ?? 'nearby'} or Regional Revive Lab instead, or to discard.</>}
+            : a?.kind === 'return'
+              ? <>It stays with {t.stakeholder_name}, to close or return to a {t.state ?? 'nearby'} or Regional Revive Lab.</>
+              : <>It goes back to {t.stakeholder_name}, to send to a {t.state ?? 'nearby'} or Regional Revive Lab instead, or to discard.</>}
         </p>
       )}
 
