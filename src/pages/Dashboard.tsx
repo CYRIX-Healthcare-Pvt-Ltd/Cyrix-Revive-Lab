@@ -1,10 +1,10 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import {
   Bar, BarChart, CartesianGrid, Cell, LabelList, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
-import { AlarmClock, ArrowRight, BellRing, Building2, ChartColumn, Check, ClipboardList, HardHat, Inbox, PackagePlus, TrendingUp, Users } from 'lucide-react'
+import { AlarmClock, ArrowRight, BellRing, Box, LayoutDashboard, Building2, ChartColumn, Check, ClipboardList, HardHat, Inbox, PackagePlus, TrendingUp, Users } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useMembers, useMyTeam, usePartRequests, useTickets, useTrcs, useVisibleEvents, type PartRequest, type Ticket } from '@/lib/queries'
 import { dateTime as dateTimeOf, dayDate } from '@/lib/when'
@@ -15,6 +15,9 @@ import {
 import { formatSpan, ticketTat, type TatBreakdown, type TatEvent } from '@/lib/tat'
 import { EmptyState, PageLoader, ReturnedTag, SectorTag, StatTile, TransferTag, WarehouseChip } from '@/components/ui'
 import IconChip from '@/components/IconChip'
+
+// Its own download: three.js only reaches those who switch to Animation.
+const LiveFloor = lazy(() => import('@/components/LiveFloor'))
 import { CATEGORY_CLASS, ClassTag } from '@/components/Classification'
 import {
   PERIODS, categoryReport, countTickets, engineerWork, inRange, indexTeam, ownerOfTicket, percent, periodRange,
@@ -114,6 +117,11 @@ export default function Dashboard() {
   const [picked, setPicked] = useStagePick()
   const [focus, setFocus] = useState<StageKey | null>(null)
   const dark = useDark()
+  const [chosen, setMode] = useViewMode()
+  // Animation is for the Revive Lab's own people, the roles ticked in People & Revive Labs, and the
+  // software administrator; a field engineer sees the dashboard as it is (the user, 8 Oct).
+  const staff = !!me && (me.is_engineer || me.is_coordinator || me.is_manager || me.is_admin || !!me.is_purchase || !!me.is_observer || me.is_sw_admin)
+  const mode = staff ? chosen : 'normal'
 
   const stats = useMemo(() => {
     /*
@@ -249,7 +257,23 @@ export default function Dashboard() {
         <div className="flex flex-wrap items-center gap-2">
           {/* The period for everything about what happened — sent back, on
               time, the average. What is true now needs none. */}
-          <div className="inline-flex rounded-lg border border-ink-200 bg-ink-50 p-0.5" role="group" aria-label="Period">
+          {/* Normal or Animation, before the period (the user, 8 Oct). */}
+          {staff && <div className="inline-flex rounded-lg border border-ink-200 bg-ink-50 p-0.5" role="group" aria-label="View">
+            {([['normal', 'Overview', LayoutDashboard], ['animation', 'Live floor', Box]] as const).map(([id, label, Icon]) => (
+              <button
+                key={id}
+                type="button"
+                aria-pressed={mode === id}
+                onClick={() => setMode(id)}
+                className={clsx('inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                  mode === id ? 'bg-surface text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800')}
+              >
+                <Icon className="h-4 w-4" /> {label}
+              </button>
+            ))}
+          </div>}
+          {/* Kept in place on the live floor too, hidden, so nothing moves when the view changes (the user, 8 Oct). */}
+          <div className={clsx('inline-flex rounded-lg border border-ink-200 bg-ink-50 p-0.5', mode !== 'normal' && 'invisible')} role="group" aria-label="Period" aria-hidden={mode !== 'normal'}>
             {PERIODS.map(p => (
               <button
                 key={p.id}
@@ -271,6 +295,11 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {mode === 'animation' ? (
+        <Suspense fallback={<PageLoader />}>
+          <LiveFloor tickets={tickets ?? []} trcs={trcs ?? []} />
+        </Suspense>
+      ) : (<>
       {/* grid-fill: the fifth tile takes a whole row on a phone rather than half of one. */}
       <div className={clsx('grid-fill grid grid-cols-2 gap-3', TILE_COLS[4 + (noWaiting ? 0 : 1) + (seesComponents ? 1 : 0)])}>
         <StatTile label="Open" value={stats.open} sub={`of ${stats.total} tickets`} />
@@ -489,6 +518,7 @@ export default function Dashboard() {
           </div>
         </>
       )}
+      </>)}
     </div>
   )
 }
@@ -1082,4 +1112,17 @@ function EngineerCategories({ rows, words }: { rows: EngineerWork[]; words: stri
       )}
     </div>
   )
+}
+
+/** Normal or Animation, remembered on this device. */
+function useViewMode(): ['normal' | 'animation', (m: 'normal' | 'animation') => void] {
+  const KEY = 'revive.dashboard.view'
+  const [mode, setMode] = useState<'normal' | 'animation'>(() => {
+    try { return localStorage.getItem(KEY) === 'animation' ? 'animation' : 'normal' } catch { return 'normal' }
+  })
+  const set = (m: 'normal' | 'animation') => {
+    setMode(m)
+    try { localStorage.setItem(KEY, m) } catch { /* private window */ }
+  }
+  return [mode, set]
 }

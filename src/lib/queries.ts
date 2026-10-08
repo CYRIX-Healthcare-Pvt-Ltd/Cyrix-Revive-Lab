@@ -262,6 +262,7 @@ export interface Member {
   updated_at: string
   updated_by_name: string | null
   is_purchase: boolean
+  is_observer?: boolean
 }
 
 export interface Person {
