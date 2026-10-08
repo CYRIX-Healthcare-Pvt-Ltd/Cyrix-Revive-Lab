@@ -124,6 +124,17 @@ export default function Access() {
   )
 }
 
+type Part = 'people' | 'labs' | 'bemmp' | 'warehouses' | 'limits' | 'reopen' | 'delete'
+const PARTS: { id: Part; label: string; sw?: boolean }[] = [
+  { id: 'people', label: 'People' },
+  { id: 'labs', label: 'Revive Labs' },
+  { id: 'bemmp', label: 'BEMMP' },
+  { id: 'warehouses', label: 'Warehouses' },
+  { id: 'limits', label: 'Close before raising', sw: true },
+  { id: 'reopen', label: 'Reopen', sw: true },
+  { id: 'delete', label: 'Delete', sw: true },
+]
+
 export function ReviveLabAccess() {
   const qc = useQueryClient()
   const { data: me } = useQuery({
@@ -163,6 +174,7 @@ export function ReviveLabAccess() {
   const [q, setQ] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [part, setPart] = useState<Part>('people')
 
   const canEdit = !!me?.is_admin
   const trcName = useMemo(() => new Map((trcs ?? []).map(t => [t.id, t.name])), [trcs])
@@ -224,10 +236,26 @@ export function ReviveLabAccess() {
         <StatTile label="Admins" value={counts.admins} sub="may edit this table" />
       </div>
 
-      {error && <Alert kind="error">{error}</Alert>}
-      {notice && <Alert kind="success">{notice}</Alert>}
+      <div className="flex gap-1 overflow-x-auto border-b border-ink-200">
+        {PARTS.filter(t => !t.sw || me?.is_sw_admin).map(t => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setPart(t.id)}
+            className={clsx(
+              '-mb-px whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium',
+              part === t.id ? 'border-cyrixRed-600 text-ink-900' : 'border-transparent text-ink-400 hover:text-ink-700',
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
 
-      <div className="card overflow-hidden">
+      {part === 'people' && error && <Alert kind="error">{error}</Alert>}
+      {part === 'people' && notice && <Alert kind="success">{notice}</Alert>}
+
+      {part === 'people' && <div className="card overflow-hidden">
         <div className="flex flex-wrap items-center gap-2 border-b border-ink-200 bg-ink-50 px-3 py-2">
           <h3 className="flex items-center gap-2 px-1 text-sm font-semibold text-ink-800">
             <Users className="h-4 w-4 text-ink-400" /> People
@@ -342,19 +370,19 @@ export function ReviveLabAccess() {
             </table>
           </div>
         )}
-      </div>
+      </div>}
 
-      <TrcTable trcs={trcs ?? []} canEdit={canEdit} members={members ?? []} />
+      {part === 'labs' && <TrcTable trcs={trcs ?? []} canEdit={canEdit} members={members ?? []} />}
 
-      <BemmpTable canEdit={canEdit} />
+      {part === 'bemmp' && <BemmpTable canEdit={canEdit} />}
 
-      <WarehouseTable canEdit={canEdit} />
+      {part === 'warehouses' && <WarehouseTable canEdit={canEdit} />}
 
-      {me?.is_sw_admin && <CloseLimits />}
+      {part === 'limits' && me?.is_sw_admin && <CloseLimits />}
 
-      {me?.is_sw_admin && <ReopenTicket />}
+      {part === 'reopen' && me?.is_sw_admin && <ReopenTicket />}
 
-      {me?.is_sw_admin && <DeleteTicket />}
+      {part === 'delete' && me?.is_sw_admin && <DeleteTicket />}
     </div>
   )
 }
