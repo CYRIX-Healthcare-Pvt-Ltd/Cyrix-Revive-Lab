@@ -124,7 +124,7 @@ export default function Access() {
   )
 }
 
-type Part = 'people' | 'labs' | 'bemmp' | 'warehouses' | 'limits' | 'reopen' | 'delete'
+type Part = 'people' | 'labs' | 'bemmp' | 'warehouses' | 'limits' | 'reopen' | 'delete' | 'floor'
 const PARTS: { id: Part; label: string; sw?: boolean }[] = [
   { id: 'people', label: 'People' },
   { id: 'labs', label: 'Revive Labs' },
@@ -133,6 +133,7 @@ const PARTS: { id: Part; label: string; sw?: boolean }[] = [
   { id: 'limits', label: 'Close before raising', sw: true },
   { id: 'reopen', label: 'Reopen', sw: true },
   { id: 'delete', label: 'Delete', sw: true },
+  { id: 'floor', label: 'Live floor', sw: true },
 ]
 
 export function ReviveLabAccess() {
@@ -383,6 +384,8 @@ export function ReviveLabAccess() {
       {part === 'reopen' && me?.is_sw_admin && <ReopenTicket />}
 
       {part === 'delete' && me?.is_sw_admin && <DeleteTicket />}
+
+      {part === 'floor' && me?.is_sw_admin && <LiveFloorRoles />}
     </div>
   )
 }
@@ -1069,6 +1072,86 @@ function ReopenTicket() {
  * revive_delete_part_request, with its own audit line, and PR numbering
  * starts again at PR-01 once none are left. What it added to stock stays.
  */
+/**
+ * Which roles get the dashboard's Overview / Live floor switch (the user,
+ * 9 Oct: "add option in sw_admin, ie animation enable disable for roles ...
+ * check box"). The software administrator always has it; nothing saved yet
+ * means every role (rl_0050).
+ */
+const FLOOR_ROLES: Array<{ id: string; label: string }> = [
+  { id: 'engineer', label: 'Revive Lab Engineer' },
+  { id: 'coordinator', label: 'Coordinator' },
+  { id: 'manager', label: 'Manager' },
+  { id: 'admin', label: 'Admin' },
+  { id: 'purchase', label: 'Purchase' },
+  { id: 'observer', label: 'Observer' },
+]
+
+function LiveFloorRoles() {
+  const qc = useQueryClient()
+  const { data: saved, isLoading } = useQuery({
+    queryKey: ['revive', 'live-floor-roles'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('app_settings').select('value').eq('key', 'revive_live_floor_roles').maybeSingle()
+      if (error) throw new Error(friendlyError(error))
+      return Array.isArray(data?.value) ? (data!.value as string[]) : FLOOR_ROLES.map(r => r.id)
+    },
+  })
+  const [picked, setPicked] = useState<Set<string> | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const current = picked ?? new Set(saved ?? [])
+  const save = useMutation({
+    mutationFn: async (roles: string[]) => {
+      const { error } = await supabase.rpc('revive_set_live_floor_roles', { p_roles: roles })
+      if (error) throw new Error(friendlyError(error))
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['revive', 'live-floor-roles'] }),
+  })
+  const toggle = (id: string) => {
+    const next = new Set(current)
+    if (next.has(id)) next.delete(id); else next.add(id)
+    setPicked(next); setNotice(null)
+  }
+  const changed = picked !== null && (picked.size !== (saved ?? []).length || [...picked].some(r => !(saved ?? []).includes(r)))
+  return (
+    <div className="card overflow-hidden">
+      <div className="flex items-center gap-2 border-b border-ink-200 bg-ink-50 px-4 py-2.5">
+        <Layers className="h-4 w-4 text-ink-500" />
+        <h3 className="text-sm font-semibold text-ink-800">Live floor</h3>
+        <span className="text-xs text-ink-400">· software administrator only</span>
+      </div>
+      <div className="space-y-3 p-4">
+        {error && <Alert kind="error">{error}</Alert>}
+        {notice && <Alert kind="success">{notice}</Alert>}
+        {isLoading ? <Spinner className="h-4 w-4 text-ink-400" /> : (
+          <div className="flex flex-wrap gap-2">
+            {FLOOR_ROLES.map(r => (
+              <label key={r.id} className={clsx('flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm',
+                current.has(r.id) ? 'border-ink-400 bg-ink-50 text-ink-900' : 'border-ink-200 text-ink-600 hover:border-ink-300')}>
+                <input type="checkbox" checked={current.has(r.id)} onChange={() => toggle(r.id)} />
+                {r.label}
+              </label>
+            ))}
+          </div>
+        )}
+        <button type="button" className="btn-primary" disabled={!changed || save.isPending}
+          onClick={async () => {
+            setError(null)
+            try {
+              const roles = [...current]
+              await save.mutateAsync(roles)
+              setPicked(null)
+              setNotice(roles.length ? `Live floor on for: ${FLOOR_ROLES.filter(r => current.has(r.id)).map(r => r.label).join(', ')}.` : 'Live floor off for every role.')
+            } catch (err) { setError(err instanceof Error ? err.message : 'Could not save that.') }
+          }}>
+          {save.isPending && <Spinner className="h-4 w-4" />} Save
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function DeleteTicket() {
   const qc = useQueryClient()
   const [typed, setTyped] = useState('')

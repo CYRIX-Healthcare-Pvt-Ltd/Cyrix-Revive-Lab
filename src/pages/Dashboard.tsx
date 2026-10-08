@@ -1,11 +1,13 @@
 import { Fragment, Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
+import { useQuery } from '@tanstack/react-query'
 import {
   Bar, BarChart, CartesianGrid, Cell, LabelList, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import { AlarmClock, ArrowRight, BellRing, Box, LayoutDashboard, Building2, ChartColumn, Check, ClipboardList, HardHat, Inbox, PackagePlus, TrendingUp, Users } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
+import { supabase } from '@/lib/supabase'
 import { useMembers, useMyTeam, usePartRequests, useTickets, useTrcs, useVisibleEvents, type PartRequest, type Ticket } from '@/lib/queries'
 import { dateTime as dateTimeOf, dayDate } from '@/lib/when'
 import {
@@ -120,7 +122,21 @@ export default function Dashboard() {
   const [chosen, setMode] = useViewMode()
   // Animation is for the Revive Lab's own people, the roles ticked in People & Revive Labs, and the
   // software administrator; a field engineer sees the dashboard as it is (the user, 8 Oct).
-  const staff = !!me && (me.is_engineer || me.is_coordinator || me.is_manager || me.is_admin || !!me.is_purchase || !!me.is_observer || me.is_sw_admin)
+  // Which roles have it is the software administrator's choice in People & Revive Labs → Live floor (rl_0050);
+  // they always have it themselves. Nothing saved yet means every role.
+  const { data: floorRoles } = useQuery({
+    queryKey: ['revive', 'live-floor-roles'],
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const { data } = await supabase.from('app_settings').select('value').eq('key', 'revive_live_floor_roles').maybeSingle()
+      return Array.isArray(data?.value) ? (data!.value as string[]) : null
+    },
+  })
+  const myRoles = me ? ([
+    me.is_engineer && 'engineer', me.is_coordinator && 'coordinator', me.is_manager && 'manager',
+    me.is_admin && 'admin', me.is_purchase && 'purchase', me.is_observer && 'observer',
+  ].filter(Boolean) as string[]) : []
+  const staff = !!me && (me.is_sw_admin || myRoles.some(r => !floorRoles || floorRoles.includes(r)))
   const mode = staff ? chosen : 'normal'
 
   const stats = useMemo(() => {
