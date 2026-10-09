@@ -288,21 +288,6 @@ export default function Dashboard() {
               </button>
             ))}
           </div>}
-          {/* Kept in place on the live floor too, hidden, so nothing moves when the view changes (the user, 8 Oct). */}
-          <div className={clsx('inline-flex rounded-lg border border-ink-200 bg-ink-50 p-0.5', mode !== 'normal' && 'invisible')} role="group" aria-label="Period" aria-hidden={mode !== 'normal'}>
-            {PERIODS.map(p => (
-              <button
-                key={p.id}
-                type="button"
-                aria-pressed={period === p.id}
-                onClick={() => setParams(q => { if (p.id === 'month') q.delete('period'); else q.set('period', p.id); return q }, { replace: true })}
-                className={clsx('rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
-                  period === p.id ? 'bg-surface text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800')}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
           {canRaise(me) && (
             <Link to="/new" className="btn-primary">
               <PackagePlus className="h-4 w-4" /> Raise ticket
@@ -316,6 +301,24 @@ export default function Dashboard() {
           <LiveFloor tickets={tickets ?? []} trcs={trcs ?? []} />
         </Suspense>
       ) : (<>
+      {/* The period opens the overview, as the Revive Lab picker opens the live floor; the header keeps the view switch and
+          Raise ticket only, so nothing in it moves (the user, 9 Oct: "in desktop the toggle is here looks bad"). */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="inline-flex rounded-lg border border-ink-200 bg-ink-50 p-0.5" role="group" aria-label="Period">
+          {PERIODS.map(p => (
+            <button
+              key={p.id}
+              type="button"
+              aria-pressed={period === p.id}
+              onClick={() => setParams(q => { if (p.id === 'month') q.delete('period'); else q.set('period', p.id); return q }, { replace: true })}
+              className={clsx('rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                period === p.id ? 'bg-surface text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800')}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
       {/* grid-fill: the fifth tile takes a whole row on a phone rather than half of one. */}
       <div className={clsx('grid-fill grid grid-cols-2 gap-3', TILE_COLS[4 + (noWaiting ? 0 : 1) + (seesComponents ? 1 : 0)])}>
         <StatTile label="Open" value={stats.open} sub={`of ${stats.total} tickets`} />

@@ -23,8 +23,8 @@ import {
   type Group, type InstancedMesh, type Mesh, type MeshStandardMaterial,
 } from 'three'
 import { useAuth } from '@/contexts/AuthContext'
-import { useMembers, type Member, type Ticket, type Trc } from '@/lib/queries'
-import { STATUS, itemsSummary, waitingOnMe, type TicketStatus } from '@/lib/tickets'
+import { useMembers, usePartRequests, type Member, type PartRequest, type Ticket, type Trc } from '@/lib/queries'
+import { STATUS, itemsSummary, poLabel, waitingOnMe, type PartStatus, type TicketStatus } from '@/lib/tickets'
 import { categoryTat } from '@/lib/tat'
 
 /* ================================================================ roles */
@@ -72,7 +72,8 @@ const ROOM = {
   coordinator: { x0: -15.7, x1: -8.7 },
   manager: { x0: -8.4, x1: -2.4 },
   admin: { x0: -2.2, x1: 3.8 },
-  purchase: { x0: 4.0, x1: 15.7 },
+  purchase: { x0: 4.0, x1: 10.3 },
+  pantry: { x0: 10.5, x1: 15.7 },
 }
 const COORD_ROOM_FRONT = -3.6
 const BACK_CORRIDOR = -4.75
@@ -211,6 +212,7 @@ const pointer = {
 export default function LiveFloor({ tickets, trcs }: { tickets: Ticket[]; trcs: Trc[] }) {
   const { me } = useAuth()
   const { data: members } = useMembers(true)
+  const { data: requests } = usePartRequests()
 
   // Their own Revive Lab first; otherwise the one with most going on.
   const labs = useMemo(() => trcs.filter(t => t.is_active), [trcs])
@@ -271,7 +273,7 @@ export default function LiveFloor({ tickets, trcs }: { tickets: Ticket[]; trcs: 
         >
           <Night.Provider value={night}>
             <Suspense fallback={null}>
-              <Scene lab={lab} crew={crew} tickets={here} pad={pad} />
+              <Scene lab={lab} crew={crew} tickets={here} requests={requests ?? []} pad={pad} />
             </Suspense>
           </Night.Provider>
         </Canvas>
@@ -282,7 +284,7 @@ export default function LiveFloor({ tickets, trcs }: { tickets: Ticket[]; trcs: 
 
 /* ================================================================ scene */
 
-function Scene({ lab, crew, tickets, pad }: { lab: Trc; crew: Crew[]; tickets: Ticket[]; pad: React.MutableRefObject<Pad> }) {
+function Scene({ lab, crew, tickets, requests, pad }: { lab: Trc; crew: Crew[]; tickets: Ticket[]; requests: PartRequest[]; pad: React.MutableRefObject<Pad> }) {
   const { me } = useAuth()
   const navigate = useNavigate()
   const [hover, setHover] = useState<Hover | null>(null)
@@ -291,10 +293,19 @@ function Scene({ lab, crew, tickets, pad }: { lab: Trc; crew: Crew[]; tickets: T
   const road = useRef<Record<string, Obstacle>>({})
   const talk = useRef(new Map<string, Line>())
   const crowd = useRef(new Map<string, Spot>())
-  const inDock = useRef({ parked: false })
-  const outDock = useRef({ parked: false })
+  const seated = useRef(new Set<string>())
+  const inDock = useRef({ parked: false, soon: false })
+  const outDock = useRef({ parked: false, soon: false })
 
   const by = (r: Role) => crew.filter(m => placeOfPerson(m) === r)
+  /** "Saranya", from "Saranya K S"; "Tincy", from "TINCY K MARIAM". */
+  const firstName = (id: string | undefined | null) => {
+    const w = (crew.find(m => m.employee_id === id)?.full_name ?? '').split(/[\s-]+/)[0] ?? ''
+    return w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : ''
+  }
+  const names = new Map(crew.map(m => [m.employee_id, firstName(m.employee_id)]))
+  /** Loaders are not on the staff list; Kerala calls an older man "chetta", elsewhere "bhai". */
+  const mate = lab.state === 'Kerala' ? 'Chetta' : 'Bhai'
   const engineers = by('engineer'), coordinators = by('coordinator'), managers = by('manager')
   const admins = by('admin'), buyers = by('purchase')
 
@@ -325,13 +336,22 @@ function Scene({ lab, crew, tickets, pad }: { lab: Trc; crew: Crew[]; tickets: T
   // The coordinators share the errands (the user, 8 Oct: "why other coordinator ie jeevan not walking?").
   // Components: one bought or ready goes from the shelf to its engineer; one waiting on Purchase means a word in their cabin.
   const partsFor = onBench.find(t => (t.status === 'parts_ready' || (t.parts ?? []).some(r => r.status === 'bought' || r.status === 'sent')) && benchIndex.has(t.engineer_id ?? ''))
-  const askPurchase = onBench.find(t => (t.parts ?? []).some(r => r.status === 'requested' && r.route === 'purchase'))
-  const partsTo = partsFor ? { x: benches.at(benchIndex.get(partsFor.engineer_id!)!)[0], z: benches.aisle(benchIndex.get(partsFor.engineer_id!)!), code: partsFor.code, who: partsFor.engineer_id!, answer: 'Thanks! Back on it' } : null
+  // Pending with Purchase, each where it stands (the user, 9 Oct: "if any purchase pending, coordinator should go to
+  // purchase dept and ask logical questions"): from the requests themselves, else from each ticket's own list of them.
+  const lateIds = new Set(lateOnBench.map(t => t.id))
+  const mineToBuy = requests.filter(r => r.trc_id === lab.id && r.route === 'purchase'
+    && (r.status === 'requested' || r.status === 'forwarded' || r.status === 'accepted' || (r.status === 'bought' && !!r.po_number)))
+  const purchaseItems: PurchaseItem[] = mineToBuy.length
+    ? mineToBuy.map(r => ({ code: r.ticket_code ?? r.code ?? '', part: r.name, status: r.status, po: r.po_number, edd: r.edd, vendor: r.vendor, since: r.requested_at, late: !!r.ticket_id && lateIds.has(r.ticket_id) }))
+    : onBench.flatMap(t => (t.parts ?? [])
+      .filter(r => r.route === 'purchase' && (r.status === 'requested' || r.status === 'forwarded' || r.status === 'accepted'))
+      .map(r => ({ code: t.code, part: '', status: r.status, late: lateIds.has(t.id) })))
+  const partsTo = partsFor ? { x: benches.at(benchIndex.get(partsFor.engineer_id!)!)[0], z: benches.aisle(benchIndex.get(partsFor.engineer_id!)!), code: partsFor.code, who: partsFor.engineer_id!, name: firstName(partsFor.engineer_id), answer: `Thanks ${firstName(coordinators[0]?.employee_id) || 'a lot'}! Back on it` } : null
   const errands = ([
     dock.length > 0 && 'dock',
     desk.length > 0 && engineers.length > 0 && 'assign',
     partsTo && 'parts',
-    askPurchase && buyers.length > 0 && 'purchase',
+    purchaseItems.length > 0 && buyers.length > 0 && 'purchase',
     dispatch.length > 0 && 'dispatch',
   ].filter(Boolean) as Errand[])
   const errandsOf = (i: number) => coordinators.length ? errands.filter((_, k) => k % coordinators.length === i) : []
@@ -351,9 +371,19 @@ function Scene({ lab, crew, tickets, pad }: { lab: Trc; crew: Crew[]; tickets: T
     return i === undefined ? null : { x: benches.at(i)[0], z: benches.aisle(i), code: t.code, who: t.engineer_id! }
   }
   /** The engineer's side of it, from the ticket as it stands. */
-  const excuse = (t: Ticket) => (t.parts ?? []).some(r => r.status !== 'received' && r.status !== 'declined' && r.status !== 'cancelled')
-    ? `Waiting on parts for ${t.code}`
-    : t.status === 'parts_ready' ? 'Parts just came — finishing it now' : 'Finishing it today, sorry'
+  /** The engineer's side of it, from the ticket as it stands — one of a few true-sounding answers, the same one for the same ticket. */
+  const excuse = (t: Ticket) => {
+    const boss = firstName(admins[0]?.employee_id) || "ma'am"
+    const pick = (lines: string[]) => lines[Math.floor(seedOf(t.id) * lines.length)]
+    if ((t.parts ?? []).some(r => r.status !== 'received' && r.status !== 'declined' && r.status !== 'cancelled')) {
+      return pick([`Waiting on parts for ${t.code}, ${boss}`, `It's with Purchase — they're ordering`, `Parts are on the way for ${t.code}`])
+    }
+    if (t.status === 'parts_ready') return pick(['Parts just came — finishing it now', 'Fitting the new part now'])
+    return pick([
+      `Finishing it today, sorry ${boss}`, 'Found the fault — fixing it now', 'Just soldering the last joint',
+      'Calibration left — done by evening', 'Testing it now, one hour more', `Tricky one, ${boss} — by 5 o'clock`,
+    ])
+  }
   const firstPer = (list: Ticket[], max: number) => {
     const seen = new Set<string>(), out: Ticket[] = []
     for (const t of list) {
@@ -363,17 +393,33 @@ function Scene({ lab, crew, tickets, pad }: { lab: Trc; crew: Crew[]; tickets: T
     }
     return out
   }
-  const adminVisits = firstPer(lateOnBench, 3).map(t => { const v = benchVisit(t); return v && { ...v, answer: excuse(t) } }).filter(Boolean) as Visit[]
+  const adminVisits = firstPer(lateOnBench, 3).map(t => { const v = benchVisit(t); return v && { ...v, name: firstName(t.engineer_id), answer: excuse(t) } }).filter(Boolean) as Visit[]
   const nrWaiting = firstPer(dispatch.filter(t => t.status === 'not_repairable' && !t.nr_approved_at), 2)
-    .map(t => { const v = benchVisit(t); return v && { ...v, answer: 'Tried everything — it\'s beyond repair' } }).filter(Boolean) as Visit[]
+    .map(t => { const v = benchVisit(t); return v && { ...v, name: firstName(t.engineer_id), answer: `Tried everything, ${firstName(managers[0]?.employee_id) || 'sir'} — it's beyond repair` } }).filter(Boolean) as Visit[]
   const handovers = new Map(firstPer(dispatch.filter(t => t.status === 'repaired' || t.status === 'service_denied'), 4).map(t => [t.engineer_id!, t.code]))
   const partsReady = new Map<string, string>()
   const partsComing = onBench.some(t => t.status === 'parts_ordered')
+  /** The buyer the coordinator goes to: one at their desk, while the first is off with parts that came in. */
+  const deskBuyer = buyers.length > 1 && partsComing ? 1 : 0
   const lightest = engineers.length
     ? engineers.map(m => ({ i: benchIndex.get(m.employee_id)!, n: onBench.filter(t => t.engineer_id === m.employee_id).length })).sort((a, b) => a.n - b.n || a.i - b.i)[0].i
     : -1
-  const assignTo = lightest >= 0 && desk[0] ? { x: benches.at(lightest)[0], z: benches.aisle(lightest), code: desk[0].code, who: atBench[lightest].employee_id, answer: 'Got it — starting now' } : null
+  const assignTo = lightest >= 0 && desk[0] ? { x: benches.at(lightest)[0], z: benches.aisle(lightest), code: desk[0].code, who: atBench[lightest].employee_id, name: firstName(atBench[lightest].employee_id), answer: `Got it, ${firstName(coordinators[0]?.employee_id) || 'boss'} — starting now` } : null
   const pending = dock.length + desk.length + dispatch.length
+  const coordName = firstName(coordinators[0]?.employee_id)
+  /** The admin's questions at the coordinator's desk, and the coordinator's answers from the floor as it is. */
+  const adminAsks = (me: string): Array<[string, string]> => [
+    [`${coordName ? 'Hey ' + coordName + ', ' : ''}${pending ? pending + ' pending — let\'s clear them' : 'all clear today?'}`,
+      pending ? `${dock.length} at the dock, ${desk.length} to assign — by evening, ${me}` : `All clear, ${me}!`],
+    ['When will the dispatch go?', dispatch.length ? `${dispatch.length} packed — going today` : `Nothing to send yet, ${me}`],
+    ...(lateOnBench.length ? [[`${lateOnBench.length} past TAT — push them, please`, 'Yes, I\'ll follow up with the team']] as Array<[string, string]> : []),
+  ]
+  /** The manager's questions: the dock, the next dispatch, parts with Purchase. */
+  const managerAsks = (me: string): Array<[string, string]> => [
+    [`${coordName ? coordName + ', ' : ''}how's the dock today?`, `${dock.length} came in, ${desk.length} to assign`],
+    ['When\'s the next dispatch?', dispatch.length ? `${dispatch.length} ready — today itself, ${me}` : 'Nothing ready yet'],
+    ['Any parts stuck with Purchase?', purchaseItems.length ? `${purchaseItems.length} with them — I'm following up` : 'No, all clear'],
+  ]
   const workOf = (id: string) => {
     const mine = onBench.filter(t => t.engineer_id === id)
     const late = mine.filter(t => categoryTat(t)?.exceeded)
@@ -381,8 +427,34 @@ function Scene({ lab, crew, tickets, pad }: { lab: Trc; crew: Crew[]; tickets: T
     return { n: mine.length, late: late.length, first: mine[0]?.code, lateCode: late[0]?.code, parts: waitingParts?.code }
   }
 
+  /*
+    Engineers with nothing on the bench (the user, 9 Oct: "what we do when we are free ... humanise more"):
+    one each to chat with the two loaders, two on a phone call outside, and the rest to the pantry, four chairs at most.
+    They stay at it until a spare is assigned to them.
+  */
+  const idle = engineers.filter(m => !onBench.some(t => t.engineer_id === m.employee_id) && !handovers.has(m.employee_id) && !partsReady.has(m.employee_id))
+  type Free = 'pantry' | 'loader-in' | 'call-right' | 'loader-out' | 'call-left' | 'help' | 'tidy' | 'count'
+  const freeTime = new Map<string, { kind: Exclude<Free, 'pantry'> } | { kind: 'pantry'; chair: { at: V3; face: number; via: V3[] } }>()
+  const plan: Free[] = ['pantry', 'loader-in', 'help', 'call-right', 'tidy', 'pantry', 'loader-out', 'count', 'call-left', 'pantry', 'help', 'pantry']
+  let chairsUsed = 0
+  idle.forEach((m, k) => {
+    const want = plan[k] ?? 'pantry'
+    if (want !== 'pantry') { freeTime.set(m.employee_id, { kind: want }); return }
+    if (chairsUsed < PANTRY_CHAIRS.length) freeTime.set(m.employee_id, { kind: 'pantry', chair: PANTRY_CHAIRS[chairsUsed++] })
+  })
+  const busiestBench = engineers
+    .map(m => ({ m, n: onBench.filter(t => t.engineer_id === m.employee_id).length, late: lateOnBench.find(t => t.engineer_id === m.employee_id) }))
+    .filter(x => x.n > 0)
+    .sort((a, b) => Number(!!b.late) - Number(!!a.late) || b.n - a.n)[0]
+  const helpAt = busiestBench ? {
+    x: benches.at(benchIndex.get(busiestBench.m.employee_id)!)[0], z: benches.aisle(benchIndex.get(busiestBench.m.employee_id)!),
+    who: busiestBench.m.employee_id, late: !!busiestBench.late,
+    code: (busiestBench.late ?? onBench.find(t => t.engineer_id === busiestBench.m.employee_id))!.code,
+  } : null
+  const pantryChair = new Map<string, { at: V3; face: number; via: V3[] }>()
+  freeTime.forEach((v, id) => { if (v.kind === 'pantry') pantryChair.set(id, v.chair) })
   // Two pairs at most, from those not already on an errand; each pair keeps the same time, so they meet at the cooler.
-  const free = engineers.map((m, i) => ({ m, i })).filter(({ m }) => !handovers.has(m.employee_id) && !partsReady.has(m.employee_id))
+  const free = engineers.map((m, i) => ({ m, i })).filter(({ m }) => !handovers.has(m.employee_id) && !partsReady.has(m.employee_id) && !freeTime.has(m.employee_id))
   const waterOf = new Map<string, { slot: 0 | 1; pair: number; partner: string }>()
   const chatOf = new Map<string, [string, string, string]>()
   ;[[1, 2], [7, 8]].forEach(([a, b], pair) => {
@@ -390,11 +462,12 @@ function Scene({ lab, crew, tickets, pad }: { lab: Trc; crew: Crew[]; tickets: T
     waterOf.set(free[a].m.employee_id, { slot: 0, pair, partner: free[b].m.employee_id }); waterOf.set(free[b].m.employee_id, { slot: 1, pair, partner: free[a].m.employee_id })
     // A question, an answer from the other one's real bench, and a reply from this one's.
     const one = workOf(free[a].m.employee_id), two = workOf(free[b].m.employee_id)
-    const answer = two.n === 0 ? 'None! All clear on mine'
+    const n1 = firstName(free[a].m.employee_id), n2 = firstName(free[b].m.employee_id)
+    const answer = two.n === 0 ? `None, ${n1}! All clear on mine`
       : two.late ? `${two.n} — ${two.late} past TAT, rushing` : `${two.n}, all on time`
     const reply = one.n === 0 ? 'Mine is clear — I\'ll help you'
       : one.late ? `I've ${one.n}, ${one.lateCode} is late too` : `I've ${one.n}. Done by evening`
-    const q = pair % 2 ? 'Busy today? How many pending?' : 'How many on your bench?'
+    const q = pair % 2 ? `${n2}, busy today? How many pending?` : `Hey ${n2}, how many on your bench?`
     chatOf.set(free[a].m.employee_id, [q, answer, reply])
     chatOf.set(free[b].m.employee_id, ['', '', ''])
   })
@@ -431,6 +504,9 @@ function Scene({ lab, crew, tickets, pad }: { lab: Trc; crew: Crew[]; tickets: T
     <>
       <Talk.Provider value={talk}>
       <Crowd.Provider value={crowd}>
+      <Seated.Provider value={seated}>
+      <Names.Provider value={names}>
+      <Pantry />
       <Sky />
       <directionalLight
         position={night ? [-18, 26, 10] : [18, 26, 12]}
@@ -472,6 +548,39 @@ function Scene({ lab, crew, tickets, pad }: { lab: Trc; crew: Crew[]; tickets: T
         const handover = handovers.get(m.employee_id)
         const parts = partsReady.get(m.employee_id)
         const water = waterOf.get(m.employee_id)
+        const k = idle.indexOf(m)
+        // Nothing on the bench: free time, until a spare is assigned (the user, 9 Oct).
+        if (k >= 0) {
+          const behindZ = b[2] - 1.35 * bs
+          const round: FreeKind[] = ['pantry', 'ask', 'loader-in', 'tidy', 'call-right', 'pantry', 'help', 'loader-out', 'ask', 'count', 'pantry', 'call-left']
+          const order = round.map((_, n) => round[(n + k * 3) % round.length]).filter(x => (x !== 'help' || helpAt) && (x !== 'ask' || coordinators.length > 0))
+          return <Walker key={m.employee_id} color={UNIFORM.engineer.color} seed={m.employee_id} scale={bs} tool="meter"
+            stops={freeDay(home, behindZ, order, i, {
+              chair: PANTRY_CHAIRS[k % PANTRY_CHAIRS.length],
+              loaderLines: { in: loaderTalk(true, dock.length, mate, firstName(m.employee_id)), out: loaderTalk(false, dispatch.length + outbound.length, mate, firstName(m.employee_id)) },
+              help: helpAt && { ...helpAt, name: firstName(helpAt.who) },
+              me: firstName(m.employee_id),
+              ask: coordinators[0] ? { seat: seats.coordinator[0], who: coordinators[0].employee_id, name: firstName(coordinators[0].employee_id), answer: desk.length ? `Yes ${firstName(m.employee_id)} — ${desk[0].code}, I'll bring it` : `Nothing yet, ${firstName(m.employee_id)} — I'll call you` } : null,
+            })}
+            still={still} onHover={personHover(m)} />
+        }
+        const free = freeTime.get(m.employee_id)
+        if (free) {
+          const behindZ = b[2] - 1.35 * bs
+          const kind = free.kind === 'help' && !helpAt ? 'tidy' : free.kind
+          const stops = free.kind === 'pantry' ? pantryRound(home, behindZ, free.chair, i)
+            : kind === 'loader-in' ? loaderRound(home, behindZ, 'loader-in', SPOT.dock[0], loaderTalk(true, dock.length), i)
+            : kind === 'loader-out' ? loaderRound(home, behindZ, 'loader-out', SPOT.dispatch[0], loaderTalk(false, dispatch.length + outbound.length), i)
+            : kind === 'help' ? helpRound(home, behindZ, helpAt!, i)
+            : kind === 'tidy' ? tidyRound(home, i)
+            : kind === 'count' ? countRound(home, behindZ, i)
+            : callRound(home, behindZ, kind === 'call-right', i)
+          // Walk there once; then keep at it there.
+          const settle = free.kind === 'pantry' ? stops.length - 1
+            : kind.startsWith('loader') ? 6 : kind === 'help' ? 5 : kind === 'tidy' ? 1 : kind === 'count' ? 5 : 8
+          return <Walker key={m.employee_id} color={UNIFORM.engineer.color} seed={m.employee_id} scale={bs}
+            tool={kind === 'count' ? 'meter' : null} stops={stops} loopFrom={settle} still={still} onHover={personHover(m)} />
+        }
         // Somewhere to go: a round from the bench and back; otherwise at the bench all along.
         return handover || parts || water
           ? <Walker key={m.employee_id} color={UNIFORM.engineer.color} seed={m.employee_id} scale={bs} tool={busy ? 'iron' : null}
@@ -485,17 +594,21 @@ function Scene({ lab, crew, tickets, pad }: { lab: Trc; crew: Crew[]; tickets: T
         const mine = errandsOf(i)
         return mine.length
           ? <Walker key={m.employee_id} color={UNIFORM.coordinator.color} seed={m.employee_id}
-              stops={coordinatorRound(seats.coordinator[i], mine, assignTo, i, partsTo, askPurchase ? { seat: seats.purchase[0], code: askPurchase.code, who: buyers[0]?.employee_id, answer: 'Ordering it today' } : null)}
+              stops={coordinatorRound(seats.coordinator[i], mine, assignTo, i, partsTo, buyers[deskBuyer] ? {
+                seat: seats.purchase[deskBuyer], who: buyers[deskBuyer].employee_id,
+                lines: purchaseTalk(purchaseItems, firstName(buyers[deskBuyer].employee_id), firstName(m.employee_id)),
+              } : null)}
               still={still} onHover={personHover(m)} />
           : <Sitter key={m.employee_id} at={seats.coordinator[i]} color={UNIFORM.coordinator.color} seed={m.employee_id} still={still} onHover={personHover(m)} />
       })}
       {managers.map((m, i) => {
-        const visits = i === 0 ? nrWaiting.map(v => ({ ...v, say: `${v.code} — really not repairable? Show me` })) : []
+        const visits = i === 0 ? nrWaiting.map(v => ({ ...v, say: `${v.name ? v.name + ', ' : ''}${v.code} — really not repairable? Show me` })) : []
         const bench = benchTrip(m)
-        return visits.length || bench
+        const talk = i === 0 && coordinators[0] ? { seat: seats.coordinator[0], who: coordinators[0].employee_id, lines: managerAsks(firstName(m.employee_id)) } : undefined
+        return visits.length || bench || talk
           ? <Walker key={m.employee_id} color={UNIFORM.manager.color} seed={m.employee_id}
               tool={bench && onBench.some(t => t.engineer_id === m.employee_id) ? 'iron' : null}
-              stops={cabinRound('manager', seats.manager[i], visits, 20, undefined, bench)}
+              stops={cabinRound('manager', seats.manager[i], visits, 30, talk, bench)}
               still={still} onHover={personHover(m)} />
           : <Sitter key={m.employee_id} at={seats.manager[i]} color={UNIFORM.manager.color} seed={m.employee_id} still={still} onHover={personHover(m)} />
       })}
@@ -503,9 +616,8 @@ function Scene({ lab, crew, tickets, pad }: { lab: Trc; crew: Crew[]; tickets: T
       {admins.map((m, i) => (
         <Walker key={m.employee_id} color={UNIFORM.admin.color} seed={m.employee_id}
           tool={benchTrip(m) && onBench.some(t => t.engineer_id === m.employee_id) ? 'iron' : null}
-          stops={cabinRound('admin', seats.admin[i], adminVisits.map(v => ({ ...v, say: `${v.code} is past TAT — what's holding it?` })), 14 + i * 22,
-            { seat: seats.coordinator[0], say: pending ? `${pending} pending — let's clear them` : 'All clear today?', who: coordinators[0]?.employee_id,
-              answer: pending ? `${dock.length} at the dock, ${desk.length} to assign — by evening` : 'All clear!' }, benchTrip(m))}
+          stops={cabinRound('admin', seats.admin[i], adminVisits.map(v => ({ ...v, say: `${v.name ? v.name + ', ' : ''}${v.code} is past TAT — what's holding it?` })), 14 + i * 22,
+            { seat: seats.coordinator[0], who: coordinators[0]?.employee_id, lines: coordinators[0] ? adminAsks(firstName(m.employee_id)) : [] }, benchTrip(m))}
           still={still} onHover={personHover(m)} />
       ))}
       {buyers.map((m, i) => i === 0 && partsComing
@@ -531,20 +643,20 @@ function Scene({ lab, crew, tickets, pad }: { lab: Trc; crew: Crew[]; tickets: T
 
       {/* Trucks: one arrives while anything is on its way in, one leaves with what is going back. */}
       <Road.Provider value={road}>
-        <Truck id="in" stop={SPOT.dock[0]} body="#D62F35" label="CYRIX" active={dock.length > 0 && !still} dock={inDock} />
-        <Truck id="out" stop={SPOT.dispatch[0]} body="#F5F5F4" label="RETURN" active={(dispatch.length > 0 || outbound.length > 0) && !still} dock={outDock} />
+        <Truck id="in" stop={SPOT.dock[0]} body="#D62F35" label="CYRIX" active={dock.length > 0 && !still} dock={inDock} first={1} gap={[140, 190]} lead={45} />
+        <Truck id="out" stop={SPOT.dispatch[0]} body="#F5F5F4" label="RETURN" active={(dispatch.length > 0 || outbound.length > 0) && !still} dock={outDock} first={25} gap={[150, 210]} lead={30} />
         <Outside />
       </Road.Provider>
       {/* Loaders in hi-vis: boxes off the Cyrix truck to the dock, and from dispatch onto the return truck */}
-      <Walker color="#F97316" seed="loader-in" gate={inDock} still={still} onHover={() => {}} vest stops={[
-        { at: [SPOT.dock[0] - 2.2, 0, 8.9], wait: 0.6, face: Math.PI / 2 },
+      <Walker color="#F97316" seed="loader-in" gate={inDock} rest={loaderBreak('in', mate)} still={still} onHover={() => {}} vest stops={[
+        { at: [SPOT.dock[0] - 2.2, 0, 8.9], wait: 0.6, face: -Math.PI / 2 },
         { at: [SPOT.dock[0] - 2.6, 0, 9.9] },
         { at: [SPOT.dock[0] - 3.35, 0, APRON_Z], wait: 1.8, face: Math.PI / 2, pick: 'high' },
         { at: [SPOT.dock[0] - 2.6, 0, 9.9], carry: true },
         { at: [SPOT.dock[0] - 1.5, 0, 8.5], wait: 1.8, face: Math.PI * 0.85, put: 'low', carry: true },
       ]} />
-      <Walker color="#F97316" seed="loader-out" gate={outDock} still={still} onHover={() => {}} vest stops={[
-        { at: [SPOT.dispatch[0] - 2.2, 0, 8.9], wait: 0.6, face: Math.PI / 2 },
+      <Walker color="#F97316" seed="loader-out" gate={outDock} rest={loaderBreak('out', mate)} still={still} onHover={() => {}} vest stops={[
+        { at: [SPOT.dispatch[0] - 2.2, 0, 8.9], wait: 0.6, face: -Math.PI / 2 },
         { at: [SPOT.dispatch[0] - 1.5, 0, 8.5], wait: 1.8, face: Math.PI * 0.85, pick: 'low' },
         { at: [SPOT.dispatch[0] - 2.6, 0, 9.9], carry: true },
         { at: [SPOT.dispatch[0] - 3.35, 0, APRON_Z], wait: 1.8, face: Math.PI / 2, put: 'high', carry: true },
@@ -564,6 +676,8 @@ function Scene({ lab, crew, tickets, pad }: { lab: Trc; crew: Crew[]; tickets: T
       </EffectComposer>
       <ContactShadows position={[0, 0.011, 0]} opacity={night ? 0.2 : 0.3} scale={60} blur={2.2} far={6} resolution={512} frames={1} />
 
+      </Names.Provider>
+      </Seated.Provider>
       </Crowd.Provider>
       </Talk.Provider>
       {hover && (
@@ -579,6 +693,49 @@ function Scene({ lab, crew, tickets, pad }: { lab: Trc; crew: Crew[]; tickets: T
 
 type Errand = 'dock' | 'assign' | 'dispatch' | 'parts' | 'purchase'
 
+/** A part pending with Purchase: for which ticket, what, and where it stands. */
+type PurchaseItem = { code: string; part: string; status: PartStatus; po?: string | null; edd?: string | null; vendor?: string | null; since?: string; late: boolean }
+
+/**
+ * What the coordinator asks at the Purchase desk, and the buyer's answers
+ * (the user, 9 Oct: "if any purchase pending, coordinator should go to
+ * purchase dept and ask logical questions"): an order past its due date
+ * first, then one for a spare past its TAT, then the oldest — each asked
+ * about from where it stands: a new request, one not taken up yet, a PO
+ * not raised, an order not arrived.
+ */
+function purchaseTalk(items: PurchaseItem[], buyer: string, me: string): Array<[string, string]> {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const day = (iso: string) => new Date(iso.slice(0, 10) + 'T00:00:00')
+  const dated = (iso: string) => day(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+  const overdue = (x: PurchaseItem) => !!x.edd && day(x.edd) < today
+  const short = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s)
+  const what = (x: PurchaseItem) => (x.part ? `${x.code}'s ${short(x.part, 22)}` : `${x.code}'s part`)
+  const order = [...items].sort((a, b) => Number(overdue(b)) - Number(overdue(a)) || Number(b.late) - Number(a.late) || (a.since ?? '').localeCompare(b.since ?? ''))
+  const hey = buyer ? `${buyer}, ` : ''
+  const lines: Array<[string, string]> = []
+  if (items.length > 1) lines.push([`${hey}${items.length} parts pending with you — a quick update?`, `Sure ${me}, go ahead`])
+  for (const x of order.slice(0, 2)) {
+    const lead = lines.length ? '' : hey
+    const days = x.since ? Math.floor((today.getTime() - day(x.since).getTime()) / 86400000) : 0
+    if (x.status === 'requested') lines.push([`${lead}${what(x)} — a new one for you`, `OK ${me}, I'll get quotes`])
+    else if (x.status === 'forwarded') lines.push(days >= 2
+      ? [`${lead}${what(x)} — ${days} days now. Any vendor yet?`, 'Two quotes in — I\'ll close it today']
+      : [`${lead}${what(x)} — did you get my request?`, 'Yes, checking with vendors'])
+    else if (x.status === 'accepted') lines.push([`${lead}${what(x)} — PO raised yet?`, x.vendor ? `Yes, going to ${short(x.vendor, 18)}` : `Raising it today, ${me}`])
+    else if (x.po) {
+      const po = `${x.code}'s ${poLabel(x.po)}`
+      lines.push(!x.edd ? [`${lead}${po} — any delivery date?`, 'Vendor says this week']
+        : overdue(x) ? [`${lead}${po} was due ${dated(x.edd)} — still not here`, `Sorry ${me} — calling the vendor now`]
+        : [`${lead}${po} — when will it reach?`, `Due ${dated(x.edd)}, ${me}`])
+    }
+  }
+  const late = order.find(x => x.late)
+  if (late) lines.push([`${late.code} is past TAT — please push it`, 'Will do, top priority'])
+  return lines
+}
+
 /**
  * A point on a round: how long to stay; whether to sit there, or work at the
  * bench; which way to face; whether to talk and what is said; whether a
@@ -590,10 +747,20 @@ type Stop = {
   pick?: 'low' | 'high'; put?: 'low' | 'high'
   /** Talking to this person, who answers with this, a beat later. */
   to?: string; answer?: string
+  /** Sitting at the pantry table: tea, the phone, small talk. */
+  pantry?: boolean
+  /** On a phone call: phone to the ear, the other hand on the hip. */
+  call?: boolean
+  /** Wiping down and tidying the bench. */
+  tidy?: boolean
+  /** Counting stock at the shelf, clipboard in hand. */
+  count?: boolean
+  /** Standing, looking at the phone. */
+  phone?: boolean
 }
 
 /** Somebody to go and see at a bench: where to stand in the aisle in front of it, the ticket, what is said. */
-type Visit = { x: number; z: number; code: string; say?: string; who?: string; answer?: string }
+type Visit = { x: number; z: number; code: string; say?: string; who?: string; answer?: string; name?: string }
 
 /** Up from a desk and round its end; which end depends on where the desk sits in the row. */
 function deskWay(seat: V3, room: { x0: number; x1: number }) {
@@ -621,7 +788,7 @@ function toCoordinator(coordSeat: V3, from: V3, talk: Stop): { go: Stop[]; back:
  * accepted), to the engineer with least on the bench with a spare to assign,
  * to dispatch with what goes back — and home the same way.
  */
-function coordinatorRound(seat: V3, errands: Errand[], assign: Visit | null, nth: number, partsTo: Visit | null = null, purchase: { seat: V3; code: string; who?: string; answer?: string } | null = null): Stop[] {
+function coordinatorRound(seat: V3, errands: Errand[], assign: Visit | null, nth: number, partsTo: Visit | null = null, purchase: { seat: V3; who: string; lines: Array<[string, string]> } | null = null): Stop[] {
   const w = deskWay(seat, ROOM.coordinator)
   const chair: Stop = { at: w.chair, wait: 6 + nth * 4, sit: true }
   const roomExit: V3 = [w.side[0], 0, COORD_ROOM_FRONT + 0.5]
@@ -640,7 +807,7 @@ function coordinatorRound(seat: V3, errands: Errand[], assign: Visit | null, nth
     if (e === 'assign' && assign) {
       round.push(...there([
         { at: [LEFT_AISLE, 0, FRONT_CORRIDOR] }, { at: [LEFT_AISLE, 0, assign.z] },
-        { at: [assign.x, 0, assign.z], wait: 4, face: Math.PI, talk: true, say: `${assign.code} for you — priority, please`, to: assign.who, answer: assign.answer },
+        { at: [assign.x, 0, assign.z], wait: 4, face: Math.PI, talk: true, say: `${assign.name ? assign.name + ', ' : ''}${assign.code} for you — priority, please`, to: assign.who, answer: assign.answer },
         { at: [LEFT_AISLE, 0, assign.z], carry: false }, { at: [LEFT_AISLE, 0, FRONT_CORRIDOR], carry: false },
       ], true, false))
     }
@@ -651,17 +818,18 @@ function coordinatorRound(seat: V3, errands: Errand[], assign: Visit | null, nth
         { at: [RIGHT_AISLE, 0, FRONT_CORRIDOR] }, { at: [RIGHT_AISLE, 0, shelfZ] },
         { at: [shelfX, 0, shelfZ], wait: 2, face: Math.PI / 2, pick: 'high', carry: 'part' },
         { at: [RIGHT_AISLE, 0, shelfZ], carry: 'part' }, { at: [RIGHT_AISLE, 0, partsTo.z], carry: 'part' },
-        { at: [partsTo.x, 0, partsTo.z], wait: 3.6, face: Math.PI, put: 'high', carry: 'part', say: `Parts for ${partsTo.code} — here you go`, to: partsTo.who, answer: partsTo.answer },
+        { at: [partsTo.x, 0, partsTo.z], wait: 3.6, face: Math.PI, put: 'high', carry: 'part', say: `${partsTo.name ? 'Hey ' + partsTo.name + ', p' : 'P'}arts for ${partsTo.code}`, to: partsTo.who, answer: partsTo.answer },
         { at: [RIGHT_AISLE, 0, partsTo.z] }, { at: [RIGHT_AISLE, 0, FRONT_CORRIDOR] },
       ]))
     }
-    if (e === 'purchase' && purchase) {
-      // Along the back to the Purchase cabin, a word at the buyer's desk, and back.
+    if (e === 'purchase' && purchase && purchase.lines.length) {
+      // Along the back to the Purchase cabin, what is pending with them gone through at the buyer's desk, and back.
       const doorX = (ROOM.purchase.x0 + ROOM.purchase.x1) / 2
+      const desk: V3 = [purchase.seat[0], 0, purchase.seat[2] + 0.95]
       round.push(
         { at: w.side }, { at: w.front }, { at: roomExit }, { at: [LEFT_AISLE, 0, COORD_ROOM_FRONT + 0.5] }, { at: [LEFT_AISLE, 0, BACK_CORRIDOR] },
         { at: [doorX, 0, BACK_CORRIDOR] }, { at: [doorX, 0, CABIN_FRONT + 0.2] }, { at: [purchase.seat[0], 0, CABIN_FRONT - 0.4] },
-        { at: [purchase.seat[0], 0, purchase.seat[2] + 0.95], wait: 4, face: Math.PI, talk: true, say: `${purchase.code} needs parts — please order`, to: purchase.who, answer: purchase.answer },
+        ...purchase.lines.map(([say, answer]) => ({ at: desk, wait: 5.5, face: Math.PI, talk: true, say, to: purchase.who, answer })),
         { at: [purchase.seat[0], 0, CABIN_FRONT - 0.4] }, { at: [doorX, 0, CABIN_FRONT + 0.2] }, { at: [doorX, 0, BACK_CORRIDOR] },
         { at: [LEFT_AISLE, 0, BACK_CORRIDOR] }, { at: [LEFT_AISLE, 0, COORD_ROOM_FRONT + 0.5] }, { at: roomExit }, { at: w.front }, { at: w.side }, chair,
       )
@@ -684,7 +852,7 @@ function coordinatorRound(seat: V3, errands: Errand[], assign: Visit | null, nth
  * standing in the aisle in front of the bench, talking — then, for the admin,
  * the coordinator's desk; and back to sit down again.
  */
-function cabinRound(room: 'admin' | 'manager', seat: V3, visits: Visit[], sitFor: number, coordinator?: { seat: V3; say: string; who?: string; answer?: string }, bench?: { home: V3; behindZ: number }): Stop[] {
+function cabinRound(room: 'admin' | 'manager', seat: V3, visits: Visit[], sitFor: number, coordinator?: { seat: V3; who?: string; lines: Array<[string, string]> }, bench?: { home: V3; behindZ: number }): Stop[] {
   const w = deskWay(seat, ROOM[room])
   const chair: Stop = { at: w.chair, wait: sitFor, sit: true }
   if (!visits.length && !coordinator && !bench) return [chair]
@@ -709,8 +877,12 @@ function cabinRound(room: 'admin' | 'manager', seat: V3, visits: Visit[], sitFor
     }
     stops.push({ at: [aisle, 0, BACK_CORRIDOR] })
   }
-  if (coordinator) {
-    const c = toCoordinator(coordinator.seat, [LEFT_AISLE, 0, BACK_CORRIDOR], { at: [0, 0, 0], wait: 5, face: Math.PI, talk: true, say: coordinator.say, to: coordinator.who, answer: coordinator.answer })
+  if (coordinator && coordinator.lines.length) {
+    const [first, ...more] = coordinator.lines
+    const c = toCoordinator(coordinator.seat, [LEFT_AISLE, 0, BACK_CORRIDOR], { at: [0, 0, 0], wait: 5.5, face: Math.PI, talk: true, say: first[0], to: coordinator.who, answer: first[1] })
+    const desk = c.go[c.go.length - 1]
+    // Then the rest of what there is to ask, at the same desk, each in turn.
+    c.go.push(...more.map(([say, answer]) => ({ ...desk, say, answer })))
     stops.push(...c.go, ...c.back)
   }
   stops.push({ at: hall }, { at: door }, { at: [doorX, 0, w.front[2]] }, { at: w.front }, { at: w.side })
@@ -726,7 +898,9 @@ function cabinRound(room: 'admin' | 'manager', seat: V3, visits: Visit[], sitFor
  */
 const CHATS = [['Tea after this?', 'Yes, 4 o\'clock'], ['That board was tricky', 'Reflow fixed mine'], ['Weekend plans?', 'Home, finally!']]
 function engineerRound(home: V3, behindZ: number, coordSeat: V3, repaired: string | null, parts: string | null, i: number, water?: { slot: 0 | 1; pair: number; partner: string }, talk?: [string, string, string]): Stop[] {
-  const bench: Stop = { at: home, wait: water ? 22 : 14 + (i % 5) * 6, work: true, face: 0 }
+  // A good spell of work between errands, different for each engineer, so getting up is now and then — not a shuttle
+  // (the user, 9 Oct: "the eng keeping repaired boxes to coordinator is repeating very fast").
+  const bench: Stop = { at: home, wait: water ? 80 + ((i * 53) % 70) : 60 + ((i * 37) % 120), work: true, face: 0 }
   const behind: V3 = [home[0], 0, behindZ]
   const stops: Stop[] = [bench, { at: behind }]
   if (repaired) {
@@ -743,14 +917,14 @@ function engineerRound(home: V3, behindZ: number, coordSeat: V3, repaired: strin
   }
   if (water) {
     // To the cooler, a drink, a few words with the other one, and back.
-    const mine: V3 = water.slot ? [COOLER[0] + 1.05, 0, COOLER[2] + 0.95] : [COOLER[0] + 0.85, 0, COOLER[2] - 0.15]
-    const theirs: V3 = water.slot ? [COOLER[0] + 0.85, 0, COOLER[2] - 0.15] : [COOLER[0] + 1.05, 0, COOLER[2] + 0.95]
+    const mine: V3 = water.slot ? [COOLER[0] - 1.0, 0, COOLER[2] + 0.55] : [COOLER[0] - 0.8, 0, COOLER[2] - 0.1]
+    const theirs: V3 = water.slot ? [COOLER[0] - 0.8, 0, COOLER[2] - 0.1] : [COOLER[0] - 1.0, 0, COOLER[2] + 0.55]
     const face = Math.atan2(theirs[0] - mine[0], theirs[2] - mine[2])
-    const lane: V3 = [LEFT_AISLE, 0, COOLER[2] + (water.slot ? 1 : 0)]
+    const inside = PANTRY_IN.map(at => ({ at }))
     const lines = talk ?? CHATS[water.pair % CHATS.length].concat('') as unknown as [string, string, string]
     stops.push(
-      { at: [LEFT_AISLE, 0, behindZ] }, { at: lane }, { at: mine },
-      { at: mine, wait: 3.2, face: -Math.PI / 2, drink: true },
+      { at: [RIGHT_AISLE, 0, behindZ] }, { at: [RIGHT_AISLE, 0, BACK_CORRIDOR] }, ...inside, { at: mine },
+      { at: mine, wait: 3.2, face: Math.PI / 2, drink: true },
       // Turn about: one asks, the other answers, the first replies.
       // Turn about: the first asks and the other answers, then the first replies; the other only listens and answers.
       water.slot === 0
@@ -759,7 +933,7 @@ function engineerRound(home: V3, behindZ: number, coordSeat: V3, repaired: strin
       water.slot === 0
         ? { at: mine, wait: 3, face, talk: true, say: lines[2] }
         : { at: mine, wait: 3, face, talk: true },
-      { at: lane }, { at: [LEFT_AISLE, 0, behindZ] },
+      ...[...inside].reverse(), { at: [RIGHT_AISLE, 0, BACK_CORRIDOR] }, { at: [RIGHT_AISLE, 0, behindZ] },
     )
   }
   stops.push({ at: behind, carry: parts ? 'part' : false })
@@ -772,7 +946,7 @@ function purchaseRound(seat: V3): Stop[] {
   const doorX = (ROOM.purchase.x0 + ROOM.purchase.x1) / 2
   const shelfX = SPOT.shelf[0] - 1.05
   return [
-    { at: w.chair, wait: 20, sit: true }, { at: w.side }, { at: w.front }, { at: [doorX, 0, w.front[2]] },
+    { at: w.chair, wait: 40, sit: true }, { at: w.side }, { at: w.front }, { at: [doorX, 0, w.front[2]] },
     { at: [doorX, 0, CABIN_FRONT + 0.2], carry: 'part' }, { at: [doorX, 0, BACK_CORRIDOR], carry: 'part' },
     { at: [shelfX, 0, BACK_CORRIDOR], carry: 'part' }, { at: [shelfX, 0, SPOT.shelf[2] - 1.4], carry: 'part' },
     { at: [shelfX, 0, SPOT.shelf[2] - 1.4], wait: 2.6, face: Math.PI / 2, say: 'Parts are in' },
@@ -1206,7 +1380,7 @@ function Building({ name }: { name: string }) {
         </group>
       ))}
       {/* Glass fronts to the cabins with a door gap, glass between them, a header rail */}
-      {(['manager', 'admin', 'purchase'] as const).map(r => {
+      {(['manager', 'admin', 'purchase', 'pantry'] as const).map(r => {
         const { x0, x1 } = ROOM[r], mid = (x0 + x1) / 2, half = (x1 - x0) / 2
         return (
           <group key={r}>
@@ -1234,7 +1408,6 @@ function Building({ name }: { name: string }) {
       <Sign kind="fives" at={[-HALF_X + 0.14, 1.7, -6.3]} rotY={Math.PI / 2} w={0.9} />
       {[SPOT.dock[0], SPOT.dispatch[0]].map(x => <Sign key={x} kind="exit" at={[x, 2.25, HALF_Z - 0.16]} rotY={Math.PI} w={0.8} />)}
       <CautionStand at={[12.4, 0, 3.4]} rotY={-0.4} />
-      <WaterCooler />
     </group>
   )
 }
@@ -1352,9 +1525,9 @@ function Workstation({ at }: { at: V3 }) {
   )
 }
 
-function Chair({ at }: { at: V3 }) {
+function Chair({ at, rotY = 0 }: { at: V3; rotY?: number }) {
   return (
-    <group position={at}>
+    <group position={at} rotation-y={rotY}>
       <mesh position={[0, 0.47, 0]} castShadow><boxGeometry args={[0.48, 0.07, 0.46]} /><meshStandardMaterial color="#1F2937" roughness={0.7} /></mesh>
       <mesh position={[0, 0.82, -0.22]} castShadow><boxGeometry args={[0.46, 0.6, 0.06]} /><meshStandardMaterial color="#1F2937" roughness={0.7} /></mesh>
       <mesh position={[0, 0.24, 0]}><cylinderGeometry args={[0.03, 0.03, 0.42, 8]} /><meshStandardMaterial color="#6B7280" metalness={0.6} /></mesh>
@@ -1615,8 +1788,10 @@ function Gate({ open, children }: { open?: React.MutableRefObject<boolean>; chil
  * and hair of their own. Hips and knees bend to sit and to walk; shoulders
  * and elbows to work, type, carry and talk.
  */
-function Body({ color, limbs, tool, look, vest, toolOn, helmet }: {
+function Body({ color, limbs, tool, look, vest, toolOn, helmet, phoneOn, cupOn }: {
   color: string; limbs: Limbs; tool?: 'iron' | 'meter' | null; look: Look; vest?: boolean
+  /** A phone in the right hand, a tea cup in the left — only while in use. */
+  phoneOn?: React.MutableRefObject<boolean>; cupOn?: React.MutableRefObject<boolean>
   /** When given, the tool shows only while this is true. */
   toolOn?: React.MutableRefObject<boolean>
   /** A rider's helmet, in this colour. */
@@ -1655,6 +1830,22 @@ function Body({ color, limbs, tool, look, vest, toolOn, helmet }: {
           <mesh position={[side * -0.035, 0.012, 0.018]} rotation-z={side * 0.6}><capsuleGeometry args={[0.013, 0.035, 4, 8]} />{skin}</mesh>
         </group>
         {hand && <Gate open={toolOn}>{hand}</Gate>}
+        {side > 0 && phoneOn && (
+          <Gate open={phoneOn}>
+            <group position={[-0.02, -0.33, 0.05]} rotation-x={-0.9}>
+              <RoundedBox args={[0.075, 0.15, 0.012]} radius={0.008}><meshStandardMaterial color="#111827" metalness={0.5} roughness={0.2} /></RoundedBox>
+              <mesh position={[0, 0, 0.0065]}><planeGeometry args={[0.066, 0.135]} /><meshStandardMaterial color="#60A5FA" emissive="#3B82F6" emissiveIntensity={1.2} toneMapped={false} /></mesh>
+            </group>
+          </Gate>
+        )}
+        {side < 0 && cupOn && (
+          <Gate open={cupOn}>
+            <group position={[0.02, -0.34, 0.05]}>
+              <mesh><cylinderGeometry args={[0.04, 0.032, 0.09, 14]} /><meshStandardMaterial color="#F8FAFC" roughness={0.35} /></mesh>
+              <mesh position={[0, 0.044, 0]} rotation-x={-Math.PI / 2}><circleGeometry args={[0.036, 14]} /><meshStandardMaterial color="#8B5A2B" /></mesh>
+            </group>
+          </Gate>
+        )}
       </group>
     </group>
   )
@@ -1744,7 +1935,7 @@ function poseWalk(l: Limbs, stride: number, holding: boolean) {
   const s = Math.sin(stride)
   turn(l.legL, s * 0.48); turn(l.legR, -s * 0.48)
   turn(l.kneeL, Math.max(0, -s) * 0.75); turn(l.kneeR, Math.max(0, s) * 0.75)
-  if (holding) arms(l, -0.55, -1.15, -0.55, -1.15, 0.12, -0.12)
+  if (holding) arms(l, -0.3, -1.3, -0.3, -1.3, 0.17, -0.17)
   else arms(l, -s * 0.42, -0.25, s * 0.42, -0.25, 0.06, -0.06)
   if (l.torso.current) { l.torso.current.rotation.y = s * 0.06; l.torso.current.rotation.x = 0.03 }
 }
@@ -1752,7 +1943,7 @@ function poseWalk(l: Limbs, stride: number, holding: boolean) {
 /** Standing: legs straight, a little sway. */
 function poseStand(l: Limbs, t: number, holding: boolean) {
   turn(l.legL, 0); turn(l.legR, 0); turn(l.kneeL, 0); turn(l.kneeR, 0)
-  if (holding) arms(l, -0.55, -1.15, -0.55, -1.15, 0.12, -0.12)
+  if (holding) arms(l, -0.3, -1.3, -0.3, -1.3, 0.17, -0.17)
   else arms(l, 0.04 + Math.sin(t * 1.1) * 0.03, -0.12, 0.04 - Math.sin(t * 1.1) * 0.03, -0.12, 0.06, -0.06)
   if (l.torso.current) { l.torso.current.rotation.y = 0; l.torso.current.rotation.x = 0 }
 }
@@ -1782,6 +1973,26 @@ function poseBend(l: Limbs, where: 'low' | 'high', t: number, wait: number) {
   if (l.torso.current) { l.torso.current.rotation.x = (low ? 0.75 : 0.3) * k; l.torso.current.rotation.y = 0 }
   arms(l, -0.55 - (low ? 0.5 : 0.9) * k, -0.9 + 0.6 * k, -0.55 - (low ? 0.5 : 0.9) * k, -0.9 + 0.6 * k, 0.12, -0.12)
   if (l.head.current) l.head.current.rotation.x = 0.3 * k
+}
+
+/** Wiping the bench down in circles with one hand, the other moving the bins straight. */
+function poseTidy(l: Limbs, t: number) {
+  if (l.torso.current) l.torso.current.rotation.x = 0.28
+  arms(l, -0.75 + Math.sin(t * 0.8) * 0.15, -0.7, -0.95 + Math.sin(t * 4) * 0.12, -0.55 + Math.cos(t * 4) * 0.15, 0.1, -0.25 + Math.cos(t * 4) * 0.12)
+  if (l.head.current) { l.head.current.rotation.x = 0.45; l.head.current.rotation.y = Math.sin(t * 0.6) * 0.2 }
+}
+
+/** Counting stock: clipboard up in the left hand, the right pointing along the shelf, eyes going with it. */
+function poseCount(l: Limbs, t: number) {
+  const along = Math.sin(t * 0.7)
+  arms(l, -0.9, -1.1, -1.2, -0.25, 0.25, -0.3 + along * 0.35)
+  if (l.head.current) { l.head.current.rotation.x = -0.1 + Math.abs(along) * 0.15; l.head.current.rotation.y = along * 0.5 }
+}
+
+/** On the phone: the phone at the ear, the other hand on the hip, a nod now and then. */
+function poseCall(l: Limbs, t: number) {
+  arms(l, -0.25, -0.9, -1.25, -2.55, 0.55, -0.55)
+  if (l.head.current) { l.head.current.rotation.x = Math.sin(t * 1.3) * 0.08; l.head.current.rotation.y = Math.sin(t * 0.5) * 0.25 - 0.15 }
 }
 
 /** A drink of water: cup to the mouth, head back a little, then down again. */
@@ -1961,16 +2172,35 @@ function Engineer({ at, scale = 1, seed, working, neighbour, onHover }: {
  * whoever they came to see and says what it is about, and carries a spare or
  * a part when the leg says so.
  */
-function Walker({ color, seed, stops, still, scale = 1, tool = null, gate, offset, vest, onHover }: {
+function Walker({ color, seed, stops, still, scale = 1, tool = null, gate, rest, offset, vest, loopFrom, onHover }: {
   color: string; seed: string; stops: Stop[]; still: boolean; scale?: number; tool?: 'iron' | 'meter' | null
   /** Only while this is open: a loader works while the truck stands at the dock, and waits otherwise. */
-  gate?: React.MutableRefObject<{ parked: boolean }>
+  gate?: React.MutableRefObject<{ parked: boolean; soon: boolean }>
+  /** A loader's break while no truck is due: from the dock, round, back to the dock. */
+  rest?: Stop[]
   /** Seconds into the first wait to start at; the same for two who are to meet. */
   offset?: number
   vest?: boolean
+  /** Once at the end, go on from this stop rather than the first: walk somewhere once, then keep at it there. */
+  loopFrom?: number
   onHover: (on: boolean, at: V3) => void
 }) {
   const g = useRef<Group>(null)
+  const after = (i: number) => (i + 1 >= stops.length ? (loopFrom ?? 0) : i + 1)
+  /**
+   * At a stop to talk to somebody: their answer comes a beat after the
+   * question — only if they are there (the user, 9 Oct: "the conversation is
+   * happening when no one is there"), within a few steps of the stop.
+   * Otherwise a short look, and on.
+   */
+  const arrive = (at: Stop, now: number) => {
+    nobody.current = false
+    if (!at.to) return
+    const them = crowd?.current.get(at.to)
+    const near = !!them && Math.hypot(them.x - at.at[0], them.z - at.at[2]) < 2.9
+    if (!near) { nobody.current = true; pause.current = Math.min(pause.current, 1.2) }
+    else if (at.answer && talkTo) talkTo.current.set(at.to, { say: at.answer, from: now + (at.wait ?? 3) * 0.5 + 0.15, until: now + (at.wait ?? 3) + 0.3 })
+  }
   const limbs = useLimbs()
   const look = useMemo(() => lookOf(seed), [seed])
   const r = useMemo(() => seedOf(seed), [seed])
@@ -1982,18 +2212,27 @@ function Walker({ color, seed, stops, still, scale = 1, tool = null, gate, offse
   const talkTo = useContext(Talk)
   const crowd = useContext(Crowd)
   const side = useRef(0)
+  /** The one to talk to here is not here: nothing is said on this stop. */
+  const nobody = useRef(false)
   const across = useRef<[number, number]>([1, 0])
   const answerFor = useAnswer(seed)
   const tip = useRef(false)
   const toolOn = useRef(false)
+  const phoneOn = useRef(false)
+  const cupOn = useRef(false)
+  const seated = useContext(Seated)
+  const names = useContext(Names)
   const leg = useRef(0)
   const t = useRef(0)
   const pause = useRef(0)
   const sit = useRef(stops[0]?.sit ? 1 : 0)
+  /** At the work (`stops`), on a break (`rest`), or on the way back from it to the dock (`way`). */
+  const mode = useRef<'work' | 'rest' | 'back'>('work')
+  const way = useRef<Stop[]>([])
   const key = stops.map(x => x.at.join(',') + (x.say ?? '')).join('|')
-  useEffect(() => () => { crowd?.current.delete(seed) }, [crowd, seed])
+  useEffect(() => () => { crowd?.current.delete(seed); seated?.current.delete(seed) }, [crowd, seated, seed])
   useEffect(() => {
-    leg.current = 0; t.current = 0
+    leg.current = 0; t.current = 0; mode.current = 'work'
     // Not all at once: each starts somewhere in their first wait.
     pause.current = offset ?? (stops[0]?.wait ?? 1) * (0.25 + r * 0.75)
     if (g.current && stops[0]) g.current.position.set(stops[0].at[0], 0, stops[0].at[2])
@@ -2001,11 +2240,24 @@ function Walker({ color, seed, stops, still, scale = 1, tool = null, gate, offse
   useFrame(({ clock }, dt) => {
     const me = g.current
     if (!me) return
-    const from = stops[leg.current % stops.length], to = stops[(leg.current + 1) % stops.length]
+    // A loader (the user, 9 Oct: "they don't have time to drink water or tea, but when the vehicle comes they
+    // need to be near the vehicle"): off on a break once the truck has gone, back to the dock as the next is due.
+    if (gate && rest && rest.length > 1 && !still) {
+      const due = gate.current.parked || gate.current.soon
+      if (mode.current === 'work' && !due && leg.current === 0 && pause.current <= 0.05) {
+        mode.current = 'rest'; leg.current = 0; t.current = 0; pause.current = rest[0].wait ?? 1
+      } else if (mode.current === 'rest' && due) {
+        way.current = wayBack(rest, leg.current % rest.length, [me.position.x, 0, me.position.z], stops[0].at)
+        mode.current = 'back'; leg.current = 0; t.current = 0; pause.current = 0
+      }
+    }
+    const list = mode.current === 'rest' && rest ? rest : mode.current === 'back' ? way.current : stops
+    const next = (i: number) => (mode.current === 'work' ? after(i) : (i + 1) % list.length)
+    const from = list[leg.current % list.length], to = list[next(leg.current % list.length)]
     // A loader at the start of a trip waits for the truck.
-    if (gate && !gate.current.parked && leg.current === 0 && pause.current <= 0.05) pause.current = 0.05
-    const waiting = pause.current > 0 || still || stops.length < 2
-    toolOn.current = waiting && !!from.work
+    if (gate && mode.current === 'work' && !gate.current.parked && leg.current === 0 && pause.current <= 0.05) pause.current = 0.05
+    const waiting = pause.current > 0 || still || list.length < 2
+    toolOn.current = waiting && (!!from.work || !!from.count)
     const wantSit = waiting && !!from.sit ? 1 : 0
     sit.current += (wantSit - sit.current) * Math.min(1, dt * 6)
     const now = clock.elapsedTime
@@ -2038,25 +2290,55 @@ function Walker({ color, seed, stops, still, scale = 1, tool = null, gate, offse
       d = Math.atan2(Math.sin(d), Math.cos(d))
       me.rotation.y += d * Math.min(1, dt * 8)
     }
+    // At the pantry table: who else is there decides whether there is talk, and whose turn it is.
+    const atPantry = waiting && !!from.pantry && sit.current > 0.6 && !still
+    if (seated) { if (atPantry) seated.current.add(seed); else seated.current.delete(seed) }
+    let pantryLine = '', doing: 'phone' | 'tea' | 'talk' | 'listen' = 'phone'
+    if (atPantry) {
+      const there = seated ? [...seated.current].sort() : [seed]
+      const chatting = there.length > 1 && (now % 34) < 15
+      const turn = Math.floor(now / 3.6)
+      if (chatting) {
+        const mine = there[turn % there.length] === seed
+        doing = mine ? 'talk' : 'listen'
+        if (mine && (now % 3.6) < 3.1) {
+          const line = SMALL_TALK[(turn * 7 + Math.floor(now / 34)) % SMALL_TALK.length]
+          const other = names?.get(there[(turn + 1) % there.length]) ?? ''
+          pantryLine = other && turn % 2 === 0 ? `${other}, ${line[0].toLowerCase()}${line.slice(1)}` : line
+        }
+      } else doing = ((now + r * 50) % 26) < 9 ? 'tea' : 'phone'
+    }
+    phoneOn.current = (atPantry && doing === 'phone') || (waiting && (!!from.call || !!from.phone) && !still)
+    cupOn.current = (atPantry && doing === 'tea') || (waiting && !!from.drink && !still)
     // What is being said, over their head, while they say it.
-    const asking = waiting && from.say && !still && (!from.answer || pause.current > (from.wait ?? 3) * 0.5)
-    const saying = (asking ? from.say! : '') || answerFor(now)
+    const asking = waiting && from.say && !still && !(from.to && nobody.current) && (!from.answer || pause.current > (from.wait ?? 3) * 0.5)
+    const saying = (asking ? from.say! : '') || answerFor(now) || pantryLine
     if (bubble.current) {
       bubble.current.style.opacity = saying ? '1' : '0'
       if (saying && bubble.current.textContent !== saying) bubble.current.textContent = saying
     }
     tip.current = false
     if (waiting) {
-      if (from.sit) turnTo(0)
+      if (from.sit) turnTo(from.face ?? 0)
       else if (from.face !== undefined) turnTo(from.face)
-      if (sit.current > 0.6 && !still) poseType(limbs, now + r * 30, r)
+      if (atPantry) {
+        if (doing === 'phone') posePhone(limbs, now + r * 9)
+        else if (doing === 'tea') poseDrink(limbs, now + r * 5)
+        else if (doing === 'talk') poseTalk(limbs, now)
+        else { arms(limbs, -0.5, -1.2, -0.45, -1.3, 0.15, -0.15); if (limbs.head.current) { limbs.head.current.rotation.x = 0.05; limbs.head.current.rotation.y = Math.sin(now * 0.7 + r) * 0.4 } }
+      }
+      else if (sit.current > 0.6 && !still) poseType(limbs, now + r * 30, r)
       else if (from.work && !still) tip.current = tool === 'iron' && poseRepair(limbs, now + r * 40, r, 1)
       else if ((from.pick || from.put) && !still) poseBend(limbs, from.pick ?? from.put!, (from.wait ?? 1) - pause.current, from.wait ?? 1)
       else if (from.drink && !still) { poseStand(limbs, now, false); poseDrink(limbs, now) }
+      else if (from.call && !still) { poseStand(limbs, now, false); poseCall(limbs, now) }
+      else if (from.tidy && !still) { poseStand(limbs, now, false); poseTidy(limbs, now + r * 7) }
+      else if (from.count && !still) { poseStand(limbs, now, false); poseCount(limbs, now + r * 5) }
+      else if (from.phone && !still) { poseStand(limbs, now, false); posePhone(limbs, now + r * 9) }
       else if (from.talk && !still) { poseStand(limbs, now, false); poseTalk(limbs, now) }
       else { poseStand(limbs, now, holding); if (limbs.head.current) limbs.head.current.rotation.x = 0.25 }
       if (sit.current > 0.01) poseSit(limbs, sit.current)
-      if (!still && stops.length >= 2) pause.current -= dt
+      if (!still && list.length >= 2) pause.current -= dt
       me.position.y += (0 - me.position.y) * 0.2
       // Back onto the spot from any sidestep, and stand there.
       side.current *= 1 - Math.min(1, dt * 3)
@@ -2067,7 +2349,12 @@ function Walker({ color, seed, stops, still, scale = 1, tool = null, gate, offse
     }
     if (limbs.head.current) { limbs.head.current.rotation.x = 0; limbs.head.current.rotation.y = 0 }
     const len = Math.max(0.01, Math.hypot(to.at[0] - from.at[0], to.at[2] - from.at[2]))
-    if (len < 0.02) { leg.current = (leg.current + 1) % stops.length; t.current = 0; pause.current = to.wait ?? 0; return }
+    /** On to the next stop; back at the dock from a break, the loader waits there for the truck. */
+    const onward = () => {
+      leg.current = next(leg.current); t.current = 0; pause.current = to.wait ?? 0; arrive(to, now)
+      if (mode.current === 'back' && leg.current >= list.length - 1) { mode.current = 'work'; leg.current = 0; pause.current = 0.05 }
+    }
+    if (len < 0.02) { onward(); return }
     const dx = (to.at[0] - from.at[0]) / len, dz = (to.at[2] - from.at[2]) / len
     across.current = [-dz, dx]
     // Somebody close and straight ahead who is also walking: the one with the later name waits a moment.
@@ -2100,11 +2387,7 @@ function Walker({ color, seed, stops, still, scale = 1, tool = null, gate, offse
     poseWalk(limbs, stride, holding)
     if (sit.current > 0.01) poseSit(limbs, sit.current)
     if (len > 0.05) turnTo(Math.atan2(to.at[0] - from.at[0], to.at[2] - from.at[2]))
-    if (t.current >= 1) {
-      leg.current = (leg.current + 1) % stops.length; t.current = 0; pause.current = to.wait ?? 0
-      // Arrived to talk to somebody: their answer comes a beat after the question.
-      if (to.to && to.answer && talkTo) talkTo.current.set(to.to, { say: to.answer, from: now + (to.wait ?? 3) * 0.5 + 0.15, until: now + (to.wait ?? 3) + 0.3 })
-    }
+    if (t.current >= 1) onward()
   })
   const start = stops[0].at
   return (
@@ -2117,12 +2400,12 @@ function Walker({ color, seed, stops, still, scale = 1, tool = null, gate, offse
       onPointerOver={pointer.over(() => { const p = g.current!.position; onHover(true, [p.x, 0, p.z]) })}
       onPointerOut={pointer.out(() => onHover(false, start))}>
       <group scale={scale}>
-        <Body color={color} limbs={limbs} look={look} tool={tool} vest={vest} toolOn={toolOn} />
-        <mesh ref={box} position={[0, 1.0, 0.36]} visible={false} castShadow>
+        <Body color={color} limbs={limbs} look={look} tool={tool} vest={vest} toolOn={toolOn} phoneOn={phoneOn} cupOn={cupOn} />
+        <mesh ref={box} position={[0, 1.07, 0.37]} visible={false} castShadow>
           <boxGeometry args={[0.44, 0.34, 0.38]} />
           <meshStandardMaterial color="#C98F45" roughness={0.85} />
         </mesh>
-        <mesh ref={part} position={[0, 1.0, 0.36]} visible={false} castShadow>
+        <mesh ref={part} position={[0, 1.1, 0.35]} visible={false} castShadow>
           <boxGeometry args={[0.26, 0.16, 0.2]} />
           <meshStandardMaterial color="#2563EB" roughness={0.6} />
         </mesh>
@@ -2135,6 +2418,331 @@ function Walker({ color, seed, stops, still, scale = 1, tool = null, gate, offse
     </group>
     </>
   )
+}
+
+/* ================================================================ the pantry */
+
+/**
+ * A pantry corner (the user, 9 Oct: "engineers without work can go and sit
+ * there, drinking tea, scrolling phone, if more than 1, random talking ...
+ * human nature"): a table with four chairs, a tea counter with a kettle, cups
+ * and a microwave along the wall, a fridge, a rug, its own board.
+ */
+const PANTRY_DOOR_X = (ROOM.pantry.x0 + ROOM.pantry.x1) / 2
+const PANTRY_HALL_Z = -6.05
+const PANTRY_TABLE: V3 = [PANTRY_DOOR_X, 0, -7.3]
+const PANTRY_CHAIRS: Array<{ at: V3; face: number; via: V3[] }> = [
+  { at: [PANTRY_DOOR_X - 0.75, 0, -6.95], face: Math.PI / 2, via: [[PANTRY_DOOR_X - 0.75, 0, PANTRY_HALL_Z]] },
+  { at: [PANTRY_DOOR_X + 0.75, 0, -6.95], face: -Math.PI / 2, via: [[PANTRY_DOOR_X + 0.75, 0, PANTRY_HALL_Z]] },
+  { at: [PANTRY_DOOR_X - 0.75, 0, -7.65], face: Math.PI / 2, via: [[PANTRY_DOOR_X - 1.4, 0, PANTRY_HALL_Z], [PANTRY_DOOR_X - 1.4, 0, -8.4], [PANTRY_DOOR_X - 0.75, 0, -8.4]] },
+  { at: [PANTRY_DOOR_X + 0.75, 0, -7.65], face: -Math.PI / 2, via: [[PANTRY_DOOR_X + 1.4, 0, PANTRY_HALL_Z], [PANTRY_DOOR_X + 1.4, 0, -8.4], [PANTRY_DOOR_X + 0.75, 0, -8.4]] },
+]
+/** Into the pantry from the back corridor: through its door to the space inside it. */
+const PANTRY_IN: V3[] = [[PANTRY_DOOR_X, 0, BACK_CORRIDOR], [PANTRY_DOOR_X, 0, CABIN_FRONT + 0.2], [PANTRY_DOOR_X, 0, PANTRY_HALL_Z]]
+
+function Pantry() {
+  const wood = <meshStandardMaterial color="#A36A3D" roughness={0.5} />
+  const white = <meshStandardMaterial color="#F1F5F9" roughness={0.35} />
+  return (
+    <group>
+      {/* Rug */}
+      <mesh rotation-x={-Math.PI / 2} position={[PANTRY_TABLE[0], 0.106, PANTRY_TABLE[2]]} receiveShadow>
+        <planeGeometry args={[3.2, 2.7]} />
+        <meshStandardMaterial color="#8C5A3C" roughness={0.95} />
+      </mesh>
+      <mesh rotation-x={-Math.PI / 2} position={[PANTRY_TABLE[0], 0.107, PANTRY_TABLE[2]]}>
+        <planeGeometry args={[2.9, 2.4]} />
+        <meshStandardMaterial color="#B98A5E" roughness={0.95} />
+      </mesh>
+      {/* Table and chairs */}
+      <group position={PANTRY_TABLE}>
+        <RoundedBox args={[0.8, 0.05, 1.4]} radius={0.02} position={[0, 0.74, 0]} castShadow receiveShadow>{wood}</RoundedBox>
+        {[[-0.32, -0.6], [0.32, -0.6], [-0.32, 0.6], [0.32, 0.6]].map(([x, z]) => (
+          <mesh key={`${x}${z}`} position={[x, 0.36, z]} castShadow><cylinderGeometry args={[0.025, 0.025, 0.72, 8]} /><meshStandardMaterial color="#374151" metalness={0.6} /></mesh>
+        ))}
+        {/* A plate of biscuits and a newspaper on the table */}
+        <mesh position={[0, 0.775, -0.1]}><cylinderGeometry args={[0.13, 0.11, 0.02, 20]} />{white}</mesh>
+        {[0, 1, 2, 3].map(k => <mesh key={k} position={[Math.cos(k * 1.6) * 0.06, 0.79, -0.1 + Math.sin(k * 1.6) * 0.06]}><cylinderGeometry args={[0.035, 0.035, 0.012, 12]} /><meshStandardMaterial color="#D4A253" /></mesh>)}
+        <mesh position={[0.05, 0.768, 0.35]} rotation-y={0.3}><boxGeometry args={[0.3, 0.008, 0.42]} /><meshStandardMaterial color="#E5E7EB" /></mesh>
+      </group>
+      {PANTRY_CHAIRS.map((c, i) => <Chair key={i} at={c.at} rotY={c.face} />)}
+      {/* The tea counter along the wall: cabinets, a top, a kettle, cups, a microwave, a sugar jar */}
+      <group position={[ROOM.pantry.x0 + 1.75, 0, -HALF_Z + 0.45]} rotation-y={-Math.PI / 2}>
+        <mesh position={[0, 0.44, 0]} castShadow receiveShadow><boxGeometry args={[0.6, 0.88, 2.8]} /><meshStandardMaterial color="#334155" roughness={0.6} /></mesh>
+        {[-0.95, -0.3, 0.35, 1.0].map(z => <mesh key={z} position={[0.302, 0.5, z]}><boxGeometry args={[0.01, 0.6, 0.55]} /><meshStandardMaterial color="#475569" /></mesh>)}
+        <mesh position={[0, 0.9, 0]} castShadow><boxGeometry args={[0.64, 0.04, 2.84]} /><meshStandardMaterial color="#E5E7EB" roughness={0.25} /></mesh>
+        <group position={[0.05, 0.92, -0.9]}>
+          <mesh position={[0, 0.11, 0]} castShadow><cylinderGeometry args={[0.08, 0.1, 0.22, 16]} /><meshStandardMaterial color="#9CA3AF" metalness={0.85} roughness={0.2} /></mesh>
+          <mesh position={[0, 0.02, 0]}><cylinderGeometry args={[0.11, 0.11, 0.04, 16]} /><meshStandardMaterial color="#111827" /></mesh>
+          <mesh position={[0.1, 0.14, 0]} rotation-z={Math.PI / 2}><torusGeometry args={[0.05, 0.012, 6, 12, Math.PI]} /><meshStandardMaterial color="#111827" /></mesh>
+        </group>
+        {[-0.4, -0.28, -0.16].map(z => <mesh key={z} position={[0.08, 0.96, z]}><cylinderGeometry args={[0.035, 0.028, 0.08, 12]} />{white}</mesh>)}
+        <mesh position={[0.08, 0.98, 0.05]}><cylinderGeometry args={[0.05, 0.05, 0.12, 12]} /><meshPhysicalMaterial color="#F8FAFC" transparent opacity={0.6} roughness={0.05} /></mesh>
+        <RoundedBox args={[0.42, 0.28, 0.5]} radius={0.02} position={[0, 1.06, 0.75]} castShadow><meshStandardMaterial color="#1F2937" roughness={0.4} /></RoundedBox>
+        <mesh position={[0.212, 1.06, 0.7]}><planeGeometry args={[0.01, 0.01]} /><meshStandardMaterial color="#000" /></mesh>
+        <mesh position={[0.211, 1.06, 0.68]} rotation-y={Math.PI / 2}><planeGeometry args={[0.3, 0.18]} /><meshStandardMaterial color="#0F172A" metalness={0.5} roughness={0.1} /></mesh>
+      </group>
+      {/* Fridge */}
+      <group position={[ROOM.pantry.x1 - 0.45, 0, -HALF_Z + 0.5]} rotation-y={-Math.PI / 2}>
+        <RoundedBox args={[0.65, 1.8, 0.65]} radius={0.04} position={[0, 0.9, 0]} castShadow receiveShadow><meshStandardMaterial color="#CBD5E1" metalness={0.6} roughness={0.25} /></RoundedBox>
+        <mesh position={[0.33, 1.25, 0.2]}><boxGeometry args={[0.03, 0.4, 0.03]} /><meshStandardMaterial color="#64748B" metalness={0.8} /></mesh>
+        <mesh position={[0.331, 1.05, 0]}><boxGeometry args={[0.002, 0.01, 0.6]} /><meshStandardMaterial color="#94A3B8" /></mesh>
+      </group>
+      {/* A plant by the table */}
+      <group position={[ROOM.pantry.x0 + 0.45, 0, CABIN_FRONT - 0.45]}>
+        <mesh position={[0, 0.22, 0]} castShadow><cylinderGeometry args={[0.2, 0.15, 0.44, 14]} /><meshStandardMaterial color="#E5E7EB" roughness={0.6} /></mesh>
+        <mesh position={[0, 0.8, 0]} castShadow><icosahedronGeometry args={[0.42, 1]} /><meshStandardMaterial color="#2F7D32" roughness={0.9} flatShading /></mesh>
+      </group>
+      <Board at={[PANTRY_DOOR_X, 2.55, CABIN_FRONT]} text="Pantry" color="#0EA5E9" />
+      <WaterCooler />
+    </group>
+  )
+}
+
+/** Small talk at the pantry table: one says something, then the next, never two at once. */
+const SMALL_TALK = [
+  'Did you see the match last night?', 'Lunch at 1?', 'Tea is too sweet today', 'Rain again, traffic was bad',
+  'My bench is empty for once!', 'Any new tickets coming?', 'Weekend plans?', 'This phone needs charging',
+  'Who took my cup?', 'Canteen has biriyani today', 'Battery at 5%', 'Long day…',
+]
+
+/** Everybody's first name, so they can call each other by it. */
+const Names = createContext<Map<string, string> | null>(null)
+
+/** Who is sitting at the pantry table just now, so they take turns to talk. */
+const Seated = createContext<React.MutableRefObject<Set<string>> | null>(null)
+
+/** Looking at the phone: both hands up holding it, head down, a thumb scrolling. */
+function posePhone(l: Limbs, t: number) {
+  arms(l, -0.45, -1.5 + Math.sin(t * 9) * 0.03, -0.4, -1.55, 0.2, -0.2)
+  if (l.head.current) { l.head.current.rotation.x = 0.45; l.head.current.rotation.y = Math.sin(t * 0.3) * 0.05 }
+  if (l.torso.current) l.torso.current.rotation.x = 0.08
+}
+
+/**
+ * From an empty bench to the pantry (the user, 9 Oct): stand at the bench a
+ * little, then round the end of the row, along the left aisle, to a chair at
+ * the table — from its side, never through the table — for a long sit.
+ */
+function pantryRound(home: V3, behindZ: number, chair: { at: V3; face: number; via: V3[] }, i: number): Stop[] {
+  // Along the gap behind the row to the right aisle, up to the back corridor, in through the pantry's door, round to the chair —
+  // and there they stay until something is assigned (the user, 9 Oct: "let them sit there in pantry until something is assigned").
+  const way: Stop[] = [{ at: [RIGHT_AISLE, 0, behindZ] }, { at: [RIGHT_AISLE, 0, BACK_CORRIDOR] }, ...PANTRY_IN.map(at => ({ at })), ...chair.via.map(at => ({ at }))]
+  return [
+    { at: home, wait: 2 + (i % 4) * 2, face: 0 },
+    { at: [home[0], 0, behindZ] },
+    ...way,
+    { at: chair.at, wait: 30, sit: true, face: chair.face, pantry: true },
+  ]
+}
+
+/**
+ * A loader's time between trucks (the user, 9 Oct: "vehicles are coming very
+ * fast, they don't have time to drink water or tea"): along the front and up
+ * the right aisle to the pantry, tea at the counter — a word with the other
+ * loader if they are there too — back to the dock, a call to the driver, the
+ * phone; round again until the truck is due (see `wayBack`).
+ */
+function loaderBreak(side: 'in' | 'out', mate: string): Stop[] {
+  const left = side === 'in'
+  const x = (left ? SPOT.dock[0] : SPOT.dispatch[0]) - 2.2
+  const dock: V3 = [x, 0, 8.9]
+  const road = -Math.PI / 2
+  // Round the table on their own side of it, to their own end of the counter.
+  const round = left ? PANTRY_DOOR_X - 1.4 : PANTRY_DOOR_X + 1.4
+  const cup: V3 = [PANTRY_DOOR_X + (left ? -0.5 : 0.5), 0, -8.35]
+  const out: Stop[] = [
+    { at: [x - 0.9, 0, 8.95] }, { at: [x - 0.9, 0, FRONT_CORRIDOR] }, { at: [RIGHT_AISLE, 0, FRONT_CORRIDOR] }, { at: [RIGHT_AISLE, 0, BACK_CORRIDOR] },
+    ...PANTRY_IN.map(at => ({ at })), { at: [round, 0, PANTRY_HALL_Z] }, { at: [round, 0, -8.4] }, { at: cup },
+  ]
+  const toOther = left ? Math.PI / 2 : -Math.PI / 2
+  const tea: Stop[] = left ? [
+    { at: cup, wait: 4, face: Math.PI },
+    { at: cup, wait: 9, face: 0, drink: true },
+    { at: cup, wait: 6, face: toOther, talk: true, say: `${mate}, your truck coming soon?`, to: 'loader-out', answer: 'After this chai!' },
+    { at: cup, wait: 8, face: 0, drink: true },
+    { at: cup, wait: 6, face: toOther, talk: true, say: 'Hot today, no?', to: 'loader-out', answer: 'Drink water, it helps' },
+  ] : [
+    { at: cup, wait: 4, face: Math.PI },
+    { at: cup, wait: 12, face: 0, drink: true },
+    { at: cup, wait: 21, face: toOther, drink: true },
+  ]
+  const call: Stop[] = left ? [
+    { at: dock, wait: 6, face: road, call: true, say: 'Hello, where is the truck now?' },
+    { at: dock, wait: 5, face: road, call: true, say: 'OK, I am at the dock' },
+  ] : [
+    { at: dock, wait: 6, face: road, call: true, say: 'Hello, what time is the pickup?' },
+    { at: dock, wait: 5, face: road, call: true, say: 'OK, the boxes will be ready' },
+  ]
+  return [
+    { at: dock, wait: 3, face: road },
+    ...out, ...tea, ...[...out].reverse().slice(1), { at: dock },
+    ...call,
+    { at: dock, wait: 18, face: road, phone: true },
+    { at: dock, wait: 5, face: road },
+  ]
+}
+
+/**
+ * The truck is due: the shorter way back to the dock from wherever on their
+ * break a loader is — back the way they came, or on round to its end.
+ */
+function wayBack(round: Stop[], i: number, here: V3, dock: V3): Stop[] {
+  const length = (ps: V3[]) => ps.reduce((sum, p, k) => (k ? sum + Math.hypot(p[0] - ps[k - 1][0], p[2] - ps[k - 1][2]) : 0), 0)
+  const back = [here, ...round.slice(0, i + 1).reverse().map(s => s.at), dock]
+  const on = [here, ...round.slice(i + 1).map(s => s.at), dock]
+  return (length(back) <= length(on) ? back : on).map(at => ({ at }))
+}
+
+/** What a free engineer and a loader talk about, waiting on the next truck. */
+function loaderTalk(dockSide: boolean, n: number, mate = 'Bhai', me = ''): Array<[string, string]> {
+  const you = me ? `, ${me}` : ''
+  return dockSide
+    ? [[`${mate}, heavy load today?`, n ? `${n} box${n === 1 ? '' : 'es'} came in today${you}` : `Nothing yet today${you}`], ['Truck was late again?', `Traffic at the junction${you}`], [`Had lunch, ${mate.toLowerCase()}?`, 'Not yet — after this truck']]
+    : [[`${mate}, how many going back?`, n ? `${n} going back today${you}` : `None to send yet${you}`], ['Tea after this?', `Yes${you}, once it leaves`], ['Rain again tomorrow?', 'Hope not — the roads get flooded']]
+}
+
+/**
+ * A free engineer at the dock with the loader (the user, 9 Oct: "let them
+ * casually talk with loaders"): along the corridor to the dock and round the
+ * pile, then a chat in turns — and again, until there is work.
+ */
+function loaderRound(home: V3, behindZ: number, loader: string, dockX: number, lines: Array<[string, string]>, i: number): Stop[] {
+  const x = dockX - 3.1, spot: V3 = [x, 0, 8.95]
+  const aisle = dockX < 0 ? LEFT_AISLE : RIGHT_AISLE
+  return [
+    { at: home, wait: 3 + (i % 3) * 2, face: 0 },
+    { at: [home[0], 0, behindZ] }, { at: [aisle, 0, behindZ] }, { at: [aisle, 0, FRONT_CORRIDOR] }, { at: [x, 0, FRONT_CORRIDOR] }, { at: spot },
+    ...lines.map(([say, answer]) => ({ at: spot, wait: 5.5, face: Math.PI / 2, talk: true, say, to: loader, answer })),
+    { at: spot, wait: 8, face: Math.PI / 2 },
+  ]
+}
+
+/**
+ * Off to help whoever is busiest (the user, 9 Oct: "if you have any idea,
+ * add more things what eng can do when they are free"): to the aisle in front
+ * of their bench, an offer, their answer, then a while watching and helping.
+ */
+function helpRound(home: V3, behindZ: number, at: { x: number; z: number; who: string; code: string; late: boolean }, i: number): Stop[] {
+  const aisle = at.x < home[0] ? LEFT_AISLE : RIGHT_AISLE
+  const spot: V3 = [at.x + 0.75, 0, at.z]
+  return [
+    { at: home, wait: 3 + (i % 3) * 2, face: 0 },
+    { at: [home[0], 0, behindZ] }, { at: [aisle, 0, behindZ] }, { at: [aisle, 0, at.z] }, { at: spot },
+    { at: spot, wait: 5.5, face: Math.PI, talk: true, say: `Need a hand with ${at.code}?`, to: at.who, answer: at.late ? 'Yes please — it\'s overdue' : 'Sure, hold this board' },
+    { at: spot, wait: 9, face: Math.PI * 1.08, tidy: true },
+    { at: spot, wait: 5, face: Math.PI, talk: true, say: 'Try the other capacitor', to: at.who, answer: 'Good idea, thanks!' },
+    { at: spot, wait: 9, face: Math.PI * 0.95, tidy: true },
+  ]
+}
+
+/** 5S at their own empty bench: wiping it down, putting the bins straight. */
+function tidyRound(home: V3, i: number): Stop[] {
+  return [{ at: home, wait: 2 + (i % 3), face: 0 }, { at: home, wait: 12, face: 0, tidy: true }, { at: home, wait: 4, face: 0.3 }]
+}
+
+/** A stock check at the parts shelf, clipboard in hand. */
+function countRound(home: V3, behindZ: number, i: number): Stop[] {
+  const x = SPOT.shelf[0] - 1.05
+  const a: V3 = [x, 0, SPOT.shelf[2] - 1.5], b: V3 = [x, 0, SPOT.shelf[2] + 1.3]
+  return [
+    { at: home, wait: 3 + (i % 3) * 2, face: 0 },
+    { at: [home[0], 0, behindZ] }, { at: [RIGHT_AISLE, 0, behindZ] }, { at: [RIGHT_AISLE, 0, a[2]] }, { at: a },
+    { at: a, wait: 8, face: Math.PI / 2, count: true },
+    { at: b, wait: 8, face: Math.PI / 2, count: true },
+  ]
+}
+
+/**
+ * A free engineer's time, round and round until a spare is assigned (the
+ * user, 9 Oct: "whole time he shouldn't be there"): out to one thing, back to
+ * the bench to see whether anything has come, out to the next. Each thing is
+ * the way there, a spell of it, and the way back.
+ */
+type FreeKind = 'pantry' | 'loader-in' | 'loader-out' | 'call-right' | 'call-left' | 'help' | 'tidy' | 'count' | 'ask'
+function freeDay(home: V3, behindZ: number, order: FreeKind[], i: number, ctx: {
+  chair: { at: V3; face: number; via: V3[] }
+  loaderLines: { in: Array<[string, string]>; out: Array<[string, string]> }
+  help: { x: number; z: number; who: string; code: string; late: boolean; name?: string } | null
+  /** The coordinator to ask for work: their desk, who they are, what they will say. */
+  ask: { seat: V3; who: string; answer: string; name?: string } | null
+  /** This engineer's first name, for the answers. */
+  me?: string
+}): Stop[] {
+  const behind: Stop = { at: [home[0], 0, behindZ] }
+  const there = (out: Stop[], stay: Stop[]): Stop[] => [behind, ...out, ...stay, ...[...out].slice(0, -1).reverse(), behind]
+  const seg = (k: FreeKind): Stop[] => {
+    if (k === 'tidy') return [{ at: home, wait: 14, face: 0, tidy: true }]
+    if (k === 'pantry') {
+      const out: Stop[] = [{ at: [RIGHT_AISLE, 0, behindZ] }, { at: [RIGHT_AISLE, 0, BACK_CORRIDOR] }, ...PANTRY_IN.map(at => ({ at })), ...ctx.chair.via.map(at => ({ at })), { at: ctx.chair.at }]
+      return there(out, [{ at: ctx.chair.at, wait: 40 + (i % 3) * 12, sit: true, face: ctx.chair.face, pantry: true }])
+    }
+    if (k === 'loader-in' || k === 'loader-out') {
+      const dockX = k === 'loader-in' ? SPOT.dock[0] : SPOT.dispatch[0]
+      const x = dockX - 3.1, spot: V3 = [x, 0, 8.95]
+      const aisle = dockX < 0 ? LEFT_AISLE : RIGHT_AISLE
+      const lines = k === 'loader-in' ? ctx.loaderLines.in : ctx.loaderLines.out
+      const out: Stop[] = [{ at: [aisle, 0, behindZ] }, { at: [aisle, 0, FRONT_CORRIDOR] }, { at: [x, 0, FRONT_CORRIDOR] }, { at: spot }]
+      return there(out, lines.map(([say, answer]) => ({ at: spot, wait: 5.5, face: Math.PI / 2, talk: true, say, to: k, answer })))
+    }
+    if (k === 'call-right' || k === 'call-left') {
+      const right = k === 'call-right', sx = right ? 1 : -1
+      const aisle = right ? RIGHT_AISLE : LEFT_AISLE
+      const a: V3 = [sx * 18.0, 0, 9.0], b: V3 = [sx * 18.0, 0, 7.6]
+      const out: Stop[] = [{ at: [aisle, 0, behindZ] }, { at: [aisle, 0, FRONT_CORRIDOR] }, { at: [sx * 14.9, 0, FRONT_CORRIDOR] }, { at: [sx * 14.9, 0, 9.9] }, { at: [sx * 17.4, 0, 10.0] }, { at: a }]
+      return there(out, [
+        { at: a, wait: 6, face: right ? Math.PI * 0.8 : -Math.PI * 0.8, call: true, say: CALLS[i % CALLS.length] },
+        { at: b, wait: 6, face: right ? -Math.PI / 2 : Math.PI / 2, call: true, say: CALLS[(i + 1) % CALLS.length] },
+        { at: a, wait: 5, face: Math.PI, call: true },
+      ])
+    }
+    if (k === 'help' && ctx.help) {
+      const h = ctx.help
+      const aisle = h.x < home[0] ? LEFT_AISLE : RIGHT_AISLE
+      const spot: V3 = [h.x + 0.75, 0, h.z]
+      const out: Stop[] = [{ at: [aisle, 0, behindZ] }, { at: [aisle, 0, h.z] }, { at: spot }]
+      return there(out, [
+        { at: spot, wait: 5.5, face: Math.PI, talk: true, say: `${h.name ? h.name + ', n' : 'N'}eed a hand with ${h.code}?`, to: h.who, answer: h.late ? `Yes please${ctx.me ? ' ' + ctx.me : ''} — it's overdue` : `Sure${ctx.me ? ' ' + ctx.me : ''}, hold this board` },
+        { at: spot, wait: 9, face: Math.PI * 1.08, tidy: true },
+        { at: spot, wait: 5, face: Math.PI, talk: true, say: 'Try the other capacitor', to: h.who, answer: `Good idea${ctx.me ? ', ' + ctx.me : ''}, thanks!` },
+      ])
+    }
+    if (k === 'ask' && ctx.ask) {
+      // To the coordinator: is there anything for me? (the user, 9 Oct)
+      const c = toCoordinator(ctx.ask.seat, [LEFT_AISLE, 0, behindZ], { at: [0, 0, 0], wait: 5, face: Math.PI, talk: true, say: `${ctx.ask.name ? 'Hey ' + ctx.ask.name + ', a' : 'A'}nything to assign to me?`, to: ctx.ask.who, answer: ctx.ask.answer })
+      return [behind, ...c.go, ...c.back.slice(0, -1), { at: [LEFT_AISLE, 0, behindZ] }, behind]
+    }
+    if (k === 'count') {
+      const x = SPOT.shelf[0] - 1.05
+      const a: V3 = [x, 0, SPOT.shelf[2] - 1.5], b: V3 = [x, 0, SPOT.shelf[2] + 1.3]
+      const out: Stop[] = [{ at: [RIGHT_AISLE, 0, behindZ] }, { at: [RIGHT_AISLE, 0, a[2]] }, { at: a }]
+      return there(out, [{ at: a, wait: 8, face: Math.PI / 2, count: true }, { at: b, wait: 8, face: Math.PI / 2, count: true }, { at: a }])
+    }
+    return [{ at: home, wait: 12, face: 0, tidy: true }]
+  }
+  const day: Stop[] = []
+  order.forEach((k, n) => { day.push({ at: home, wait: n === 0 ? 2 + (i % 3) * 2 : 4, face: 0 }, ...seg(k)) })
+  return day
+}
+
+/** On the phone to somebody outside, in a free moment (the user, 9 Oct: "talking to someone through phone"). */
+const CALLS = ['Hello? Yes, free now', 'Amma, I\'ll call you back', 'Reaching home by 7', 'Tell him I\'ll check tomorrow', 'Ok, ok — sending the photo', 'No, no overtime today']
+
+/** Out through the dock opening onto the lawn, pacing up and down with the phone, until there is work. */
+function callRound(home: V3, behindZ: number, right: boolean, i: number): Stop[] {
+  const sx = right ? 1 : -1
+  const aisle = right ? RIGHT_AISLE : LEFT_AISLE
+  const gate: V3 = [sx * 14.9, 0, 9.9]
+  const a: V3 = [sx * 18.0, 0, 9.0], b: V3 = [sx * 18.0, 0, 7.6]
+  const line = (k: number) => CALLS[(i + k) % CALLS.length]
+  return [
+    { at: home, wait: 3 + (i % 3) * 2, face: 0 },
+    { at: [home[0], 0, behindZ] }, { at: [aisle, 0, behindZ] }, { at: [aisle, 0, FRONT_CORRIDOR] }, { at: [sx * 14.9, 0, FRONT_CORRIDOR] },
+    { at: gate }, { at: [sx * 17.4, 0, 10.0] }, { at: a },
+    { at: a, wait: 6, face: right ? Math.PI * 0.8 : -Math.PI * 0.8, call: true, say: line(0) },
+    { at: b, wait: 6, face: right ? -Math.PI / 2 : Math.PI / 2, call: true, say: line(1) },
+    { at: a, wait: 5, face: right ? Math.PI : Math.PI, call: true },
+  ]
 }
 
 /* ================================================================ safety signs and the water cooler */
@@ -2271,10 +2879,10 @@ function CautionStand({ at, rotY = 0 }: { at: V3; rotY?: number }) {
 }
 
 /** The water cooler: a blue bottle upside down on a white stand, a stack of cups. */
-const COOLER: V3 = [-15.35, 0, 1.2]
+const COOLER: V3 = [ROOM.pantry.x1 - 0.35, 0, -6.3]
 function WaterCooler() {
   return (
-    <group position={COOLER}>
+    <group position={COOLER} rotation-y={Math.PI}>
       <RoundedBox args={[0.46, 1.05, 0.42]} radius={0.04} position={[0, 0.53, 0]} castShadow receiveShadow><meshStandardMaterial color="#F1F5F9" roughness={0.35} /></RoundedBox>
       <mesh position={[0.235, 0.82, -0.08]}><boxGeometry args={[0.02, 0.06, 0.04]} /><meshStandardMaterial color="#2563EB" /></mesh>
       <mesh position={[0.235, 0.82, 0.08]}><boxGeometry args={[0.02, 0.06, 0.04]} /><meshStandardMaterial color="#DC2626" /></mesh>
@@ -2310,9 +2918,14 @@ function truckZ(x: number, stopX: number, arriving: boolean): number {
  * and onto the apron at its dock, standing there while the loader works, then
  * off the apron and away (the user, 8 Oct: "from truck let loader loads").
  */
-function Truck({ id, stop, body, label, active, dock }: {
+function Truck({ id, stop, body, label, active, dock, first, gap, lead }: {
   id: string; stop: number; body: string; label: string; active: boolean
-  dock: React.MutableRefObject<{ parked: boolean }>
+  /** Parked: the loader works. Soon: it is due, and the loader comes back to the dock for it. */
+  dock: React.MutableRefObject<{ parked: boolean; soon: boolean }>
+  /** Seconds to the first truck; seconds between one leaving and the next (the user, 9 Oct: "vehicles are coming very fast"). */
+  first: number; gap: [number, number]
+  /** How long before it is due its loader starts back to the dock. */
+  lead: number
 }) {
   const g = useRef<Group>(null)
   const road = useContext(Road)
@@ -2320,7 +2933,7 @@ function Truck({ id, stop, body, label, active, dock }: {
   const words = useTextTexture(label, { w: 1024, h: 200, color: red ? '#FFFFFF' : '#C0262D', weight: 900, spacing: 24, size: 0.6 })
   const START = -62, END = 72, LEN = 6.6
   // Where it is in its day: off the road, coming in, standing at the dock, going away.
-  const st = useRef<{ phase: 'gone' | 'in' | 'park' | 'out'; x: number; v: number; timer: number }>({ phase: 'gone', x: START, v: 0, timer: 1 })
+  const st = useRef<{ phase: 'gone' | 'in' | 'park' | 'out'; x: number; v: number; timer: number }>({ phase: 'gone', x: START, v: 0, timer: first })
   useFrame((_, dt) => {
     const me = g.current
     if (!me) return
@@ -2334,8 +2947,9 @@ function Truck({ id, stop, body, label, active, dock }: {
     if (t.phase === 'gone') {
       me.visible = false
       dock.current.parked = false
-      if (road) road.current[id] = { x: 1e4, len: LEN, onLane: false, truck: true }
       t.timer -= step
+      dock.current.soon = active && t.timer <= lead
+      if (road) road.current[id] = { x: 1e4, len: LEN, onLane: false, truck: true }
       // Onto the road at its far end only when that stretch is empty.
       if (active && t.timer <= 0 && clear(START - 12, START + 20)) { t.phase = 'in'; t.x = START; t.v = 6 }
       return
@@ -2351,7 +2965,7 @@ function Truck({ id, stop, body, label, active, dock }: {
       t.v += (want - t.v) * Math.min(1, step * 2)
       t.x = Math.min(stop, t.x + t.v * step)
       z = truckZ(t.x, stop, true); ahead = truckZ(t.x + 0.5, stop, true)
-      if (stop - t.x < 0.03) { t.phase = 'park'; t.timer = 26; t.v = 0 }
+      if (stop - t.x < 0.03) { t.phase = 'park'; t.timer = 40; t.v = 0 }
     } else if (t.phase === 'park') {
       t.timer -= step
       // Out only when nothing is coming along the lane behind or just ahead.
@@ -2361,9 +2975,10 @@ function Truck({ id, stop, body, label, active, dock }: {
       t.v += (want - t.v) * Math.min(1, step * (want < t.v ? 3 : 0.8))
       t.x += t.v * step
       z = truckZ(t.x, stop, false); ahead = truckZ(t.x + 0.5, stop, false)
-      if (t.x > END) { t.phase = 'gone'; t.timer = 5 }
+      if (t.x > END) { t.phase = 'gone'; t.timer = gap[0] + Math.random() * (gap[1] - gap[0]) }
     }
     dock.current.parked = t.phase === 'park' && t.timer > 1
+    dock.current.soon = t.phase === 'in' || dock.current.parked
     me.position.set(t.x, 0, z)
     me.rotation.y = Math.atan2(-(ahead - z), 0.5)
     // Anything of the truck in the lane counts: half its width and half a car's.
