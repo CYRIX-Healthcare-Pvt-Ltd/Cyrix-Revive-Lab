@@ -562,7 +562,8 @@ export function buysFor(me: Me | null | undefined, trcId: string): boolean {
  * Purchase sees a request only once the coordinator has passed it to them (the purchase team,
  * 14 Oct): an engineer choosing "Purchase" leaves it with the coordinator until it is forwarded.
  */
-const PASSED_TO_PURCHASE: ReadonlySet<PartStatus> = new Set(['forwarded', 'accepted', 'bought', 'sent', 'received', 'stocked'])
+// The database decides the rest (rl_0052): a declined request comes back only when Purchase declined it.
+const PASSED_TO_PURCHASE: ReadonlySet<PartStatus> = new Set(['forwarded', 'accepted', 'bought', 'sent', 'received', 'stocked', 'declined'])
 export function purchaseSees(me: Me | null | undefined, r: { route: PartRoute; status: PartStatus; trc_id: string }): boolean {
   return r.route === 'purchase' && PASSED_TO_PURCHASE.has(r.status) && buysFor(me, r.trc_id)
 }
