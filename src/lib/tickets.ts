@@ -558,6 +558,15 @@ export function buysFor(me: Me | null | undefined, trcId: string): boolean {
   return !!me && !!me.is_purchase && me.trc_ids.includes(trcId)
 }
 
+/**
+ * Purchase sees a request only once the coordinator has passed it to them (the purchase team,
+ * 14 Oct): an engineer choosing "Purchase" leaves it with the coordinator until it is forwarded.
+ */
+const PASSED_TO_PURCHASE: ReadonlySet<PartStatus> = new Set(['forwarded', 'accepted', 'bought', 'sent', 'received', 'stocked'])
+export function purchaseSees(me: Me | null | undefined, r: { route: PartRoute; status: PartStatus; trc_id: string }): boolean {
+  return r.route === 'purchase' && PASSED_TO_PURCHASE.has(r.status) && buysFor(me, r.trc_id)
+}
+
 /** Who buys a request: the desk for a local purchase, Purchase for a purchase. */
 export function handlesPart(me: Me | null | undefined, route: PartRoute, trcId: string): boolean {
   return route === 'local' ? runsTrc(me, trcId) : buysFor(me, trcId)

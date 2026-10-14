@@ -13,7 +13,7 @@ import {
 } from '@/lib/queries'
 import {
   buysFor, itemsSummary, partActor, partOpen, partStatusLook, poLabel, PART_PROGRESS, PART_ROUTE_LABEL, requestsStockAt, runsTrc,
-  stockRequestsWaitingOn, STOCK_USE_STATUS, TONE_CLASS,
+  stockRequestsWaitingOn, STOCK_USE_STATUS, TONE_CLASS, purchaseSees,
   type PartRoute,
 } from '@/lib/tickets'
 import { signedLinks } from '@/lib/partFiles'
@@ -549,7 +549,7 @@ function RequestsTab({ purchaseOnly }: { purchaseOnly: boolean }) {
   const rows = useMemo(() => (requests ?? []).filter(r =>
     // From a ticket; requests for the stock have their own tab (rl_0044).
     r.ticket_id !== null
-    && (!purchaseOnly || (r.route === 'purchase' && buysFor(me, r.trc_id)))
+    && (!purchaseOnly || purchaseSees(me, r))
     && (!route || r.route === route)
     && (show === 'all' || partOpen(r.status))), [requests, purchaseOnly, me, route, show])
 
@@ -637,7 +637,9 @@ function ComponentRequestsTab() {
 
   // Where this person may ask: the Revive Labs they are an engineer or the coordinator of.
   const askAt = useMemo(() => (trcs ?? []).filter(t => t.is_active && requestsStockAt(me, t.id)), [trcs, me])
-  const all = useMemo(() => (requests ?? []).filter(r => r.ticket_id === null), [requests])
+  // The lab's own people see all of its requests; Purchase only what was passed to them.
+  const all = useMemo(() => (requests ?? []).filter(r => r.ticket_id === null
+    && (me?.is_admin || requestsStockAt(me, r.trc_id) || (!!me?.is_manager && me.trc_ids.includes(r.trc_id)) || purchaseSees(me, r))), [requests, me])
   const rows = useMemo(() => all.filter(r => show === 'all' || partOpen(r.status)), [all, show])
   const open = all.filter(r => partOpen(r.status)).length
   const waiting = stockRequestsWaitingOn(all, me)
