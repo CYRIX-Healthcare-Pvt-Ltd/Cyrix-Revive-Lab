@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import {
-  ArrowLeft, ArrowUpRight, ClipboardList, Hospital, PackagePlus, Pencil, ShieldQuestion, Truck, UserRound, Warehouse, X,
+  ArrowLeft, ArrowUpRight, ClipboardList, Copy, Hospital, PackagePlus, Pencil, ShieldQuestion, Truck, UserRound, Warehouse, X,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import {
@@ -10,13 +10,15 @@ import {
 } from '@/lib/queries'
 import {
   cleanItems, runsTrc, serves, stateLabel,
-  type ContractType, type Criticality, type SpareCategory, type TicketSource,
+  type ContractType, type TicketStatus, type Criticality, type SpareCategory, type TicketSource,
 } from '@/lib/tickets'
 import Choices, { type ChoiceOption } from '@/components/Choices'
 import { ClassificationFields } from '@/components/Classification'
 import { STATES, districtsOf } from '@/lib/india'
 import { uploadAttachment, type Slot } from '@/lib/attachments'
-import { Alert, PageLoader, Spinner } from '@/components/ui'
+import { Alert, PageLoader, Spinner, StatusBadge } from '@/components/ui'
+import { supabase } from '@/lib/supabase'
+import { dateTime } from '@/lib/when'
 import PersonPicker from '@/components/PersonPicker'
 import IconChip from '@/components/IconChip'
 import Dialog from '@/components/Dialog'
@@ -56,6 +58,11 @@ import CourierSelect from '@/components/CourierSelect'
  * who is held (rl_0042): picking one shows their tickets at once, and lets
  * go of them. A warehouse's in-charge is not held.
  */
+type Similar = {
+  id: string; code: string; status: TicketStatus; raised_by_name: string | null; holder_name: string | null; lab_name: string | null
+  raised_at: string; facility: string | null; equipment_name: string | null; spare_name: string | null; matched: 'barcode' | 'equipment' | 'spare'
+}
+
 export default function NewTicket() {
   const { me, employee } = useAuth()
   const navigate = useNavigate()
@@ -96,6 +103,8 @@ export default function NewTicket() {
   const [voice, setVoice] = useState<Blob | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [stage, setStage] = useState<'idle' | 'raising' | 'uploading'>('idle')
+  // The open tickets that look like this one, found before a coordinator raises it (rl_0053).
+  const [dupes, setDupes] = useState<Similar[] | null>(null)
 
   /*
     The contact number starts as the official number on this person's KPI
@@ -168,8 +177,8 @@ export default function NewTicket() {
 
   const closeAsking = useCallback(() => setAsking(false), [])
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const submit = async (e?: React.FormEvent, sure = false) => {
+    e?.preventDefault()
     setError(null)
     if (!form.state) { setError('Choose the state.'); return }
     if (!fromWarehouse && !form.district) { setError('Choose the district.'); return }
@@ -193,6 +202,21 @@ export default function NewTicket() {
     if (asksContract && !contractType) { setError('Choose the contract type — AMC or CAMC.'); return }
     if (atLab && !category) { setError('Choose the spare category — A, B or C.'); return }
     if (atLab && !camc && !criticality) { setError('Choose whether the spare is critical or non-critical.'); return }
+
+    /*
+      Already in Revive Lab? (the user, 19 Oct: an engineer raised hospital A's equipment B, and the
+      coordinator raised the same again by mistake.) For a coordinator only: the open tickets at the same
+      hospital with the same equipment or spare, with their number and who raised them. Cancel, or go on.
+    */
+    if (atLab && !fromWarehouse && !sure) {
+      setStage('raising')
+      const { data: like } = await supabase.rpc('revive_similar_tickets', {
+        p_hospital: form.hospital, p_equipment_name: form.equipmentName, p_equipment_barcode: form.equipmentBarcode,
+        p_spares: items.map(i => i.name),
+      })
+      setStage('idle')
+      if (like && (like as Similar[]).length) { setDupes(like as Similar[]); return }
+    }
 
     let created: { id: string; code: string } | null = null
     try {
@@ -271,6 +295,33 @@ export default function NewTicket() {
       </div>
 
       {error && <Alert kind="error">{error}</Alert>}
+
+      {dupes && (
+        <Dialog title="Already in Revive Lab?" icon={<IconChip icon={Copy} tone="amber" />} onClose={() => setDupes(null)} wide>
+          <p className="mt-2 text-sm text-ink-700">
+            <b className="font-semibold text-ink-900">{form.hospital.trim()}</b> already has {dupes.length === 1 ? 'an open ticket' : `${dupes.length} open tickets`} for this equipment or spare.
+          </p>
+          <ul className="mt-3 space-y-2">
+            {dupes.map(d => (
+              <li key={d.id} className="rounded-xl border border-amber-300 bg-amber-50 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-mono text-base font-bold text-ink-900">{d.code}</span>
+                  <StatusBadge status={d.status} />
+                </div>
+                <p className="mt-1 text-sm text-ink-800">{[d.equipment_name, d.spare_name].filter(Boolean).join(' · ')}</p>
+                <p className="mt-0.5 text-xs text-ink-600">
+                  Raised by <b className="font-semibold text-ink-800">{d.raised_by_name ?? '—'}</b> · {dateTime(d.raised_at)}
+                  {d.holder_name && d.holder_name !== d.raised_by_name ? ` · for ${d.holder_name}` : ''}{d.lab_name ? ` · ${d.lab_name}` : ''}
+                </p>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-4 flex justify-end gap-2">
+            <button type="button" className="btn-secondary" onClick={() => setDupes(null)}>Cancel</button>
+            <button type="button" className="btn-primary" onClick={() => { setDupes(null); void submit(undefined, true) }}>Continue anyway</button>
+          </div>
+        </Dialog>
+      )}
 
       <form onSubmit={submit} className="space-y-4">
         {atLab && (
