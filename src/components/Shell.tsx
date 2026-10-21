@@ -83,7 +83,7 @@ export default function Shell() {
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-30 border-b border-ink-200 bg-surface">
-        <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-4 sm:h-16">
+        <div className="flex h-14 items-center gap-3 px-4 sm:h-16">
           {/* A plain anchor: the portal sits above this app's basename, so a
               router link to "/" would land back on this dashboard. */}
           <a
