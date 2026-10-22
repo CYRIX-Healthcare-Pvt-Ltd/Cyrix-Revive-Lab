@@ -12,7 +12,7 @@ import {
   type Component, type PartRequest, type StockUseRow,
 } from '@/lib/queries'
 import {
-  buysFor, itemsSummary, partActor, partOpen, partStatusLook, poLabel, PART_PROGRESS, PART_ROUTE_LABEL, requestsStockAt, runsTrc,
+  buysFor, itemsSummary, partActor, poLabel, PART_ROUTE_LABEL, requestsStockAt, runsTrc,
   stockRequestsWaitingOn, STOCK_USE_STATUS, TONE_CLASS, purchaseSees,
   type PartRoute,
 } from '@/lib/tickets'
@@ -27,7 +27,7 @@ import {
   rupees, BillDialog, DeclineDialog, DeclineUseDialog, OrderDialog, RequestItem, StockDialog,
 } from '@/components/PartsCard'
 
-type Sub = 'stock' | 'taken' | 'requests' | 'pr' | 'purchases' | 'scrap'
+type Sub = 'stock' | 'taken' | 'requests' | 'purchases' | 'scrap'
 
 const day = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '—'
@@ -55,14 +55,14 @@ export default function Components() {
   const engineerOnly = !!me && !desk && !me.is_purchase
   const { data: allRequests } = usePartRequests()
   const prWaiting = stockRequestsWaitingOn(allRequests ?? [], me)
+  // Requests from a ticket and for the stock in one tab (the user, 22 Oct: "the components tab is confusing").
   const subs: Array<[Sub, string, typeof Boxes]> = [
-    ...(desk ? [['stock', 'Stock', Boxes], ['taken', 'Taken from stock', PackageMinus]] as Array<[Sub, string, typeof Boxes]> : []),
-    ...(engineerOnly ? [] : [['requests', 'Requests', ShoppingCart]] as Array<[Sub, string, typeof Boxes]>),
-    // With no ticket, for the stock: PR-01 on (the user, 7 Oct).
-    ['pr', 'Component requests', ClipboardList],
-    ...(desk ? [['purchases', 'Purchases', IndianRupee], ['scrap', 'Scrap', Trash2]] as Array<[Sub, string, typeof Boxes]> : []),
+    ...(desk ? [['stock', 'Stock', Boxes]] as Array<[Sub, string, typeof Boxes]> : []),
+    ['requests', 'Requests', ShoppingCart],
+    ...(desk ? [['taken', 'Stock taken — to approve', PackageMinus], ['purchases', 'Spending', IndianRupee], ['scrap', 'Scrap', Trash2]] as Array<[Sub, string, typeof Boxes]> : []),
   ]
-  const asked = params.get('tab') as Sub | null
+  // An old link to the component requests tab opens Requests.
+  const asked = (params.get('tab') === 'pr' ? 'requests' : params.get('tab')) as Sub | null
   const sub = subs.find(([id]) => id === asked)?.[0] ?? subs[0][0]
 
   // The Revive Labs this person works in; an admin sees them all.
@@ -97,7 +97,7 @@ export default function Components() {
             )}
           >
             <Icon className="h-4 w-4" /> {label}
-            {id === 'pr' && prWaiting > 0 && <span className="tabular-nums text-orange-600">{prWaiting}</span>}
+            {id === 'requests' && prWaiting > 0 && <span className="tabular-nums text-orange-600">{prWaiting}</span>}
           </button>
         ))}
       </div>
@@ -105,8 +105,7 @@ export default function Components() {
 
       {sub === 'stock' && <StockTab labs={labs} />}
       {sub === 'taken' && <TakenTab />}
-      {sub === 'requests' && <RequestsTab purchaseOnly={!desk} />}
-      {sub === 'pr' && <ComponentRequestsTab />}
+      {sub === 'requests' && <RequestsTab desk={desk} engineerOnly={engineerOnly} />}
       {sub === 'purchases' && <PurchasesTab labs={labs} />}
       {sub === 'scrap' && <ScrapTab />}
     </div>
@@ -540,93 +539,82 @@ function TakenTab() {
 
 /* ------------------------------------------------------------------ */
 
-function RequestsTab({ purchaseOnly }: { purchaseOnly: boolean }) {
-  const { me } = useAuth()
-  const { data: requests, isLoading } = usePartRequests()
-  const [show, setShow] = useState<'open' | 'all'>('open')
-  const [route, setRoute] = useState<PartRoute | ''>(purchaseOnly ? 'purchase' : '')
-
-  const rows = useMemo(() => (requests ?? []).filter(r =>
-    // From a ticket; requests for the stock have their own tab (rl_0044).
-    r.ticket_id !== null
-    && (!purchaseOnly || purchaseSees(me, r))
-    && (!route || r.route === route)
-    && (show === 'all' || partOpen(r.status))), [requests, purchaseOnly, me, route, show])
-
-  if (isLoading) return <Spinner className="h-5 w-5 text-ink-400" />
-
-  return (
-    <div className="card overflow-hidden">
-      <div className="flex flex-wrap items-center gap-2 border-b border-ink-200 bg-ink-50 px-3 py-2">
-        <div className="flex gap-1">
-          {(['open', 'all'] as const).map(v => (
-            <button key={v} type="button" onClick={() => setShow(v)}
-              className={clsx('rounded-md px-3 py-1.5 text-sm font-medium', show === v ? 'bg-surface text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800')}>
-              {v === 'open' ? 'Open' : 'All'}
-            </button>
-          ))}
-        </div>
-        {!purchaseOnly && (
-          <select className="input !py-1.5 sm:w-44" value={route} onChange={e => setRoute(e.target.value as PartRoute | '')} aria-label="Purchased by">
-            <option value="">Local purchase and purchase</option>
-            <option value="local">Local purchase</option>
-            <option value="purchase">Purchase</option>
-          </select>
-        )}
-      </div>
-      {rows.length === 0 ? (
-        <div className="p-4">
-          <EmptyState icon={ShoppingCart} title={show === 'open' ? 'Nothing open' : 'No requests yet'}>
-            Engineers request components from a ticket while repairing it.
-          </EmptyState>
-        </div>
-      ) : (
-        <ul className="divide-y divide-ink-100">
-          {rows.map(r => <RequestRow key={r.id} r={r} />)}
-        </ul>
-      )}
-    </div>
-  )
-}
-
-function RequestRow({ r }: { r: PartRequest }) {
-  const status = partStatusLook(r)
-  return (
-    <li>
-      <Link to={`/tickets/${r.ticket_code}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 hover:bg-ink-50">
-        <span className="font-mono text-sm font-semibold text-ink-900">{r.ticket_code}</span>
-        <span className="min-w-0 flex-1 text-sm text-ink-800">
-          <span className="tabular-nums">{r.qty} ×</span> {r.name}
-          <span className="block text-xs text-ink-500">{r.facility} · {r.trc_name} · requested by {r.requested_by_name} {day(r.requested_at)}</span>
-        </span>
-        <span className="badge bg-ink-100 text-ink-600">{PART_ROUTE_LABEL[r.route]}</span>
-        {r.progress && r.status === 'accepted' && (
-          <span className="badge bg-yellow-50 text-yellow-900 ring-1 ring-inset ring-yellow-200">{PART_PROGRESS[r.progress]}</span>
-        )}
-        <span className={clsx('badge', TONE_CLASS[status.tone])}>{status.label}</span>
-        {r.po_number && <span className="font-mono text-xs text-ink-500">{poLabel(r.po_number)}</span>}
-        {r.bill_amount !== null && <span className="text-sm font-medium tabular-nums text-ink-900">{rupees(r.bill_amount)}</span>}
-      </Link>
-    </li>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-
 /**
- * Component requests with no ticket, for a Revive Lab's stock: PR-01 on
- * (rl_0044; the user, 7 Oct: "the same flow but without any ticket").
- *
- * An engineer's goes to the coordinator, who purchases it locally or passes
- * it to Purchase; once purchased, the coordinator adds it to stock and it is
- * done. Each shows its whole journey, with the buttons for whoever moves it
- * next — the same card a ticket shows for its own requests.
+ * Requests: every component request — from a ticket, or for a Revive Lab's stock (PR-01 on) — in one list,
+ * with a summary of where they stand for each buyer (the user, 22 Oct: "we cannot know what all is pending with
+ * the coordinator, what went to Purchase, what local purchase was done, what is the status"; "the manager cannot
+ * know how much is the coordinator's and how much Purchase's"). The coordinator's local purchases and the
+ * Purchase team's each get a row of counts — a total, then each stage, coloured by where it stands — and what
+ * each spent; a count filters the list. The days to look at: all time by default, this month, or any two dates.
+ * Each request shows its journey and who it waits on; one for the stock opens, with its buttons, in place.
  */
-function ComponentRequestsTab() {
+type StageKey = 'c_decide' | 'c_enquiry' | 'c_order' | 'c_bought' | 'c_stock' | 'p_accept' | 'p_accepted' | 'p_bought' | 'p_stock'
+type Lane = 'c' | 'p'
+const STAGES: Record<Lane, { who: string; sub: string; stages: Array<[StageKey, string]> }> = {
+  c: { who: 'Coordinator', sub: 'local purchase', stages: [['c_decide', 'Pending to decide'], ['c_enquiry', 'Enquiry given'], ['c_order', 'Order placed'], ['c_bought', 'Purchased'], ['c_stock', 'Added to stock']] },
+  p: { who: 'Purchase team', sub: 'passed on by the coordinator', stages: [['p_accept', 'Pending to accept'], ['p_accepted', 'Accepted — ordered'], ['p_bought', 'Purchased'], ['p_stock', 'Added to stock']] },
+}
+// The colour says where it stands: waiting for a decision orange, being bought amber then sky, bought violet, in stock green.
+const STAGE_INK: Record<StageKey, string> = {
+  c_decide: 'text-orange-600', p_accept: 'text-orange-600',
+  c_enquiry: 'text-amber-600', c_order: 'text-sky-700', p_accepted: 'text-sky-700',
+  c_bought: 'text-violet-700', p_bought: 'text-violet-700',
+  c_stock: 'text-green-700', p_stock: 'text-green-700',
+}
+const STAGE_CHIP: Record<StageKey, string> = {
+  c_decide: 'bg-orange-100 text-orange-900', p_accept: 'bg-orange-100 text-orange-900',
+  c_enquiry: 'bg-amber-100 text-amber-900', c_order: 'bg-sky-100 text-sky-900', p_accepted: 'bg-sky-100 text-sky-900',
+  c_bought: 'bg-violet-100 text-violet-900', p_bought: 'bg-violet-100 text-violet-900',
+  c_stock: 'bg-green-100 text-green-900', p_stock: 'bg-green-100 text-green-900',
+}
+const JOURNEY = ['Requested', 'Decided', 'Buying', 'Purchased', 'Added to stock']
+
+/** The one box a request counts in; none once declined or cancelled. */
+function stageOf(r: PartRequest): StageKey | null {
+  if (r.status === 'declined' || r.status === 'cancelled') return null
+  if (r.status === 'requested') return 'c_decide'
+  if (r.status === 'forwarded') return 'p_accept'
+  const lane: Lane = r.route === 'purchase' ? 'p' : 'c'
+  if (r.status === 'accepted') return lane === 'p' ? 'p_accepted' : r.progress === 'order_placed' ? 'c_order' : 'c_enquiry'
+  if (r.status === 'bought') return lane === 'p' ? 'p_bought' : 'c_bought'
+  return lane === 'p' ? 'p_stock' : 'c_stock'
+}
+const stepOf = (k: StageKey) => (k.endsWith('decide') || k.endsWith('accept') ? 1 : k.endsWith('bought') ? 3 : k.endsWith('stock') ? 4 : 2)
+
+/** Who moves it next, in words. */
+function waitingOn(r: PartRequest, k: StageKey | null): { text: string; late?: boolean } {
+  if (!k) return { text: r.status === 'declined' ? 'Declined' : 'Cancelled' }
+  switch (k) {
+    case 'c_decide': return { text: 'Coordinator — buy or pass to Purchase' }
+    case 'c_enquiry': return { text: 'Coordinator — enquiry given' }
+    case 'c_order': return { text: 'Coordinator — order placed' }
+    case 'p_accept': return { text: 'Purchase — to accept' }
+    case 'p_accepted': return { text: 'Purchase — to order' }
+    case 'c_bought': case 'p_bought': {
+      if (k === 'p_bought' && r.edd) {
+        const due = r.edd.slice(0, 10)
+        return { text: `Ordered — due ${day(due)}`, late: due < new Date().toLocaleDateString('en-CA') }
+      }
+      return { text: r.ticket_id ? 'Coordinator — add to stock and send' : 'Coordinator — add to stock' }
+    }
+    default: return { text: r.status === 'sent' ? 'Engineer — confirm received' : 'Added to stock' }
+  }
+}
+
+type ReqPeriod = 'all' | 'month' | 'custom'
+const firstOfMonth = () => { const t = new Date(); return new Date(t.getFullYear(), t.getMonth(), 1).toLocaleDateString('en-CA') }
+const todayIso = () => new Date().toLocaleDateString('en-CA')
+
+function RequestsTab({ desk, engineerOnly }: { desk: boolean; engineerOnly: boolean }) {
   const { me } = useAuth()
   const { data: trcs } = useTrcs()
   const { data: requests, isLoading } = usePartRequests()
-  const [show, setShow] = useState<'open' | 'all'>('open')
+  const [period, setPeriod] = useState<ReqPeriod>('all')
+  const [from, setFrom] = useState(firstOfMonth)
+  const [to, setTo] = useState(todayIso)
+  const [kind, setKind] = useState<'all' | 'ticket' | 'stock'>(engineerOnly ? 'stock' : 'all')
+  const [sel, setSel] = useState<StageKey | `${Lane}*` | null>(null)
+  const [openId, setOpenId] = useState<string | null>(null)
   const [asking, setAsking] = useState(false)
   const [notice, setNotice] = useState<{ kind: 'success' | 'error' | 'warning'; text: string } | null>(null)
   const [billFor, setBillFor] = useState<PartRequest | null>(null)
@@ -635,16 +623,24 @@ function ComponentRequestsTab() {
   const [declineFor, setDeclineFor] = useState<PartRequest | null>(null)
   const [viewing, setViewing] = useState<{ images: string[]; index: number } | null>(null)
 
-  // Where this person may ask: the Revive Labs they are an engineer or the coordinator of.
+  // Where this person may ask for a component for the stock.
   const askAt = useMemo(() => (trcs ?? []).filter(t => t.is_active && requestsStockAt(me, t.id)), [trcs, me])
-  // The lab's own people see all of its requests; Purchase only what was passed to them.
-  const all = useMemo(() => (requests ?? []).filter(r => r.ticket_id === null
-    && (me?.is_admin || requestsStockAt(me, r.trc_id) || (!!me?.is_manager && me.trc_ids.includes(r.trc_id)) || purchaseSees(me, r))), [requests, me])
-  const rows = useMemo(() => all.filter(r => show === 'all' || partOpen(r.status)), [all, show])
-  const open = all.filter(r => partOpen(r.status)).length
-  const waiting = stockRequestsWaitingOn(all, me)
+  // What this person sees: from a ticket, the desk all and Purchase what came to them; for the stock, the lab's own
+  // people, a manager of the lab, and Purchase what was passed to them (as before, rl_0044).
+  const mine = useMemo(() => (requests ?? []).filter(r => r.ticket_id !== null
+    ? !engineerOnly && (desk || purchaseSees(me, r))
+    : (me?.is_admin || requestsStockAt(me, r.trc_id) || (!!me?.is_manager && me.trc_ids.includes(r.trc_id)) || purchaseSees(me, r))), [requests, me, desk, engineerOnly])
+  const [a, b] = period === 'all' ? [null, null] : period === 'month' ? [firstOfMonth(), todayIso()] : from <= to ? [from, to] : [to, from]
+  const inDays = useMemo(() => mine.filter(r => {
+    if (kind === 'ticket' && r.ticket_id === null) return false
+    if (kind === 'stock' && r.ticket_id !== null) return false
+    const d = r.requested_at.slice(0, 10)
+    return !a || (d >= a && d <= b!)
+  }), [mine, kind, a, b])
+  const counted = useMemo(() => inDays.map(r => ({ r, k: stageOf(r) })), [inDays])
+  const shown = counted.filter(({ k }) => !sel || (sel.endsWith('*') ? k?.startsWith(sel[0] + '_') : k === sel))
 
-  const paths = useMemo(() => rows.flatMap(r => [r.photo_path, ...r.bill_paths]).filter((p): p is string => !!p), [rows])
+  const paths = useMemo(() => shown.filter(x => x.r.id === openId).flatMap(x => [x.r.photo_path, ...x.r.bill_paths]).filter((p): p is string => !!p), [shown, openId])
   const { data: links } = useQuery({
     enabled: paths.length > 0,
     queryKey: ['revive', 'part-links', paths],
@@ -653,82 +649,165 @@ function ComponentRequestsTab() {
   })
 
   if (isLoading) return <Spinner className="h-5 w-5 text-ink-400" />
-
   const said = (text: string) => setNotice({ kind: 'success', text })
+  const pick = (k: typeof sel) => setSel(s => (s === k ? null : k))
 
   return (
     <div className="space-y-4">
       {notice && <Alert kind={notice.kind}>{notice.text}</Alert>}
-
       {asking && (
         <RequestPartForm
           labs={askAt}
           onCancel={() => setAsking(false)}
           onError={text => setNotice({ kind: 'error', text })}
           onDone={(text, warning) => {
-            setAsking(false); setShow('open')
+            setAsking(false)
             setNotice(warning ? { kind: 'warning', text: `${text} ${warning}` } : { kind: 'success', text })
           }}
         />
       )}
 
-      <div className="card overflow-hidden">
-        <div className="flex flex-wrap items-center gap-2 border-b border-ink-200 bg-ink-50 px-3 py-2">
-          <div className="flex gap-1">
-            {(['open', 'all'] as const).map(v => (
-              <button key={v} type="button" onClick={() => setShow(v)}
-                className={clsx('rounded-md px-3 py-1.5 text-sm font-medium', show === v ? 'bg-surface text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800')}>
-                {v === 'open' ? 'Open' : 'All'}
-                {v === 'open' && open > 0 && <span className={clsx('ml-1.5 tabular-nums', waiting > 0 ? 'text-orange-600' : 'text-ink-400')}>{open}</span>}
-                {v === 'all' && all.length > 0 && <span className="ml-1.5 tabular-nums text-ink-400">{all.length}</span>}
-              </button>
-            ))}
-          </div>
-          {askAt.length > 0 && !asking && (
-            <button type="button" className="btn-primary ml-auto !py-1.5 text-sm" onClick={() => { setNotice(null); setAsking(true) }}>
-              <Plus className="h-4 w-4" /> Request a component
-            </button>
-          )}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="inline-flex overflow-hidden rounded-lg border border-ink-200">
+          {([['all', 'All time'], ['month', 'This month'], ['custom', 'Custom']] as const).map(([k, l]) => (
+            <button key={k} type="button" onClick={() => setPeriod(k)}
+              className={clsx('h-9 px-3 text-sm font-semibold', period === k ? 'bg-ink-900 text-[color:rgb(var(--surface))]' : 'text-ink-700 hover:bg-ink-100')}>{l}</button>
+          ))}
         </div>
+        {period === 'custom' && (
+          <span className="flex items-center gap-2 text-sm text-ink-600">
+            From <input type="date" className="input !w-auto !py-1.5" value={from} max={todayIso()} onChange={e => setFrom(e.target.value)} />
+            To <input type="date" className="input !w-auto !py-1.5" value={to} max={todayIso()} onChange={e => setTo(e.target.value)} />
+          </span>
+        )}
+        {!engineerOnly && (
+          <select className="input !w-auto !py-1.5" value={kind} onChange={e => setKind(e.target.value as typeof kind)} aria-label="For">
+            <option value="all">For a ticket and for stock</option>
+            <option value="ticket">For a ticket</option>
+            <option value="stock">For stock</option>
+          </select>
+        )}
+        {askAt.length > 0 && !asking && (
+          <button type="button" className="btn-primary ml-auto !py-1.5 text-sm" onClick={() => { setNotice(null); setAsking(true) }}>
+            <Plus className="h-4 w-4" /> Request a component
+          </button>
+        )}
+      </div>
 
-        {rows.length === 0 ? (
+      {(['c', 'p'] as const).map(lane => {
+        const L = STAGES[lane]
+        const inLane = counted.filter(x => x.k?.startsWith(lane + '_'))
+        const spent = inLane.reduce((t, x) => t + (x.r.bill_amount ?? 0), 0)
+        return (
+          <div key={lane}>
+            <p className="mb-1.5 text-sm font-semibold text-ink-900">{L.who} <span className="font-normal text-ink-500">· {L.sub} · spent {rupees(spent)}</span></p>
+            {/* Each row fills the width with its own boxes: the coordinator six, Purchase five (the user, 22 Oct). */}
+            <div className={clsx('grid grid-cols-3 gap-2', lane === 'c' ? 'sm:grid-cols-6' : 'sm:grid-cols-5')}>
+              <button type="button" onClick={() => pick(`${lane}*`)}
+                className={clsx('rounded-xl border p-3 text-left', sel === `${lane}*` ? 'border-cyrixRed-500 ring-1 ring-cyrixRed-500' : 'border-ink-300 hover:border-ink-400')}>
+                <span className="block text-2xl font-semibold tabular-nums text-ink-900">{inLane.length}</span>
+                <span className="block text-xs text-ink-500">Total</span>
+                <Split xs={inLane.map(x => x.r)} />
+              </button>
+              {L.stages.map(([k, label]) => {
+                const n = inLane.filter(x => x.k === k).length
+                return (
+                  <button key={k} type="button" onClick={() => pick(k)}
+                    className={clsx('rounded-xl border bg-ink-50 p-3 text-left', sel === k ? 'border-cyrixRed-500 ring-1 ring-cyrixRed-500' : 'border-transparent hover:border-ink-300')}>
+                    <span className={clsx('block text-2xl font-semibold tabular-nums', n ? STAGE_INK[k] : 'text-ink-400')}>{n}</span>
+                    <span className="block text-xs leading-tight text-ink-600">{label}</span>
+                    {n > 0 && <Split xs={inLane.filter(x => x.k === k).map(x => x.r)} />}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })}
+
+      <div className="card overflow-hidden">
+        <p className="border-b border-ink-200 bg-ink-50 px-4 py-2 text-xs text-ink-500">
+          {period === 'all' ? 'All time' : period === 'month' ? 'This month' : `${day(a)} – ${day(b)}`} · {shown.length} request{shown.length === 1 ? '' : 's'}
+          {sel && <button type="button" className="link-accent ml-2 font-medium" onClick={() => setSel(null)}>Show all</button>}
+        </p>
+        {shown.length === 0 ? (
           <div className="p-4">
-            {show === 'open' && all.length > 0 ? (
-              <EmptyState icon={ClipboardList} title="Nothing open">
-                All {all.length} {all.length === 1 ? 'is' : 'are'} in stock, declined or cancelled.{' '}
-                <button type="button" className="link-accent font-medium" onClick={() => setShow('all')}>Show all {all.length}</button>
-              </EmptyState>
-            ) : (
-              <EmptyState icon={ClipboardList} title="No component requests yet">
-                A component the Revive Lab needs in stock, asked for without a ticket. Each gets its own number, PR-01 on,
-                and goes into stock once it is purchased.
-              </EmptyState>
-            )}
+            <EmptyState icon={ClipboardList} title="Nothing here">
+              No request in these days{sel ? ' at this stage' : ''}.
+            </EmptyState>
           </div>
         ) : (
-          <ul className="space-y-3 p-3">
-            {rows.map(r => (
-              <RequestItem
-                key={r.id}
-                r={r}
-                links={links ?? {}}
-                mine={partActor(r, me, r.trc_id, null)}
-                desk={runsTrc(me, r.trc_id)}
-                buyer={buysFor(me, r.trc_id)}
-                isEngineer={false}
-                isAsker={r.requested_by === me?.employee_id}
-                head={<>
-                  <span className="font-mono font-semibold text-ink-900">{r.code}</span>
-                  <span className="text-ink-500">for {r.trc_name}’s stock</span>
-                </>}
-                onBill={() => { setNotice(null); setBillFor(r) }}
-                onOrder={() => { setNotice(null); setOrderFor(r) }}
-                onStock={() => { setNotice(null); setStockFor(r) }}
-                onDecline={() => { setNotice(null); setDeclineFor(r) }}
-                onView={(images, index) => setViewing({ images, index })}
-                onNotice={setNotice}
-              />
-            ))}
+          <ul className="divide-y divide-ink-100">
+            {shown.map(({ r, k }) => {
+              const w = waitingOn(r, k)
+              const step = k ? stepOf(k) : -1
+              const head = (
+                <>
+                  <span className="font-mono text-sm font-semibold text-ink-900">{r.ticket_code ?? r.code}</span>
+                  <span className="min-w-0 flex-1 text-sm text-ink-800">
+                    <span className="tabular-nums">{r.qty} ×</span> {r.name}
+                    <span className="block text-xs text-ink-500">
+                      {r.ticket_id ? r.facility : `for ${r.trc_name}’s stock`}{r.ticket_id ? ` · ${r.trc_name}` : ''} · asked by {r.requested_by_name} {day(r.requested_at)}
+                      {' · '}{PART_ROUTE_LABEL[r.route]}
+                    </span>
+                    {k && (
+                      <span className="mt-1.5 flex flex-wrap items-center gap-1 text-[11px]">
+                        {JOURNEY.map((s, i) => (
+                          <span key={s} className="inline-flex items-center gap-1">
+                            {i > 0 && <span className="text-ink-300">›</span>}
+                            <span className={clsx('rounded-full px-2 py-0.5', step === 4 || i < step ? 'text-green-700' : i === step ? clsx('font-semibold', STAGE_CHIP[k]) : 'text-ink-400')}>
+                              {step === 4 || i < step ? '✓ ' : ''}{s}
+                            </span>
+                          </span>
+                        ))}
+                      </span>
+                    )}
+                  </span>
+                  <span className="min-w-[9rem] text-right text-xs text-ink-500">
+                    {k && step < 4 && <span className="block">Waiting on</span>}
+                    <span className={clsx('block font-semibold', w.late ? 'text-cyrixRed-700' : k ? STAGE_INK[k] : 'text-ink-500')}>{w.text}</span>
+                    {r.po_number && <span className="block font-mono">{poLabel(r.po_number)}</span>}
+                    {r.bill_amount !== null && <span className="block font-medium tabular-nums text-ink-900">{rupees(r.bill_amount)}</span>}
+                  </span>
+                </>
+              )
+              return (
+                <li key={r.id}>
+                  {r.ticket_id ? (
+                    <Link to={`/tickets/${r.ticket_code}`} className="flex flex-wrap items-start gap-x-3 gap-y-1 px-4 py-3 hover:bg-ink-50">{head}</Link>
+                  ) : (
+                    <>
+                      <button type="button" onClick={() => setOpenId(id => (id === r.id ? null : r.id))}
+                        className="flex w-full flex-wrap items-start gap-x-3 gap-y-1 px-4 py-3 text-left hover:bg-ink-50">{head}</button>
+                      {/* A request for the stock opens in place, with the buttons for whoever moves it next. */}
+                      {openId === r.id && (
+                        <div className="px-3 pb-3">
+                          <RequestItem
+                            r={r}
+                            links={links ?? {}}
+                            mine={partActor(r, me, r.trc_id, null)}
+                            desk={runsTrc(me, r.trc_id)}
+                            buyer={buysFor(me, r.trc_id)}
+                            isEngineer={false}
+                            isAsker={r.requested_by === me?.employee_id}
+                            head={<>
+                              <span className="font-mono font-semibold text-ink-900">{r.code}</span>
+                              <span className="text-ink-500">for {r.trc_name}’s stock</span>
+                            </>}
+                            onBill={() => { setNotice(null); setBillFor(r) }}
+                            onOrder={() => { setNotice(null); setOrderFor(r) }}
+                            onStock={() => { setNotice(null); setStockFor(r) }}
+                            onDecline={() => { setNotice(null); setDeclineFor(r) }}
+                            onView={(images, index) => setViewing({ images, index })}
+                            onNotice={setNotice}
+                          />
+                        </div>
+                      )}
+                    </>
+                  )}
+                </li>
+              )
+            })}
           </ul>
         )}
       </div>
@@ -754,6 +833,12 @@ function ComponentRequestsTab() {
   )
 }
 
+
+/** How many of these came from a ticket (RL) and how many were for the stock (PR), under a count (the user, 22 Oct). */
+function Split({ xs }: { xs: PartRequest[] }) {
+  const rl = xs.filter(x => x.ticket_id !== null).length
+  return <span className="mt-1 block text-[11px] tabular-nums text-ink-500">RL {rl} · PR {xs.length - rl}</span>
+}
 /* ------------------------------------------------------------------ */
 
 type Period = 'month' | 'last' | 'fy' | 'all'
