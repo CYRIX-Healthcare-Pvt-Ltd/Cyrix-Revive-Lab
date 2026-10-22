@@ -767,6 +767,7 @@ function RequestsTab({ desk, engineerOnly }: { desk: boolean; engineerOnly: bool
                     {k && step < 4 && <span className="block">Waiting on</span>}
                     <span className={clsx('block font-semibold', w.late ? 'text-cyrixRed-700' : k ? STAGE_INK[k] : 'text-ink-500')}>{w.text}</span>
                     {r.po_number && <span className="block font-mono">{poLabel(r.po_number)}</span>}
+                    {r.item_code && <span className="block font-mono">Item {r.item_code}</span>}
                     {r.bill_amount !== null && <span className="block font-medium tabular-nums text-ink-900">{rupees(r.bill_amount)}</span>}
                   </span>
                 </>

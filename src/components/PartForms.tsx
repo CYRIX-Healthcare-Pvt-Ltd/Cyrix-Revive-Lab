@@ -305,7 +305,7 @@ export function RequestPartForm({ ticket: t, labs, onDone, onError, onCancel }: 
 
       <div>
         <span className="label">Photo <span className="text-cyrixRed-600">*</span></span>
-        <div className="mt-1"><PhotoPick photos={photos} onChange={setPhotos} max={1} noun="photo" /></div>
+        <div className="mt-1"><PhotoPick photos={photos} onChange={setPhotos} max={1} noun="photo" markable /></div>
         <p className="mt-1 text-xs text-ink-500">The part itself, or its marking on the board — whoever purchases it goes by this.</p>
       </div>
 

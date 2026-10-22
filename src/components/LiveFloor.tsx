@@ -131,7 +131,7 @@ function placeOf(s: TicketStatus): Place | null {
   switch (s) {
     case 'pending_acceptance': case 'transferred': return 'dock'
     case 'accepted': case 'awaiting_approval': case 'approved': return 'desk'
-    case 'assigned': case 'in_repair': case 'parts_requested': case 'parts_ordered': case 'parts_ready': return 'bench'
+    case 'assigned': case 'in_repair': case 'parts_requested': case 'parts_ordered': case 'parts_ready': case 'pi_requested': return 'bench'
     case 'repaired': case 'not_repairable': case 'service_denied': return 'dispatch'
     case 'in_transit_return': return 'outbound'
     default: return null

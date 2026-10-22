@@ -323,10 +323,25 @@ export function useTrcs() {
   })
 }
 
+/*
+  A list read a thousand rows at a time until it is all in: the server hands back at most 1,000 a call (the user,
+  22 Oct: the Average TAT read "under a minute" with 2,929 status rows cut to 1,000). Each list comes back in a fixed
+  order, so the pages meet without a gap or a repeat.
+*/
+async function everyRow<T>(call: () => { range: (from: number, to: number) => PromiseLike<{ data: unknown; error: { message: string } | null }> }): Promise<T[]> {
+  const out: T[] = []
+  for (let from = 0; ; from += 1000) {
+    const part = unwrap<T[]>(await call().range(from, from + 999) as never)
+    out.push(...part)
+    if (part.length < 1000) break
+  }
+  return out
+}
+
 export function useTickets() {
   return useQuery({
     queryKey: ['revive', 'tickets'],
-    queryFn: async () => unwrap<Ticket[]>(await supabase.rpc('revive_ticket_list')),
+    queryFn: () => everyRow<Ticket>(() => supabase.rpc('revive_ticket_list')),
   })
 }
 
@@ -408,12 +423,14 @@ export function useHops(ticketId: string | undefined) {
   })
 }
 
+/*
+  Every ticket's status trail, a thousand rows at a time: the server hands back at most 1,000 a call, and with 2,929
+  rows most tickets came without their trail, so the Average TAT read "under a minute" (the user, 22 Oct).
+*/
 export function useVisibleEvents() {
   return useQuery({
     queryKey: ['revive', 'events'],
-    queryFn: async () => unwrap<Array<{ ticket_id: string; status: string; trc_id: string | null; at: string }>>(
-      await supabase.rpc('revive_visible_events'),
-    ),
+    queryFn: () => everyRow<{ ticket_id: string; status: string; trc_id: string | null; at: string }>(() => supabase.rpc('revive_visible_events')),
   })
 }
 
@@ -621,6 +638,8 @@ export interface PartRequest {
   po_number: string | null
   po_date: string | null
   edd: string | null
+  /** Purchase's item code for what was ordered (rl_0056). */
+  item_code: string | null
   /** A request for the stock, with no ticket: PR-01 on (rl_0044). */
   number: number | null
   code: string | null
@@ -673,9 +692,7 @@ export interface StockUseRow {
 export function useStockUses(status?: StockUseStatus) {
   return useQuery({
     queryKey: ['revive', 'stock-uses', status ?? 'all'],
-    queryFn: async () => unwrap<StockUseRow[]>(
-      await supabase.rpc('revive_stock_use_list', { p_status: status ?? null }),
-    ),
+    queryFn: () => everyRow<StockUseRow>(() => supabase.rpc('revive_stock_use_list', { p_status: status ?? null })),
   })
 }
 
@@ -684,9 +701,8 @@ export function usePartRequests(ticketId?: string, enabled = true) {
   return useQuery({
     enabled,
     queryKey: ['revive', 'parts', ticketId ?? 'all'],
-    queryFn: async () => unwrap<PartRequest[]>(
-      await supabase.rpc('revive_part_request_list', { p_ticket_id: ticketId ?? null }),
-    ).map(r => ({ ...r, bill_amount: r.bill_amount === null ? null : Number(r.bill_amount) })),
+    queryFn: async () => (await everyRow<PartRequest>(() => supabase.rpc('revive_part_request_list', { p_ticket_id: ticketId ?? null })))
+      .map(r => ({ ...r, bill_amount: r.bill_amount === null ? null : Number(r.bill_amount) })),
   })
 }
 
@@ -841,6 +857,13 @@ export const useStartRepair = () => useTicketMutation(
 export const useSetExpectedDate = () => useTicketMutation(
   (a: { id: string; expectedBy: string; note?: string }) =>
     rpc('revive_set_expected_date', { p_ticket_id: a.id, p_expected_by: a.expectedBy, p_note: a.note || null }))
+
+/** The field engineer asked to raise a PI for the parts, and the parts come (rl_0055). */
+export const useRequestPi = () => useTicketMutation(
+  (a: { id: string; note: string }) => rpc('revive_request_pi', { p_ticket_id: a.id, p_note: a.note }))
+
+export const usePiReceived = () => useTicketMutation(
+  (a: { id: string; note?: string }) => rpc('revive_pi_received', { p_ticket_id: a.id, p_note: a.note || null }))
 
 export const useReturnToDesk = () => useTicketMutation(
   (a: { id: string; note: string }) => rpc('revive_return_to_desk', { p_ticket_id: a.id, p_note: a.note }))
@@ -1009,9 +1032,9 @@ export const useSetPartProgress = () => useTicketMutation(
  * it comes (rl_0019).
  */
 export const useOrderPart = () => useTicketMutation(
-  (a: { id: string; poNumber: string; poDate: string; edd: string; vendor: string }) =>
+  (a: { id: string; poNumber: string; poDate: string; edd: string; itemCode: string; vendor: string }) =>
     rpc('revive_order_part', {
-      p_request_id: a.id, p_po_number: a.poNumber, p_po_date: a.poDate, p_edd: a.edd, p_vendor: a.vendor,
+      p_request_id: a.id, p_po_number: a.poNumber, p_po_date: a.poDate, p_edd: a.edd, p_item_code: a.itemCode, p_vendor: a.vendor,
     }))
 
 /** Kept at the Revive Lab after all: the coordinator buys it locally. */

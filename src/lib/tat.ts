@@ -100,7 +100,7 @@ export interface TatBreakdown {
 /** The statuses that end a repair. */
 const REPAIR_END = ['repaired', 'not_repairable', 'service_denied']
 /** The statuses of a repair waiting on a component. */
-const WAITING_FOR_PARTS = ['parts_requested', 'parts_ordered', 'parts_ready']
+const WAITING_FOR_PARTS = ['parts_requested', 'parts_ordered', 'parts_ready', 'pi_requested']
 /** Being repaired: after a close, it means the close did not stand. */
 const BACK_IN_REPAIR = ['in_repair', ...WAITING_FOR_PARTS]
 /** Waiting on approval to go to another Revive Lab, and on it being sent once decided. */

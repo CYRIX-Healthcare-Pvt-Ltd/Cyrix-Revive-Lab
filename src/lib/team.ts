@@ -149,8 +149,8 @@ export const STAGES: readonly Stage[] = [
   },
   {
     key: 'repair', label: 'Being repaired', tone: 'indigo',
-    hint: 'with a Revive Lab engineer, or waiting for a component',
-    statuses: ['assigned', 'in_repair', 'parts_requested', 'parts_ordered', 'parts_ready'],
+    hint: 'with a Revive Lab engineer, or waiting for a component or PI parts',
+    statuses: ['assigned', 'in_repair', 'parts_requested', 'parts_ordered', 'parts_ready', 'pi_requested'],
   },
   {
     key: 'dispatch', label: 'To be sent back', tone: 'lime',
@@ -225,6 +225,7 @@ export function nextMove(t: ReportTicket): string {
     case 'parts_requested': return `${lab} coordinator, for a component`
     case 'parts_ordered': return 'Purchase, buying a component'
     case 'parts_ready': return `${eng}, the component is ready`
+    case 'pi_requested': return `${t.stakeholder_name}, to raise a PI for the parts`
     case 'repaired':
     case 'not_repairable':
     case 'service_denied': return `${lab}, to dispatch it`
@@ -313,11 +314,11 @@ export const inRange = (ms: number, r: Range) => ms >= r.from && ms < r.to
 /* The Revive Lab's own reports                                         */
 /* ------------------------------------------------------------------ */
 
-const REPAIRING_NOW: readonly TicketStatus[] = ['assigned', 'in_repair', 'parts_requested', 'parts_ordered', 'parts_ready']
+const REPAIRING_NOW: readonly TicketStatus[] = ['assigned', 'in_repair', 'parts_requested', 'parts_ordered', 'parts_ready', 'pi_requested']
 /** The statuses a Revive Lab engineer closes a repair with. */
 const REPAIR_CLOSED = ['repaired', 'not_repairable', 'service_denied']
 /** Being repaired: after a close, it means the close did not stand. */
-const BACK_IN_REPAIR = ['in_repair', 'parts_requested', 'parts_ordered', 'parts_ready']
+const BACK_IN_REPAIR = ['in_repair', 'parts_requested', 'parts_ordered', 'parts_ready', 'pi_requested']
 
 /**
  * When this round of the repair was assigned, and when the engineer closed

@@ -6,7 +6,7 @@ import {
   ArrowLeft, ArrowRightLeft, BadgeCheck, Ban, Boxes, CalendarClock, Camera, CheckCircle2, CircleCheck, CircleX, ClipboardCheck,
   ClipboardList, Factory, Forward, Hand, History as HistoryIcon, PackageCheck, PackagePlus, PackageX, PlayCircle, Receipt, RotateCcw, ScanSearch, Tag,
   Send, ShieldQuestion, ShieldX, ShoppingCart, Signpost, Timer, Trash2, TriangleAlert, Truck, Undo2, UserCheck, UserCog, UserPlus,
-  UserX, Wrench, X, ExternalLink,
+  UserX, Wrench, X, ExternalLink, FileInput, PackageOpen,
   type LucideIcon,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
@@ -14,7 +14,7 @@ import {
   useAccept, useAddObservation, useAnswerHandover, useApprove, useApproveNotRepairable, useAssign, useDeclineNotRepairable, useCancelHandover, useCancelTransfer, useCloseTicket, useCompleteRepair,
   useFindPeople, useHandOver, usePhoneOf,
   useDeclineApproval, useDiscard, useDispatch, useHops, useMarkReceived, useMembers, useRequestTransfer, useReroute,
-  usePartRequests, useBemmpProjects, useRequestReturn, useReturnToDesk, useReturnToLab, useScrap, useSend, useSetClassification, useSetExpectedDate, useStartRepair, useTickets,
+  usePartRequests, useBemmpProjects, useRequestReturn, useRequestPi, usePiReceived, useReturnToDesk, useReturnToLab, useScrap, useSend, useSetClassification, useSetExpectedDate, useStartRepair, useTickets,
   useTrail, useTrcs, useUpdateCourier,
   type FieldReturn, type PastRound, type Person, type Ticket, type TrailEvent,
 } from '@/lib/queries'
@@ -845,7 +845,10 @@ function stepLook(
         : again ? 'Reassigned to another engineer' : STATUS.assigned.label
       return { title, tone, icon: again ? UserCog : UserPlus }
     }
-    case 'in_repair': return { title: e.from_status === 'assigned' ? 'Repair accepted' : STATUS.in_repair.label, tone, icon: Wrench }
+    case 'in_repair':
+      if (e.from_status === 'pi_requested') return { title: 'PI parts received — repair resumed', tone, icon: PackageOpen }
+      return { title: e.from_status === 'assigned' ? 'Repair accepted' : STATUS.in_repair.label, tone, icon: Wrench }
+    case 'pi_requested': return { title: 'Asked the field engineer to raise a PI', tone, icon: FileInput }
     case 'repaired': return { title: STATUS.repaired.label, tone, icon: ClipboardCheck }
     case 'in_transit_return': return { title: STATUS.in_transit_return.label, tone, icon: Send }
     case 'received_back': return { title: 'Received back by the field engineer', tone, icon: PackageCheck }
@@ -1042,6 +1045,9 @@ const ACTION_META: Record<Action, { label: string; icon: LucideIcon; tone: Tone;
   request_part: { label: 'Request component', icon: ShoppingCart, tone: 'orange', weight: 'tool' },
   observe: { label: 'Add observation', icon: ScanSearch, tone: 'indigo', weight: 'tool' },
   expect: { label: 'Change expected date', icon: CalendarClock, tone: 'indigo', weight: 'tool' },
+  // Many parts: the field engineer raises a PI in the other software (rl_0055).
+  request_pi: { label: 'Ask field engineer to raise PI', icon: FileInput, tone: 'fuchsia', weight: 'tool' },
+  pi_received: { label: 'PI parts received', icon: PackageOpen, tone: 'indigo', weight: 'main', primary: true },
   courier: { label: 'Update courier details', icon: Truck, tone: 'teal', weight: 'tool' },
   return: { label: 'Hand back to coordinator', icon: Undo2, tone: 'amber', weight: 'aside' },
   transfer: { label: 'Transfer to another Revive Lab', icon: ArrowRightLeft, tone: 'violet', weight: 'aside' },
@@ -1113,7 +1119,9 @@ function ActionBar({ ticket: t, actions, spoken }: { ticket: Ticket; actions: Ac
       {error && <Alert kind="error">{error}</Alert>}
       {done && <Alert kind="success">{done}</Alert>}
 
-      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+      {/* The move forward and the ways out on one line; the tools under it in an even grid, every one the same width
+          (the user, 22 Oct: "organise and standardise"). */}
+      <div className="flex flex-col gap-2 sm:grid sm:grid-cols-[auto_1fr] sm:items-center sm:gap-3">
         {main.length > 0 && (
           <div className="grid gap-2 sm:flex sm:flex-wrap">
             {main.map(a => {
@@ -1134,7 +1142,7 @@ function ActionBar({ ticket: t, actions, spoken }: { ticket: Ticket; actions: Ac
         )}
 
         {tools.length > 0 && (
-          <div className={clsx('grid gap-2 sm:flex sm:flex-wrap', tools.length > 1 && 'grid-pairs grid-cols-2')}>
+          <div className={clsx('grid gap-2 sm:order-last sm:col-span-2 sm:grid-cols-3 lg:grid-cols-5', tools.length > 1 && 'grid-pairs grid-cols-2')}>
             {tools.map(a => {
               const m = actionMeta(a, t)
               return (
@@ -1146,7 +1154,7 @@ function ActionBar({ ticket: t, actions, spoken }: { ticket: Ticket; actions: Ac
                   className={clsx(
                     'btn-secondary',
                     // Tiles on a phone: the icon over the words, so a long label wraps evenly.
-                    tools.length > 1 && 'flex-col gap-1.5 px-2 py-3 text-center leading-tight sm:flex-row sm:gap-2 sm:px-4 sm:py-2.5 sm:leading-normal',
+                    tools.length > 1 && 'flex-col gap-1.5 px-2 py-3 text-center leading-tight sm:flex-row sm:justify-start sm:gap-2 sm:px-3 sm:py-2.5 sm:text-left sm:leading-snug',
                     open === a && 'ring-2 ring-ink-400 ring-offset-1',
                   )}
                 >
@@ -1159,7 +1167,8 @@ function ActionBar({ ticket: t, actions, spoken }: { ticket: Ticket; actions: Ac
 
         {aside.length > 0 && (
           <div className={clsx(
-            'flex flex-wrap gap-x-5 gap-y-1 sm:ml-auto',
+            'flex flex-wrap gap-x-5 gap-y-1 sm:justify-end',
+            main.length === 0 && 'sm:col-span-2',
             (main.length > 0 || tools.length > 0) && 'mt-1 border-t border-ink-200 pt-2 sm:mt-0 sm:border-0 sm:pt-0',
           )}>
             {aside.map(a => {
@@ -1350,6 +1359,8 @@ function ActionForm({
   const assign = useAssign()
   const observe = useAddObservation()
   const giveBack = useReturnToDesk()
+  const requestPi = useRequestPi()
+  const piReceived = usePiReceived()
   const complete = useCompleteRepair()
   const dispatch = useDispatch()
   const received = useMarkReceived()
@@ -1431,7 +1442,7 @@ function ActionForm({
   const backTo = (trcs ?? []).filter(x => x.is_active)
   const labName = (id: string) => trcs?.find(x => x.id === id)?.name ?? 'that Revive Lab'
 
-  const busy = [accept, assign, observe, giveBack, complete, dispatch, received, transfer, updateCourier, send, reroute, closeTicket, returnToLab]
+  const busy = [accept, assign, observe, giveBack, requestPi, piReceived, complete, dispatch, received, transfer, updateCourier, send, reroute, closeTicket, returnToLab]
     .some(m => m.isPending)
   const blobs = photos.map(p => p.blob)
 
@@ -1465,6 +1476,12 @@ function ActionForm({
           onDone('Observation added to the history. Add another whenever there is more.'); break
         case 'return':
           await giveBack.mutateAsync({ id: t.id, note }); onDone('Handed back to the coordinator.'); break
+        case 'request_pi':
+          if (note.trim().length < 3) { onError('Say which parts the PI is for.'); return }
+          await requestPi.mutateAsync({ id: t.id, note })
+          onDone(`${t.stakeholder_name} is asked to raise the PI. Once its parts reach ${t.trc_name}, press PI parts received and carry on.`); break
+        case 'pi_received':
+          await piReceived.mutateAsync({ id: t.id, note }); onDone('PI parts received. The repair carries on.'); break
         case 'complete':
           if (outcome === 'not_repairable' && !proposal) { onError('Say what should become of it: scrap, or back to the field engineer.'); return }
           if (note.trim().length < 3) { onError(outcome === 'repaired' ? 'Say what action was taken on it.' : 'Say why.'); return }
@@ -1561,7 +1578,7 @@ function ActionForm({
 
   // The back of the route card: the Revive Lab's Action taken, and the
   // field engineer's Final status.
-  const needsNote = action === 'return' || action === 'transfer' || action === 'complete' || action === 'close_ticket' || action === 'observe'
+  const needsNote = action === 'request_pi' || action === 'return' || action === 'transfer' || action === 'complete' || action === 'close_ticket' || action === 'observe'
   const needsCourier = action === 'dispatch' || action === 'courier' || action === 'send' || action === 'reroute' || action === 'accept' || returning
   // Going back, the why is asked beside the choice, before the courier.
   const asksNote = action !== 'courier' && action !== 'reroute' && !returning
@@ -1914,6 +1931,7 @@ function ActionForm({
           <span className="label">
             {action === 'transfer' ? 'Why it is being transferred'
               : action === 'return' ? 'Why it is going back'
+              : action === 'request_pi' ? 'Parts for the PI'
                 : action === 'complete' ? (outcome === 'repaired' ? 'Action taken' : outcome === 'not_repairable' ? 'Why it cannot be repaired' : 'What the customer said')
                   : action === 'observe' ? (voice ? 'What was found (optional beside the recording)' : 'What was found')
                     : action === 'close_ticket' ? 'Final status'
@@ -1934,6 +1952,7 @@ function ActionForm({
                     : action === 'received' ? 'e.g. Box opened, board looks fine'
                     : action === 'transfer' ? 'e.g. Needs FPGA rework this Revive Lab cannot do'
                       : action === 'return' ? 'e.g. Cannot be repaired at this Revive Lab'
+                      : action === 'request_pi' ? 'e.g. LCD panel, 2 × SMPS board, keypad'
                         : reassign ? 'e.g. On leave this week'
                           : ''
             }
@@ -1951,6 +1970,8 @@ function ActionForm({
               asks the question, this one answers it. */}
           {action === 'transfer' ? 'Ask for approval'
             : action === 'reroute' ? 'Send'
+              : action === 'request_pi' ? 'Ask for PI'
+              : action === 'pi_received' ? 'Carry on the repair'
               : action === 'received' ? 'Confirm it arrived'
                 : returning ? `Return to ${t.trc_name}`
                   : action === 'close_ticket' ? 'Close the ticket'

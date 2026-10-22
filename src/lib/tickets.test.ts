@@ -98,7 +98,7 @@ describe('actionsFor — who may do what, now', () => {
     expect(actionsFor(t, engineer)).toEqual(['start', 'return'])
     expect(actionsFor(t, me({ employee_id: 'other', is_engineer: true, trc_ids: [REG] }))).toEqual([])
     expect(actionsFor(ticket({ status: 'in_repair', engineer_id: 'eng' }), engineer))
-      .toEqual(['complete', 'use_part', 'request_part', 'observe', 'expect', 'return'])
+      .toEqual(['complete', 'use_part', 'request_part', 'observe', 'expect', 'request_pi', 'return'])
   })
 
   it('sends a repaired spare to the desk for dispatch', () => {
@@ -132,7 +132,7 @@ describe('actionsFor — who may do what, now', () => {
     const both = me({ employee_id: 'eng', is_manager: true, is_engineer: true, trc_ids: [REG] })
     expect(actionsFor(ticket({ status: 'assigned', engineer_id: 'eng' }), both)).toEqual(['start', 'return'])
     expect(actionsFor(ticket({ status: 'in_repair', engineer_id: 'eng' }), both))
-      .toEqual(['complete', 'use_part', 'request_part', 'observe', 'expect', 'return'])
+      .toEqual(['complete', 'use_part', 'request_part', 'observe', 'expect', 'request_pi', 'return'])
   })
 
   it('counts a ticket as waiting on me only for a forward move', () => {

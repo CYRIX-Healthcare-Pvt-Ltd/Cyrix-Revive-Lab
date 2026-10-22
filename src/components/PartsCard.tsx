@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
   Boxes, CheckCircle2, ClipboardList, ExternalLink, Hand, PackageCheck, PackagePlus, Receipt, ScanText, Send, ShoppingCart,
-  Undo2, X,
+  Pencil, Undo2, X,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import {
@@ -16,7 +16,9 @@ import {
   buysFor, partActor, partStatusLook, poLabel, runsTrc, PART_PROGRESS, PART_ROUTE_LABEL, STOCK_USE_STATUS, TONE_CLASS,
   type PartProgress,
 } from '@/lib/tickets'
-import { signedLinks } from '@/lib/partFiles'
+import { signedLinks, uploadPartFile } from '@/lib/partFiles'
+import { supabase } from '@/lib/supabase'
+import MarkUp from '@/components/MarkUp'
 import { dateTime, localDay } from '@/lib/when'
 import { readBillAmount } from '@/lib/billOcr'
 import { Alert, Spinner } from '@/components/ui'
@@ -285,6 +287,25 @@ export function RequestItem({
   const run = runner(onNotice)
   const status = partStatusLook(r)
   const photo = r.photo_path ? links[r.photo_path] : undefined
+  // Whoever attached the photo can mark it again afterwards, if it was forgotten while uploading (the user, 22 Oct).
+  const { me } = useAuth()
+  const qc = useQueryClient()
+  const [marking, setMarking] = useState(false)
+  const canMark = !!photo && !!me && r.requested_by === me.employee_id
+  const saveMarked = async (blob: Blob) => {
+    try {
+      const path = await uploadPartFile(r.ticket_id, r.id, 'photo', blob)
+      if (path !== r.photo_path) {
+        const { error } = await supabase.rpc('revive_set_part_photo', { p_request_id: r.id, p_path: path })
+        if (error) throw new Error(error.message)
+      }
+      setMarking(false)
+      await qc.invalidateQueries({ queryKey: ['revive'] })
+      onNotice({ kind: 'success', text: 'Photo marked and saved.' })
+    } catch (err) {
+      onNotice({ kind: 'error', text: err instanceof Error ? err.message : 'The marked photo did not save.' })
+    }
+  }
   const bills = r.bill_paths.map(p => links[p]).filter(Boolean)
   const busy = take.isPending || forward.isPending || makeLocal.isPending || confirm.isPending || cancel.isPending
     || setProgress.isPending
@@ -294,7 +315,7 @@ export function RequestItem({
     ...(r.accepted_at ? [[<>{r.accepted_by_name} is purchasing it</>, r.accepted_at] as [ReactNode, string]] : []),
     ...(r.progress && r.progress_at ? [[<>{PART_PROGRESS[r.progress]}{r.progress_by_name ? <> · {r.progress_by_name}</> : null}</>, r.progress_at] as [ReactNode, string]] : []),
     ...(r.declined_at ? [[<>Declined by {r.declined_by_name}{r.declined_reason ? <>: <span className="text-ink-700">{r.declined_reason}</span></> : null}</>, r.declined_at] as [ReactNode, string]] : []),
-    ...(r.purchased_at && r.po_number ? [[<>Ordered by {r.purchased_by_name} · <span className="font-mono text-ink-700">{poLabel(r.po_number)}</span>{r.po_date ? <> of {onDay(r.po_date)}</> : null}{r.vendor ? <> from {r.vendor}</> : null}{r.edd ? <> · due <span className="font-medium text-ink-800">{onDay(r.edd)}</span></> : null}</>, r.purchased_at] as [ReactNode, string]] : []),
+    ...(r.purchased_at && r.po_number ? [[<>Ordered by {r.purchased_by_name} · <span className="font-mono text-ink-700">{poLabel(r.po_number)}</span>{r.po_date ? <> of {onDay(r.po_date)}</> : null}{r.item_code ? <> · item <span className="font-mono text-ink-700">{r.item_code}</span></> : null}{r.vendor ? <> from {r.vendor}</> : null}{r.edd ? <> · due <span className="font-medium text-ink-800">{onDay(r.edd)}</span></> : null}</>, r.purchased_at] as [ReactNode, string]] : []),
     ...(r.purchased_at && !r.po_number ? [[<>Purchased by {r.purchased_by_name}{r.bill_amount !== null ? <> for <span className="font-medium tabular-nums text-ink-800">{rupees(r.bill_amount)}</span></> : null}{r.vendor ? <> from {r.vendor}</> : null}{r.bill_no ? <> · bill {r.bill_no}</> : null}</>, r.purchased_at] as [ReactNode, string]] : []),
     ...(r.stocked_at ? [[<>Into stock by {r.stocked_by_name} as <span className="font-mono text-ink-700">{r.part_no}</span>{r.bought_qty ? <> · {r.bought_qty} purchased</> : null}</>, r.stocked_at] as [ReactNode, string]] : []),
     ...(r.received_at ? [[<>Confirmed by {r.received_by_name}</>, r.received_at] as [ReactNode, string]] : []),
@@ -331,9 +352,18 @@ export function RequestItem({
       {head && <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-ink-100 pb-2 text-sm">{head}</div>}
       <div className="flex flex-wrap items-start gap-3">
         {photo && (
-          <button type="button" onClick={() => onView([photo], 0)} className="h-14 w-14 shrink-0 overflow-hidden rounded-md border border-ink-200" aria-label="View the component photo">
-            <img src={photo} alt="" className="h-full w-full object-cover" />
-          </button>
+          <div className="relative shrink-0">
+            <button type="button" onClick={() => onView([photo], 0)} className="block h-14 w-14 overflow-hidden rounded-md border border-ink-200" aria-label="View the component photo">
+              <img src={photo} alt="" className="h-full w-full object-cover" />
+            </button>
+            {canMark && (
+              <button type="button" onClick={() => setMarking(true)} title="Mark it with a pen" aria-label="Mark the component photo"
+                className="btn-press absolute -bottom-1.5 -right-1.5 grid h-6 w-6 place-items-center rounded-full border border-ink-200 bg-surface text-ink-700 shadow-sm hover:text-ink-900">
+                <Pencil className="h-3 w-3" />
+              </button>
+            )}
+            {marking && <MarkUp src={photo} onSave={saveMarked} onClose={() => setMarking(false)} />}
+          </div>
         )}
         <div className="min-w-0 flex-1">
           <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium text-ink-900">
@@ -721,6 +751,7 @@ export function OrderDialog({ ticket: t, request: r, onClose, onDone }: {
   const [poNumber, setPoNumber] = useState('')
   const [poDate, setPoDate] = useState(today())
   const [edd, setEdd] = useState('')
+  const [itemCode, setItemCode] = useState('')
   const [vendor, setVendor] = useState('')
   const [error, setError] = useState<string | null>(null)
   // No date on the ticket before the day it was raised (the user, 23 Sep); none before a PR was requested.
@@ -733,9 +764,10 @@ export function OrderDialog({ ticket: t, request: r, onClose, onDone }: {
     if (poDate < floor) { setError(`The PO date cannot be before ${t ? `${t.code} was raised` : `${r.code} was requested`}, ${onDay(floor)}.`); return }
     if (!edd) { setError('Enter the expected delivery date.'); return }
     if (edd < poDate) { setError('The expected delivery date cannot be before the PO date.'); return }
+    if (!itemCode.trim()) { setError('Enter the item code.'); return }
     if (vendor.trim().length < 2) { setError('Enter the vendor’s name.'); return }
     try {
-      await order.mutateAsync({ id: r.id, poNumber: poNumber.trim(), poDate, edd, vendor: vendor.trim() })
+      await order.mutateAsync({ id: r.id, poNumber: poNumber.trim(), poDate, edd, itemCode: itemCode.trim(), vendor: vendor.trim() })
       onDone(`Ordered: ${poLabel(poNumber)}, due ${onDay(edd)}. It is with the coordinator, who adds it to stock${r.ticket_id ? ` and sends it to ${asker(r)}` : ''} when it arrives.`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'That did not go through.')
@@ -762,6 +794,10 @@ export function OrderDialog({ ticket: t, request: r, onClose, onDone }: {
           <input className="input mt-1" type="date" value={edd} min={poDate && poDate > floor ? poDate : floor} onChange={e => setEdd(e.target.value)} />
         </label>
         <label className="block">
+          <span className="label">Item code <span className="text-cyrixRed-600">*</span></span>
+          <input className="input mt-1 font-mono" value={itemCode} onChange={e => setItemCode(e.target.value)} maxLength={60} />
+        </label>
+        <label className="block sm:col-span-2">
           <span className="label">Vendor name <span className="text-cyrixRed-600">*</span></span>
           <input className="input mt-1" value={vendor} onChange={e => setVendor(e.target.value)} maxLength={120} placeholder="Supplier" />
         </label>

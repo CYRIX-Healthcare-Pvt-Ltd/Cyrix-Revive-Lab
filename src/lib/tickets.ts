@@ -21,6 +21,7 @@ export type TicketStatus =
   | 'parts_requested'
   | 'parts_ordered'
   | 'parts_ready'
+  | 'pi_requested'
   | 'repaired'
   | 'not_repairable'
   | 'service_denied'
@@ -107,6 +108,11 @@ export const STATUS: Record<TicketStatus, StatusMeta> = {
     label: 'Component ready — the engineer to confirm', short: 'Component ready', tone: 'cyan', order: 4.6,
     waitingOn: 'the engineer to confirm the purchase and carry on',
   },
+  // The field engineer asked to raise a part intent in the other software; the repair waits for its parts (rl_0055).
+  pi_requested: {
+    label: 'Waiting for PI parts', short: 'Waiting for PI', tone: 'fuchsia', order: 4.8,
+    waitingOn: 'the field engineer to raise the PI, and its parts to reach the Revive Lab',
+  },
   repaired: {
     label: 'Repaired — pending dispatch', short: 'Pending dispatch', tone: 'lime', order: 5,
     waitingOn: 'the coordinator to dispatch it back',
@@ -142,7 +148,7 @@ export const OPEN_STATUSES = STATUS_ORDER.filter(s => s !== 'closed')
 export const PARTS_STATUSES: readonly TicketStatus[] = ['parts_requested', 'parts_ordered', 'parts_ready']
 
 /** The engineer has it: repairing, or waiting on a component for the repair. */
-export const REPAIRING: readonly TicketStatus[] = ['in_repair', ...PARTS_STATUSES]
+export const REPAIRING: readonly TicketStatus[] = ['in_repair', ...PARTS_STATUSES, 'pi_requested']
 
 /**
  * Where the spare came from (rl_0020): a hospital, sent in by its field
@@ -619,6 +625,7 @@ export type Action =
   | 'approve' | 'decline_approval' | 'send' | 'cancel_transfer' | 'reroute' | 'discard'
   | 'hand_over' | 'accept_handover' | 'decline_handover' | 'cancel_handover'
   | 'approve_nr' | 'decline_nr'
+  | 'request_pi' | 'pi_received'
 
 /**
  * What this person may do to this ticket now, in the order the buttons
@@ -654,7 +661,11 @@ export function actionsFor(t: TicketLike, me: Me | null | undefined): Action[] {
   if (mine && t.status === 'assigned') out.push('start')
   if (mine && t.status === 'in_repair') out.push('complete')
   // While it is being repaired — and while a component for it is on its way.
-  if (mine && REPAIRING.includes(t.status)) out.push('use_part', 'request_part', 'observe', 'expect')
+  if (mine && (t.status === 'in_repair' || PARTS_STATUSES.includes(t.status))) out.push('use_part', 'request_part', 'observe', 'expect')
+  // Many parts: the field engineer raises a PI in the other software (rl_0055). Asked with no component on its way;
+  // once its parts reach the Revive Lab, the engineer carries on.
+  if (mine && t.status === 'in_repair') out.push('request_pi')
+  if (mine && t.status === 'pi_requested') out.push('pi_received', 'observe', 'expect')
   if (desk && (t.status === 'accepted' || t.status === 'assigned')) out.push('assign')
   if (desk && (t.status === 'repaired' || t.status === 'service_denied')) out.push('dispatch')
   // Not repairable waits for a manager of its Revive Lab — any of them, the
@@ -709,7 +720,7 @@ export function partsWaitingOn(t: TicketLike, me: Me | null | undefined): number
 
 const SIDE_STEPS: readonly Action[] = [
   'transfer', 'return', 'observe', 'courier', 'use_part', 'request_part', 'expect',
-  'decline_approval', 'cancel_transfer', 'discard', 'hand_over', 'cancel_handover', 'decline_handover', 'decline_nr',
+  'decline_approval', 'cancel_transfer', 'discard', 'request_pi', 'pi_received', 'hand_over', 'cancel_handover', 'decline_handover', 'decline_nr',
 ]
 
 /**
@@ -729,6 +740,8 @@ export function waitingOnMe(t: TicketLike, me: Me | null | undefined): boolean {
     all (rl_0036): approving a spare as not repairable is what waits on them.
   */
   const queue = me?.is_admin ? { ...me, is_admin: false } : me
+  // Asked to raise a PI for the parts, in the other software: the field engineer's until the parts reach the Revive Lab (rl_0055).
+  if (t.status === 'pi_requested' && !!me && t.stakeholder_id === me.employee_id) return true
   return actionsFor(t, queue).some(forward) || partsWaitingOn(t, queue) > 0
 }
 
@@ -751,7 +764,7 @@ export const CRITICALITY_LABEL: Record<Criticality, string> = { critical: 'Criti
 
 /** From acceptance until it is dispatched back: while the desk may still change them. */
 const CLASSIFIABLE: readonly TicketStatus[] = [
-  'accepted', 'assigned', 'in_repair', 'parts_requested', 'parts_ordered', 'parts_ready',
+  'accepted', 'assigned', 'in_repair', 'parts_requested', 'parts_ordered', 'parts_ready', 'pi_requested',
   'repaired', 'not_repairable', 'service_denied', 'awaiting_approval', 'approved',
 ]
 

@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import {
   Bar, BarChart, CartesianGrid, Cell, LabelList, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
-import { AlarmClock, ArrowRight, BellRing, Box, LayoutDashboard, Building2, ChartColumn, Check, ClipboardList, HardHat, Inbox, PackagePlus, TrendingUp, Users } from 'lucide-react'
+import { AlarmClock, ArrowRight, BellRing, Box, LayoutDashboard, Building2, ChartColumn, Check, ChevronDown, ClipboardList, HardHat, Inbox, PackagePlus, TrendingUp, Users } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { supabase } from '@/lib/supabase'
 import { useMembers, useMyTeam, usePartRequests, useTickets, useTrcs, useVisibleEvents, type PartRequest, type Ticket } from '@/lib/queries'
@@ -118,6 +118,9 @@ export default function Dashboard() {
   // Which stages the trend draws — kept for next time — and the one being pointed at on the card (the user, 6 Oct).
   const [picked, setPicked] = useStagePick()
   const [focus, setFocus] = useState<StageKey | null>(null)
+  // The two Waiting on you cards, each closed until its bar is pressed (the user, 22 Oct).
+  const [open, setOpen] = useState({ tickets: false, pr: false })
+  const flip = (k: 'tickets' | 'pr') => setOpen(o => ({ ...o, [k]: !o[k] }))
   const dark = useDark()
   const [chosen, setMode] = useViewMode()
   // Animation is for the Revive Lab's own people, the roles ticked in People & Revive Labs, and the
@@ -162,9 +165,12 @@ export default function Dashboard() {
     // A ticket discarded before it went anywhere took no turnaround to count.
     const closed = all.filter(t => t.status === 'closed' && t.closed_at && t.closure !== 'discarded')
     const recentClosed = closed.filter(t => inRange(Date.parse(t.closed_at!), range))
-    const avgTotal = recentClosed.length
-      ? recentClosed.reduce((a, t) => a + (tatOf(t.id, t.trc_id).total.ms ?? 0), 0) / recentClosed.length
-      : null
+    // Over the tickets whose turnaround is known: one with no trail is left out, not counted as no time at all.
+    const totals = recentClosed.map(t => tatOf(t.id, t.trc_id).total.ms).filter((v): v is number => v !== null)
+    const avgTotal = totals.length ? totals.reduce((a, v) => a + v, 0) / totals.length : null
+    // The repair alone, over the same tickets: the engineer accepting it to the repair closed, less waits for components.
+    const repairs = recentClosed.map(t => tatOf(t.id, t.trc_id).repair.ms).filter((v): v is number => v !== null)
+    const avgRepair = repairs.length ? repairs.reduce((a, v) => a + v, 0) / repairs.length : null
 
     const byStatus = STATUS_ORDER.map(s => ({
       status: s,
@@ -206,7 +212,24 @@ export default function Dashboard() {
       return point
     })
 
+    /*
+      The summary in one look (the user, 22 Oct): the tickets raised in the period chosen above, how many are completed —
+      closed — and what share, and the rest pending, counted by the stage each stands at.
+    */
+    const raised = all.filter(t => inRange(Date.parse(t.created_at), range))
+    const completed = raised.filter(t => t.status === 'closed').length
+    const pending = raised.filter(t => t.status !== 'closed')
+    const groups = PENDING_GROUPS.map(g => {
+      const stages = g.stages.map(s => ({ label: s.label, count: pending.filter(t => s.statuses.includes(t.status)).length }))
+        .filter(s => s.count > 0)
+      return { who: g.who, tone: g.tone, count: stages.reduce((a, s) => a + s.count, 0), stages }
+    })
+
     return {
+      raised: raised.length,
+      completed,
+      pending: pending.length,
+      groups,
       open: all.filter(t => t.status !== 'closed').length,
       mine: all.filter(t => waitingOnMe(t, me)),
       // Back with the field engineer, waiting to be fitted and closed (rl_0015).
@@ -216,6 +239,7 @@ export default function Dashboard() {
       moving: all.filter(t => t.status === 'in_transit_return' || t.status === 'transferred').length,
       closedThisMonth: closed.filter(t => Date.parse(t.closed_at!) >= monthStart).length,
       avgTotal,
+      avgRepair,
       recentClosed: recentClosed.length,
       byStatus,
       byTrc,
@@ -257,7 +281,6 @@ export default function Dashboard() {
   // An observer only watches (rl_0039): nothing waits on them, so no tile says
   // nought of it — unless something does, a spare of their own to confirm.
   const watching = observesOnly(me)
-  const noWaiting = watching && stats.mine.length === 0
 
   return (
     <div className="space-y-5">
@@ -319,31 +342,56 @@ export default function Dashboard() {
           ))}
         </div>
       </div>
-      {/* grid-fill: the fifth tile takes a whole row on a phone rather than half of one. */}
-      <div className={clsx('grid-fill grid grid-cols-2 gap-3', TILE_COLS[4 + (noWaiting ? 0 : 1) + (seesComponents ? 1 : 0)])}>
-        <StatTile label="Open" value={stats.open} sub={`of ${stats.total} tickets`} />
-        {!noWaiting && (
-          <StatTile label="Waiting on you" value={stats.mine.length} sub="tickets, your move next" tone={stats.mine.length ? 'brand' : 'default'} />
-        )}
-        {/* Component requests for the stock, apart from the tickets (the user, 7 Oct: "like 2 modules"). */}
-        {seesComponents && (
-          <StatTile label="Component requests" value={prMine.length} sub="PR waiting on you" tone={prMine.length ? 'brand' : 'default'} />
-        )}
-        <StatTile label="With Revive Lab engineer" value={stats.inRepair} sub="assigned or being repaired" />
+      {/* Total, completed and the average TAT, then the pending a whole row, by who has it (the user, 22 Oct). */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatTile label="Total" value={stats.raised} sub={`tickets raised ${words}`} />
         <StatTile
-          label="In transit"
-          value={stats.moving}
-          sub={stats.back ? `going back · ${stats.back} to be fitted` : 'going back, or between Revive Labs'}
+          label="Completed"
+          value={<>{stats.completed}<span className="ml-2 text-base font-medium text-emerald-600 dark:text-emerald-400">{percent(stats.completed, stats.raised)}</span></>}
+          sub="of these, closed"
         />
         {/* From raising to back with the field engineer, averaged over the
             tickets closed in the period chosen above. */}
         <StatTile
-          label="Average TAT"
+          label="Repair TAT"
+          value={stats.avgRepair === null ? '—' : formatSpan(stats.avgRepair)}
+          sub={`engineer accepted → repair closed · average of ${stats.recentClosed} closed ${words}`}
+        />
+        <StatTile
+          label="Ticket closure TAT"
           value={stats.avgTotal === null ? '—' : formatSpan(stats.avgTotal)}
           sub={stats.recentClosed
             ? `raised → back with the field engineer · ${stats.recentClosed} closed ${words}`
             : `raised → back with the field engineer · none closed ${words}`}
         />
+      </div>
+      <div className="card p-4">
+        <div className="flex items-baseline gap-2">
+          <p className="label !mb-0">Pending</p>
+        </div>
+        <p className="mt-2 text-2xl font-semibold tabular-nums text-ink-900">
+          {stats.pending}
+          <span className="ml-2 text-base font-medium text-amber-600 dark:text-amber-400">{percent(stats.pending, stats.raised)}</span>
+          <span className="ml-2 text-xs font-normal text-ink-400">not closed yet</span>
+        </p>
+        {stats.groups.length > 0 && (
+          <div className="mt-3 grid gap-3 border-t border-ink-100 pt-3 sm:grid-cols-3 sm:gap-0 sm:divide-x sm:divide-ink-100">
+            {stats.groups.map(g => (
+              <div key={g.who} className="sm:px-6 sm:first:pl-0"><div className="max-w-56">
+                <p className={clsx('flex items-baseline justify-between gap-2 text-xs font-semibold', g.tone)}>
+                  <span>{g.who}</span><span className="tabular-nums">{g.count}</span>
+                </p>
+                <dl className="mt-1 space-y-0.5 text-[11px] text-ink-500">
+                  {g.stages.map(s => (
+                    <div key={s.label} className="flex justify-between gap-2">
+                      <dt>{s.label}</dt><dd className="font-semibold tabular-nums text-ink-700">{s.count}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </div></div>
+            ))}
+          </div>
+        )}
       </div>
 
       {stats.total === 0 ? (
@@ -361,19 +409,25 @@ export default function Dashboard() {
           {stats.mine.length > 0 && (
             <div className="neon-card">
               <div className="neon-card-body">
-                <div className="flex items-center justify-between border-b border-ink-200 bg-ink-50 px-4 py-2.5">
+                {/* A bar that opens and closes the list, closed to begin with (the user, 22 Oct: "many is there"). */}
+                <div role="button" tabIndex={0} aria-expanded={open.tickets} onClick={() => flip('tickets')} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip('tickets') } }}
+                  className={clsx('flex cursor-pointer select-none items-center justify-between bg-ink-50 px-4 py-2.5 hover:bg-ink-100', open.tickets && 'border-b border-ink-200')}>
                   <h3 className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
                     <IconChip icon={BellRing} tone="red" /> Waiting on you · Tickets
                   </h3>
-                  <Link
-                    to="/tickets?view=mine"
-                    className="rounded-full bg-cyrixRed-600 px-2.5 py-0.5 text-xs font-semibold tabular-nums text-white hover:bg-cyrixRed-700"
-                    title="Open them on Tickets"
-                  >
-                    {stats.mine.length}
-                  </Link>
+                  <span className="flex items-center gap-2">
+                    <Link
+                      to="/tickets?view=mine"
+                      onClick={e => e.stopPropagation()}
+                      className="rounded-full bg-cyrixRed-600 px-2.5 py-0.5 text-xs font-semibold tabular-nums text-white hover:bg-cyrixRed-700"
+                      title="Open them on Tickets"
+                    >
+                      {stats.mine.length}
+                    </Link>
+                    <ChevronDown className={clsx('h-4 w-4 text-ink-500 transition-transform', open.tickets && 'rotate-180')} />
+                  </span>
                 </div>
-                {statusGroups(stats.mine).map(g => ({ ...g, rows: longestWaitFirst(g.rows) })).map(g => (
+                {open.tickets && statusGroups(stats.mine).map(g => ({ ...g, rows: longestWaitFirst(g.rows) })).map(g => (
                   <section key={g.key} aria-label={`${g.label}: ${g.rows.length}`}>
                     <h4 className="flex items-center gap-2 border-b border-ink-100 bg-ink-50/60 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-label">
                       <span aria-hidden className={clsx('h-2 w-2 rounded-full', TONE_DOT[g.tone])} />
@@ -411,19 +465,25 @@ export default function Dashboard() {
           {prMine.length > 0 && (
             <div className="neon-card">
               <div className="neon-card-body">
-                <div className="flex items-center justify-between border-b border-ink-200 bg-ink-50 px-4 py-2.5">
+                {/* A bar that opens and closes the list, closed to begin with (the user, 22 Oct: "many is there"). */}
+                <div role="button" tabIndex={0} aria-expanded={open.pr} onClick={() => flip('pr')} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip('pr') } }}
+                  className={clsx('flex cursor-pointer select-none items-center justify-between bg-ink-50 px-4 py-2.5 hover:bg-ink-100', open.pr && 'border-b border-ink-200')}>
                   <h3 className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
                     <IconChip icon={ClipboardList} tone="orange" /> Waiting on you · Component requests
                   </h3>
-                  <Link
-                    to="/components?tab=pr"
-                    className="rounded-full bg-cyrixRed-600 px-2.5 py-0.5 text-xs font-semibold tabular-nums text-white hover:bg-cyrixRed-700"
-                    title="Open them on Component requests"
-                  >
-                    {prMine.length}
-                  </Link>
+                  <span className="flex items-center gap-2">
+                    <Link
+                      to="/components?tab=pr"
+                      onClick={e => e.stopPropagation()}
+                      className="rounded-full bg-cyrixRed-600 px-2.5 py-0.5 text-xs font-semibold tabular-nums text-white hover:bg-cyrixRed-700"
+                      title="Open them on Component requests"
+                    >
+                      {prMine.length}
+                    </Link>
+                    <ChevronDown className={clsx('h-4 w-4 text-ink-500 transition-transform', open.pr && 'rotate-180')} />
+                  </span>
                 </div>
-                <ul className="divide-y divide-ink-100">
+                {open.pr && <ul className="divide-y divide-ink-100">
                   {prMine.map(r => {
                     const since = prWaitingSince(r)
                     return (
@@ -439,7 +499,7 @@ export default function Dashboard() {
                       </li>
                     )
                   })}
-                </ul>
+                </ul>}
               </div>
             </div>
           )}
@@ -908,8 +968,28 @@ function WaitedFor({ ticket: t }: { ticket: Ticket }) {
   return <SinceTag label={since.label} at={since.at} />
 }
 
-/** Tailwind sees each class whole: the tile row, four to six across on a computer. */
-const TILE_COLS: Record<number, string> = { 4: 'lg:grid-cols-4', 5: 'lg:grid-cols-5', 6: 'lg:grid-cols-6' }
+/*
+  A pending ticket counted by who has it and what it waits for, in the order a spare goes through them (the user,
+  22 Oct: "with coordinator, then to accept, to dispatch like that").
+*/
+const PENDING_GROUPS: Array<{ who: string; tone: string; stages: Array<{ label: string; statuses: string[] }> }> = [
+  { who: 'With coordinator', tone: 'text-amber-600 dark:text-amber-400', stages: [
+    { label: 'Awaiting approval', statuses: ['awaiting_approval', 'approved', 'not_approved'] },
+    { label: 'To accept', statuses: ['pending_acceptance', 'transferred'] },
+    { label: 'To assign', statuses: ['accepted'] },
+    { label: 'To dispatch', statuses: ['repaired', 'not_repairable', 'service_denied'] },
+  ] },
+  { who: 'With Revive Lab engineer', tone: 'text-indigo-600 dark:text-indigo-400', stages: [
+    { label: 'To start', statuses: ['assigned'] },
+    { label: 'In repair', statuses: ['in_repair'] },
+    { label: 'Waiting for component', statuses: ['parts_requested', 'parts_ordered', 'parts_ready'] },
+  ] },
+  { who: 'With field engineer', tone: 'text-teal-600 dark:text-teal-400', stages: [
+    { label: 'Waiting for PI', statuses: ['pi_requested'] },
+    { label: 'In transit', statuses: ['in_transit_return'] },
+    { label: 'To be fitted', statuses: ['received_back'] },
+  ] },
+]
 
 /** The day something started waiting and how many days that is, the same width on every row. */
 function SinceTag({ label, at }: { label: string; at: string }) {

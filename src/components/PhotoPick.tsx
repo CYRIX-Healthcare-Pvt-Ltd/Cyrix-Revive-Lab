@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { Camera, Images, X } from 'lucide-react'
+import { Camera, Images, Pencil, X } from 'lucide-react'
 import { compressPhoto, humanSize } from '@/lib/media'
 import { Spinner } from '@/components/ui'
 import Lightbox from '@/components/Lightbox'
+import MarkUp from '@/components/MarkUp'
 
 export interface PickedPhoto {
   blob: Blob
@@ -19,8 +20,10 @@ const PHONE = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: 
  * on the photo as the camera took it.
  */
 export default function PhotoPick({
-  photos, onChange, max, noun, size, onOriginal,
+  photos, onChange, max, noun, size, onOriginal, markable = false,
 }: {
+  /** A pen on each photo, to mark it before it is sent (the user, 22 Oct). */
+  markable?: boolean
   photos: PickedPhoto[]
   onChange: (next: PickedPhoto[]) => void
   max: number
@@ -34,6 +37,7 @@ export default function PhotoPick({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [viewing, setViewing] = useState<number | null>(null)
+  const [marking, setMarking] = useState<number | null>(null)
 
   const held = useRef(photos)
   held.current = photos
@@ -63,6 +67,12 @@ export default function PhotoPick({
     onChange(photos.filter((_, j) => j !== i))
   }
 
+  const marked = (i: number, blob: Blob) => {
+    URL.revokeObjectURL(photos[i].preview)
+    onChange(photos.map((p, j) => (j === i ? { blob, preview: URL.createObjectURL(blob) } : p)))
+    setMarking(null)
+  }
+
   const full = photos.length >= max
   return (
     <div className="space-y-2">
@@ -81,6 +91,17 @@ export default function PhotoPick({
               >
                 <X className="h-3 w-3" />
               </button>
+              {markable && (
+                <button
+                  type="button"
+                  onClick={() => setMarking(i)}
+                  className="absolute left-1 top-1 rounded-full bg-black/60 p-1 text-white"
+                  aria-label={`Mark ${noun} ${i + 1}`}
+                  title="Mark it with a pen"
+                >
+                  <Pencil className="h-3 w-3" />
+                </button>
+              )}
               <span className="absolute inset-x-0 bottom-0 bg-black/50 text-center text-[10px] text-white">{humanSize(p.blob.size)}</span>
             </div>
           ))}
@@ -106,6 +127,9 @@ export default function PhotoPick({
       )}
       <input ref={gallery} type="file" accept="image/*" multiple={max > 1} className="hidden"
         onChange={e => { void add(e.target.files); e.target.value = '' }} />
+      {marking !== null && photos[marking] && (
+        <MarkUp src={photos[marking].preview} onSave={blob => marked(marking, blob)} onClose={() => setMarking(null)} />
+      )}
       <Lightbox
         images={photos.map((p, i) => ({ src: p.preview, alt: `${noun} ${i + 1}` }))}
         index={viewing}

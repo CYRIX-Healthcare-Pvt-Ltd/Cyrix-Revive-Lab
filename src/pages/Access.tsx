@@ -767,7 +767,7 @@ const STATUS_WORDS: Record<string, string> = {
   awaiting_approval: 'waiting for approval', approved: 'approved and not sent yet', not_approved: 'not approved',
   pending_acceptance: 'pending acceptance', transferred: 'on its way to another Revive Lab', accepted: 'accepted, with no engineer yet',
   assigned: 'assigned, the repair not accepted yet', in_repair: 'in repair', parts_requested: 'in repair, waiting for a component',
-  parts_ordered: 'in repair, waiting for a component', parts_ready: 'in repair, waiting for a component',
+  parts_ordered: 'in repair, waiting for a component', parts_ready: 'in repair, waiting for a component', pi_requested: 'in repair, waiting for PI parts',
   repaired: 'repaired', not_repairable: 'not repairable', service_denied: 'customer denied service',
   in_transit_return: 'already dispatched', received_back: 'back with the field engineer', closed: 'closed',
 }
