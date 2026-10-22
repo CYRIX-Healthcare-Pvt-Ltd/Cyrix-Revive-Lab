@@ -358,8 +358,8 @@ export function RequestItem({
             </button>
             {canMark && (
               <button type="button" onClick={() => setMarking(true)} title="Mark it with a pen" aria-label="Mark the component photo"
-                className="btn-press absolute -bottom-1.5 -right-1.5 grid h-6 w-6 place-items-center rounded-full border border-ink-200 bg-surface text-ink-700 shadow-sm hover:text-ink-900">
-                <Pencil className="h-3 w-3" />
+                className="btn-press mt-1 inline-flex w-14 items-center justify-center gap-1 rounded-md border border-ink-200 py-0.5 text-[11px] font-medium text-ink-700 hover:bg-ink-50 hover:text-ink-900">
+                <Pencil className="h-3 w-3 text-rose-600" /> Mark
               </button>
             )}
             {marking && <MarkUp src={photo} onSave={saveMarked} onClose={() => setMarking(false)} />}

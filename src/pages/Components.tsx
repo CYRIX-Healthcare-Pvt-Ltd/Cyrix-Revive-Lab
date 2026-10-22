@@ -1,5 +1,5 @@
-import { useMemo, useRef, useState, type ReactNode } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import {
@@ -427,6 +427,7 @@ function StockTab({ labs }: { labs: Array<{ id: string; name: string }> }) {
  * here without opening the ticket.
  */
 function TakenTab() {
+  const linkState = useBack()
   const { me } = useAuth()
   const { data: rows, isLoading } = useStockUses()
   const approve = useApproveUse()
@@ -492,7 +493,7 @@ function TakenTab() {
               return (
                 <li key={u.id} className="px-4 py-3">
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                    <Link to={`/tickets/${u.ticket_code}`} className="font-mono text-sm font-semibold text-ink-900">
+                    <Link to={`/tickets/${u.ticket_code}`} state={linkState} className="font-mono text-sm font-semibold text-ink-900">
                       {u.ticket_code}
                     </Link>
                     <span className="min-w-0 flex-1 text-sm text-ink-800">
@@ -602,6 +603,24 @@ function waitingOn(r: PartRequest, k: StageKey | null): { text: string; late?: b
 }
 
 type ReqPeriod = 'all' | 'month' | 'custom'
+/*
+  Back from a ticket opened here lands where it was clicked (the user, 22 Oct): the ticket's back link returns to this
+  tab, and the Requests filters and the scroll are kept for the browser tab's life.
+*/
+function useBack() {
+  const { pathname, search } = useLocation()
+  return { back: { to: pathname + search, label: 'Components' } }
+}
+
+function useKept<T>(key: string, initial: T) {
+  const name = `revive-components:${key}`
+  const [v, setV] = useState<T>(() => {
+    try { const raw = sessionStorage.getItem(name); return raw === null ? initial : JSON.parse(raw) as T } catch { return initial }
+  })
+  useEffect(() => { try { sessionStorage.setItem(name, JSON.stringify(v)) } catch { /* private window: not kept */ } }, [name, v])
+  return [v, setV] as const
+}
+
 const firstOfMonth = () => { const t = new Date(); return new Date(t.getFullYear(), t.getMonth(), 1).toLocaleDateString('en-CA') }
 const todayIso = () => new Date().toLocaleDateString('en-CA')
 
@@ -609,12 +628,23 @@ function RequestsTab({ desk, engineerOnly }: { desk: boolean; engineerOnly: bool
   const { me } = useAuth()
   const { data: trcs } = useTrcs()
   const { data: requests, isLoading } = usePartRequests()
-  const [period, setPeriod] = useState<ReqPeriod>('all')
-  const [from, setFrom] = useState(firstOfMonth)
-  const [to, setTo] = useState(todayIso)
-  const [kind, setKind] = useState<'all' | 'ticket' | 'stock'>(engineerOnly ? 'stock' : 'all')
-  const [sel, setSel] = useState<StageKey | `${Lane}*` | null>(null)
-  const [openId, setOpenId] = useState<string | null>(null)
+  const [period, setPeriod] = useKept<ReqPeriod>('period', 'all')
+  const [from, setFrom] = useKept('from', firstOfMonth())
+  const [to, setTo] = useKept('to', todayIso())
+  const [kind, setKind] = useKept<'all' | 'ticket' | 'stock'>('kind', engineerOnly ? 'stock' : 'all')
+  const [sel, setSel] = useKept<StageKey | `${Lane}*` | null>('sel', null)
+  const [openId, setOpenId] = useKept<string | null>('open', null)
+  const linkState = useBack()
+  // The scroll, left with the page and found again once the list is in.
+  const scrolled = useRef(false)
+  useEffect(() => () => { try { sessionStorage.setItem('revive-components:scroll', String(window.scrollY)) } catch { /* not kept */ } }, [])
+  useEffect(() => {
+    if (scrolled.current || !requests) return
+    scrolled.current = true
+    let y = 0
+    try { y = Number(sessionStorage.getItem('revive-components:scroll') ?? 0) } catch { /* not kept */ }
+    if (y > 0) requestAnimationFrame(() => window.scrollTo(0, y))
+  }, [requests])
   const [asking, setAsking] = useState(false)
   const [notice, setNotice] = useState<{ kind: 'success' | 'error' | 'warning'; text: string } | null>(null)
   const [billFor, setBillFor] = useState<PartRequest | null>(null)
@@ -775,7 +805,7 @@ function RequestsTab({ desk, engineerOnly }: { desk: boolean; engineerOnly: bool
               return (
                 <li key={r.id}>
                   {r.ticket_id ? (
-                    <Link to={`/tickets/${r.ticket_code}`} className="flex flex-wrap items-start gap-x-3 gap-y-1 px-4 py-3 hover:bg-ink-50">{head}</Link>
+                    <Link to={`/tickets/${r.ticket_code}`} state={linkState} className="flex flex-wrap items-start gap-x-3 gap-y-1 px-4 py-3 hover:bg-ink-50">{head}</Link>
                   ) : (
                     <>
                       <button type="button" onClick={() => setOpenId(id => (id === r.id ? null : r.id))}
@@ -854,6 +884,7 @@ function periodStart(p: Period, now = new Date()): { from: Date | null; to: Date
 }
 
 function PurchasesTab({ labs }: { labs: Array<{ id: string; name: string }> }) {
+  const linkState = useBack()
   const { data: requests, isLoading } = usePartRequests()
   const [period, setPeriod] = useState<Period>('month')
   const [labId, setLabId] = useState('')
@@ -936,7 +967,7 @@ function PurchasesTab({ labs }: { labs: Array<{ id: string; name: string }> }) {
                     <td className="px-4 py-2 text-ink-600">{day(r.purchased_at)}</td>
                     <td className="px-4 py-2">
                       {r.ticket_code
-                        ? <Link to={`/tickets/${r.ticket_code}`} className="font-mono font-semibold text-ink-900">{r.ticket_code}</Link>
+                        ? <Link to={`/tickets/${r.ticket_code}`} state={linkState} className="font-mono font-semibold text-ink-900">{r.ticket_code}</Link>
                         : <span className="font-mono font-semibold text-ink-900">{r.code}</span>}
                     </td>
                     <td className="px-4 py-2 text-ink-900">
@@ -969,6 +1000,7 @@ function SpendTile({ label, amount, count, strong }: { label: string; amount: nu
 /* ------------------------------------------------------------------ */
 
 function ScrapTab() {
+  const linkState = useBack()
   const { data: tickets, isLoading } = useTickets()
   const scrapped = useMemo(() => (tickets ?? []).filter(t => t.closure === 'scrapped')
     .sort((a, b) => Date.parse(b.scrapped_at ?? b.updated_at) - Date.parse(a.scrapped_at ?? a.updated_at)), [tickets])
@@ -999,7 +1031,7 @@ function ScrapTab() {
             <tbody className="divide-y divide-ink-100">
               {scrapped.map(t => (
                 <tr key={t.id} className="hover:bg-ink-50">
-                  {cell(<Link to={`/tickets/${t.code}`} className="font-mono font-semibold text-ink-900">{t.code}</Link>)}
+                  {cell(<Link to={`/tickets/${t.code}`} state={linkState} className="font-mono font-semibold text-ink-900">{t.code}</Link>)}
                   {cell(<>{itemsSummary(t) ?? '—'}{t.equipment_name && <span className="block text-xs text-ink-500">{t.equipment_name}</span>}</>, 'text-ink-900')}
                   {cell(t.facility, 'hidden text-ink-600 md:table-cell')}
                   {cell(t.trc_name, 'hidden text-ink-600 sm:table-cell')}

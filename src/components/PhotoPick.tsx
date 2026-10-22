@@ -91,19 +91,19 @@ export default function PhotoPick({
               >
                 <X className="h-3 w-3" />
               </button>
-              {markable && (
-                <button
-                  type="button"
-                  onClick={() => setMarking(i)}
-                  className="absolute left-1 top-1 rounded-full bg-black/60 p-1 text-white"
-                  aria-label={`Mark ${noun} ${i + 1}`}
-                  title="Mark it with a pen"
-                >
-                  <Pencil className="h-3 w-3" />
-                </button>
-              )}
               <span className="absolute inset-x-0 bottom-0 bg-black/50 text-center text-[10px] text-white">{humanSize(p.blob.size)}</span>
             </div>
+          ))}
+          {/* A button anyone sees, not an icon on the thumbnail (the user, 22 Oct: "why pencil editor didnt come?"). */}
+          {markable && photos.length === 1 && (
+            <button type="button" className="btn-secondary self-center !py-1.5 text-sm" onClick={() => setMarking(0)}>
+              <Pencil className="h-4 w-4 text-rose-600" /> Mark with pen
+            </button>
+          )}
+          {markable && photos.length > 1 && photos.map((p, i) => (
+            <button key={`mark-${p.preview}`} type="button" className="btn-secondary self-center !py-1.5 text-sm" onClick={() => setMarking(i)}>
+              <Pencil className="h-4 w-4 text-rose-600" /> Mark {noun} {i + 1}
+            </button>
           ))}
         </div>
       )}
