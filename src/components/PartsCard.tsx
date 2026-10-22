@@ -26,7 +26,7 @@ import IconChip from '@/components/IconChip'
 import Dialog from '@/components/Dialog'
 import { WhereTag } from '@/components/StockPart'
 import Lightbox from '@/components/Lightbox'
-import PhotoPick, { type PickedPhoto } from '@/components/PhotoPick'
+import PhotoPick, { overPhoto, topIsLight, type PickedPhoto } from '@/components/PhotoPick'
 
 /** '22 Sept, 10:57 AM' — twelve-hour, AM or PM, whatever the device's clock (lib/when). */
 const when = (iso: string | null) => (iso ? dateTime(iso, false) : '')
@@ -291,6 +291,7 @@ export function RequestItem({
   const { me } = useAuth()
   const qc = useQueryClient()
   const [marking, setMarking] = useState(false)
+  const [lightTop, setLightTop] = useState(false)
   const canMark = !!photo && !!me && r.requested_by === me.employee_id
   const saveMarked = async (blob: Blob) => {
     try {
@@ -354,12 +355,12 @@ export function RequestItem({
         {photo && (
           <div className="relative shrink-0">
             <button type="button" onClick={() => onView([photo], 0)} className="block h-14 w-14 overflow-hidden rounded-md border border-ink-200" aria-label="View the component photo">
-              <img src={photo} alt="" className="h-full w-full object-cover" />
+              <img src={photo} alt="" crossOrigin="anonymous" className="h-full w-full object-cover" onLoad={e => setLightTop(topIsLight(e.currentTarget))} />
             </button>
             {canMark && (
               <button type="button" onClick={() => setMarking(true)} title="Mark it with a pen" aria-label="Mark the component photo"
-                className="btn-press mt-1 inline-flex w-14 items-center justify-center gap-1 rounded-md border border-ink-200 py-0.5 text-[11px] font-medium text-ink-700 hover:bg-ink-50 hover:text-ink-900">
-                <Pencil className="h-3 w-3 text-rose-600" /> Mark
+                className={`btn-press absolute left-1 top-1 grid h-6 w-6 place-items-center rounded-full shadow-md hover:scale-105 ${overPhoto(lightTop)}`}>
+                <Pencil className="h-3 w-3" />
               </button>
             )}
             {marking && <MarkUp src={photo} onSave={saveMarked} onClose={() => setMarking(false)} />}
