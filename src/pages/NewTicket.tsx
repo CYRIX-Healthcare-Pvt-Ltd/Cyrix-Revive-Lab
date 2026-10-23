@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import {
@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import {
-  useBemmpProjects, useOverdueReturns, useOverdueReturnsOf, useRaiseTicket, useTickets, useTrcs, useWarehouses, type Person, type Trc,
+  useBemmpProjects, useOverdueReturns, useOverdueReturnsOf, usePhoneOf, useRaiseTicket, useTickets, useTrcs, useWarehouses, type Person, type Trc,
 } from '@/lib/queries'
 import {
   cleanItems, runsTrc, serves, stateLabel,
@@ -111,22 +111,34 @@ export default function NewTicket() {
     profile, and the return address as whatever they put on their last card.
     Only when the fields are still empty: nothing typed is ever overwritten.
   */
+  // The number put in for them, so a field engineer chosen later can take its place; one typed is never replaced.
+  const autoPhone = useRef('')
   useEffect(() => {
     if (!employee) return
     const last = (tickets ?? []).find(t => t.raised_by === employee.id && (t.contact_number || t.return_address))
-    setForm(f => ({
-      ...f,
-      contactNumber: f.contactNumber || employee.official_phone || last?.contact_number || '',
-      returnAddress: f.returnAddress || last?.return_address || '',
-    }))
+    setForm(f => {
+      const phone = f.contactNumber || employee.official_phone || last?.contact_number || ''
+      if (!f.contactNumber) autoPhone.current = phone
+      return { ...f, contactNumber: phone, returnAddress: f.returnAddress || last?.return_address || '' }
+    })
   }, [employee, tickets])
 
   const state = form.state
   const fromWarehouse = atLab && source === 'warehouse'
   // The field engineer the desk names, and whether they are held (rl_0042).
-  const named = atLab && !fromWarehouse ? holder : null
+  const named = (atLab || (!!me?.is_observer && !!me?.may_raise)) && !fromWarehouse ? holder : null
   const { data: namedLate } = useOverdueReturnsOf(named?.id ?? null)
   const namedHeld = !!named && (namedLate?.length ?? 0) > 0
+  // The field engineer the desk or an observer names: their number, from their profile or their last card (the user, 23 Oct).
+  const { data: namedPhone } = usePhoneOf(named?.id ?? null)
+  useEffect(() => {
+    if (!namedPhone) return
+    setForm(f => {
+      if (f.contactNumber && f.contactNumber !== autoPhone.current) return f
+      autoPhone.current = namedPhone
+      return { ...f, contactNumber: namedPhone }
+    })
+  }, [namedPhone])
   const districts = districtsOf(state)
   const bemmpChoices = useMemo(() => (bemmp ?? []).filter(b => b.is_active && serves(b, state)), [bemmp, state])
   // The state's own Revive Labs and the Regional ones — for the desk, only
@@ -150,6 +162,11 @@ export default function NewTicket() {
   // Pvt asks the contract too: AMC, or CAMC — and a CAMC spare is always critical.
   const asksContract = !fromWarehouse && !!bemmpChoices.find(b => b.id === form.bemmpId)?.asks_contract
   const camc = asksContract && contractType === 'CAMC'
+  // OTS / Stock asks no hospital and no photo (rl_0057).
+  const ots = asksContract && contractType === 'OTS'
+  // An observer ticked "May raise tickets" names the field engineer it belongs to, as the desk does (rl_0057).
+  const observerRaise = !atLab && !!me?.is_observer && !!me?.may_raise
+  const namesHolder = atLab || observerRaise
   useEffect(() => { if (!asksContract) setContractType(null) }, [asksContract])
 
   // One Revive Lab to choose from: it is the answer, not a question. The same for a warehouse.
@@ -185,21 +202,21 @@ export default function NewTicket() {
     if (!fromWarehouse && !form.bemmpId) { setError('Choose the BEMMP.'); return }
     if (!far && !trcId) { setError('Choose the Revive Lab the spare is going to.'); return }
     if (fromWarehouse && !warehouseId) { setError('Choose the warehouse.'); return }
-    if (!fromWarehouse && form.hospital.trim().length < 2) { setError('Enter the hospital name.'); return }
+    if (!fromWarehouse && !ots && form.hospital.trim().length < 2) { setError('Enter the hospital name.'); return }
     const items = cleanItems(lines)
     if (items.length === 0) { setError('Enter the spare name.'); return }
     if (items.some(i => i.name.length < 2)) { setError('Enter the name of each spare and accessory.'); return }
     if (form.issue.trim().length < 3) { setError('Describe the issue identified.'); return }
     // One photo of the spare at least, whoever raises it — field engineer or the desk (the user, 24 Sep).
-    if (photos.length === 0) { setError('Add a photo of the spare — one at least.'); return }
+    if (photos.length === 0 && !ots) { setError('Add a photo of the spare — one at least.'); return }
     if (form.returnAddress.trim().length < 5) { setError('Enter the spare return address.'); return }
-    if (atLab && !holder) {
+    if (namesHolder && !holder) {
       setError(fromWarehouse ? 'Name the warehouse in-charge this spare belongs to.' : 'Name the field engineer this spare belongs to.')
       return
     }
     if (namedHeld) { setError(`${named!.full_name} has spares to close first — a ticket cannot be raised in their name yet.`); return }
 
-    if (asksContract && !contractType) { setError('Choose the contract type — AMC or CAMC.'); return }
+    if (asksContract && !contractType) { setError('Choose the contract type — AMC, CAMC or OTS / Stock.'); return }
     if (atLab && !category) { setError('Choose the spare category — A, B or C.'); return }
     if (atLab && !camc && !criticality) { setError('Choose whether the spare is critical or non-critical.'); return }
 
@@ -229,7 +246,7 @@ export default function NewTicket() {
         warehouseId: fromWarehouse ? warehouseId : null,
         trcId: far ? far.trcId : trcId,
         approvalReason: far ? far.reason : null,
-        stakeholderId: atLab ? holder!.id : null,
+        stakeholderId: namesHolder ? holder!.id : null,
         billingSpare: !fromWarehouse && asksBilling ? form.billingSpare === 'yes' : null,
         contractType: asksContract ? contractType : null,
         category: atLab ? category : null,
@@ -324,6 +341,18 @@ export default function NewTicket() {
       )}
 
       <form onSubmit={submit} className="space-y-4">
+        {observerRaise && (
+          <div className="card space-y-3 p-4">
+            <h2 className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
+              <IconChip icon={UserRound} tone="red" /> Whose spare it is
+            </h2>
+            <div>
+              <span className="label">Field engineer it belongs to <Req /></span>
+              <div className="mt-1"><PersonPicker value={holder} onChange={setHolder} /></div>
+              {namedHeld && <CloseFirst tickets={namedLate!} who={named!.full_name} onClose={() => setHolder(null)} />}
+            </div>
+          </div>
+        )}
         {atLab && (
           <div className="card space-y-3 p-4">
             <h2 className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
@@ -485,7 +514,7 @@ export default function NewTicket() {
                 )}
               </label>
             ) : (
-              <Field label="Hospital name" value={form.hospital} onChange={set('hospital')} required />
+              <Field label="Hospital name" value={form.hospital} onChange={set('hospital')} required={!ots} />
             )}
             <Field label="Equipment barcode" value={form.equipmentBarcode} onChange={set('equipmentBarcode')} mono />
             <Field label="Equipment name" value={form.equipmentName} onChange={set('equipmentName')} placeholder="e.g. Ventilator" />
@@ -512,7 +541,7 @@ export default function NewTicket() {
 
           {/* Photos, the video and the voice note, side by side. */}
           <div>
-            <span className="label">Photos and recordings <Req /></span>
+            <span className="label">Photos and recordings {!ots && <Req />}</span>
             <p className="mt-0.5 text-xs text-ink-500">One photo of the spare at least; a video and a voice note if they help.</p>
             <div className="mt-1.5">
               <MediaCapture
@@ -674,6 +703,7 @@ const SOURCE_LOOK: Record<TicketSource, { on: string; off: string; icon: string 
 const CONTRACT_CHOICES: ReadonlyArray<ChoiceOption<ContractType>> = [
   { value: 'AMC', label: 'AMC', hint: 'Annual maintenance contract', tone: 'teal' },
   { value: 'CAMC', label: 'CAMC', hint: 'Comprehensive — always critical', tone: 'fuchsia' },
+  { value: 'OTS', label: 'OTS / Stock', hint: 'One-time service, or stock', tone: 'amber' },
 ]
 
 function Req() {

@@ -11,7 +11,7 @@
  * 10:49 AM.
  */
 import type { Ticket } from './queries'
-import { CRITICALITY_LABEL, ITEM_KIND_LABEL, OUTCOME_LABEL, awaitingManager, statusLook } from './tickets'
+import { CONTRACT_LABEL, CRITICALITY_LABEL, ITEM_KIND_LABEL, OUTCOME_LABEL, awaitingManager, statusLook } from './tickets'
 import { categoryTat, formatSpan } from './tat'
 
 export type Cell = string | number | null
@@ -105,7 +105,7 @@ export const TICKET_COLUMNS: readonly Column[] = [
   { heading: 'Age (days)', width: 10, kind: 'number', value: ageDays },
   // Then the rest of the route card, and the journey.
   { heading: 'BEMMP', width: 9, kind: 'text', value: t => t.bemmp_code },
-  { heading: 'Contract', width: 9, kind: 'text', value: t => t.contract_type },
+  { heading: 'Contract', width: 9, kind: 'text', value: t => (t.contract_type ? CONTRACT_LABEL[t.contract_type] : null) },
   { heading: 'District', width: 16, kind: 'text', value: t => t.district },
   { heading: 'State', width: 14, kind: 'text', value: t => t.state },
   { heading: 'Make', width: 16, kind: 'text', value: t => t.equipment_make },

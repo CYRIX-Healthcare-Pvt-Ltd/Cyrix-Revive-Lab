@@ -224,7 +224,7 @@ export interface TrailEvent {
    * the courier details added after the ticket was raised (rl_0011). Only a
    * move changes the status.
    */
-  kind: 'status' | 'observation' | 'courier' | 'component' | 'eta' | 'classify' | 'handover' | 'review'
+  kind: 'status' | 'observation' | 'courier' | 'component' | 'eta' | 'classify' | 'handover' | 'review' | 'edit'
   /**
    * The button that made the step, where the status alone does not say:
    * used, requested, accepted, declined, purchased, confirmed, cancelled,
@@ -864,6 +864,20 @@ export const useRequestPi = () => useTicketMutation(
 
 export const usePiReceived = () => useTicketMutation(
   (a: { id: string; note?: string }) => rpc('revive_pi_received', { p_ticket_id: a.id, p_note: a.note || null }))
+
+/** The route card corrected by whoever raised it (rl_0057). */
+export const useEditTicket = () => useTicketMutation(
+  (a: {
+    id: string; hospital: string; district: string; sourceTicketNo: string
+    equipmentName: string; equipmentBarcode: string; equipmentMake: string; equipmentModel: string
+    items: TicketItem[]; issue: string; returnAddress: string; contactNumber: string; stakeholderId: string | null
+  }) => rpc('revive_edit_ticket', {
+    p_ticket_id: a.id, p_hospital: a.hospital, p_district: a.district, p_source_ticket_no: a.sourceTicketNo,
+    p_equipment_name: a.equipmentName, p_equipment_barcode: a.equipmentBarcode,
+    p_equipment_make: a.equipmentMake, p_equipment_model: a.equipmentModel,
+    p_items: a.items, p_issue: a.issue, p_return_address: a.returnAddress, p_contact_number: a.contactNumber,
+    p_stakeholder_id: a.stakeholderId,
+  }))
 
 export const useReturnToDesk = () => useTicketMutation(
   (a: { id: string; note: string }) => rpc('revive_return_to_desk', { p_ticket_id: a.id, p_note: a.note }))

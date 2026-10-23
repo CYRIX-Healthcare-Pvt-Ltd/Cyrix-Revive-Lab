@@ -6,7 +6,7 @@ import {
   ArrowLeft, ArrowRightLeft, BadgeCheck, Ban, Boxes, CalendarClock, Camera, CheckCircle2, CircleCheck, CircleX, ClipboardCheck,
   ClipboardList, Factory, Forward, Hand, History as HistoryIcon, PackageCheck, PackagePlus, PackageX, PlayCircle, Receipt, RotateCcw, ScanSearch, Tag,
   Send, ShieldQuestion, ShieldX, ShoppingCart, Signpost, Timer, Trash2, TriangleAlert, Truck, Undo2, UserCheck, UserCog, UserPlus,
-  UserX, Wrench, X, ExternalLink, FileInput, PackageOpen,
+  UserX, Wrench, X, ExternalLink, FileInput, PackageOpen, Pencil,
   type LucideIcon,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
@@ -15,11 +15,11 @@ import {
   useFindPeople, useHandOver, usePhoneOf,
   useDeclineApproval, useDiscard, useDispatch, useHops, useMarkReceived, useMembers, useRequestTransfer, useReroute,
   usePartRequests, useBemmpProjects, useRequestReturn, useRequestPi, usePiReceived, useReturnToDesk, useReturnToLab, useScrap, useSend, useSetClassification, useSetExpectedDate, useStartRepair, useTickets,
-  useTrail, useTrcs, useUpdateCourier,
+  useTrail, useTrcs, useUpdateCourier, useEditTicket,
   type FieldReturn, type PastRound, type Person, type Ticket, type TrailEvent,
 } from '@/lib/queries'
 import {
-  actionsFor, approversOf, awaitingManager, canClassify, itemsSummary, mergeDeskRaise, orList, ordinal, parseTicketCode, roundOf, serves, stateLabel, waitsOnHead,
+  actionsFor, approversOf, awaitingManager, canClassify, canEditCard, cleanItems, CONTRACT_LABEL, itemsSummary, mergeDeskRaise, orList, ordinal, parseTicketCode, roundOf, serves, stateLabel, waitsOnHead,
   CATEGORY_TAT_DAYS, CRITICALITY_LABEL,
   ITEM_KIND_LABEL, OUTCOME_LABEL, REPAIRING, STATUS, TONE_DOT, TONE_SOFT, TONE_TEXT, TRC_KIND_LABEL, statusLook,
   type Action, type Approval, type Criticality, type Outcome, type Proposal, type SpareCategory, type TicketItem,
@@ -43,6 +43,9 @@ import { MediaCapture, revealLength, type PendingPhoto } from '@/components/Atta
 import Lightbox from '@/components/Lightbox'
 import { removeVideoOf } from '@/lib/attachments'
 import { signedLinks } from '@/lib/partFiles'
+import ItemsField, { newLine, type ItemLine } from '@/components/ItemsField'
+import PersonPicker from '@/components/PersonPicker'
+import { districtsOf } from '@/lib/india'
 
 /** "21 Sept 2026, 11:53 AM" — twelve-hour, AM or PM, whatever the device's clock (lib/when). */
 const when = (iso: string | null | undefined) => (iso ? dateTime(iso) : '—')
@@ -102,6 +105,10 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
   const tat = useMemo(() => ticketTat((trail ?? []).filter(e => e.kind === 'status'), t.trc_id), [trail, t.trc_id])
   const summary = itemsSummary(t)
   const items: TicketItem[] = t.items?.length ? t.items : t.spare_name ? [{ kind: 'spare', name: t.spare_name }] : []
+  // Whoever raised it corrects the route card: the field engineer until accepted, the coordinator until dispatched (rl_0057).
+  const editable = canEditCard(t, me)
+  const [editing, setEditing] = useState(false)
+  const [edited, setEdited] = useState(false)
   const approval = t.approval && DECIDING.includes(t.status) ? t.approval : null
   const trcName = (id: string | null) => trail?.find(e => e.trc_id === id)?.trc_name
     ?? hops?.find(h => h.to_trc_id === id)?.to_trc_name ?? (id === t.trc_id ? t.trc_name : '—')
@@ -202,7 +209,18 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
           )}
 
           {/* The route card, in the card's own order. */}
-          <Section title="Service route card" icon={ClipboardList} tone="sky">
+          {edited && <Alert kind="success">Route card saved. The change is in the history.</Alert>}
+          <Section
+            title="Service route card"
+            icon={ClipboardList}
+            tone="sky"
+            action={editable ? (
+              <button type="button" onClick={() => { setEditing(true); setEdited(false) }} className="btn-secondary !py-1 text-sm">
+                <Pencil className="h-3.5 w-3.5 text-sky-600" /> Edit
+              </button>
+            ) : undefined}
+          >
+            {editing && <EditCardDialog ticket={t} items={items} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); setEdited(true) }} />}
             <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
               <Row label="State">{t.state}</Row>
               {/* A warehouse's spare has neither (rl_0020). */}
@@ -211,7 +229,7 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
               {t.billing_spare !== null && t.billing_spare !== undefined && (
                 <Row label="Billing spare">{t.billing_spare ? 'Yes' : 'No'}</Row>
               )}
-              {t.contract_type && <Row label="Contract type">{t.contract_type}</Row>}
+              {t.contract_type && <Row label="Contract type">{CONTRACT_LABEL[t.contract_type]}</Row>}
               {t.billing_estimate !== null && t.billing_estimate !== undefined && (
                 <Row label="Estimated billing">
                   <span className="font-medium tabular-nums">{rupees(Number(t.billing_estimate))}</span>
@@ -656,8 +674,10 @@ function ReturnsCard({ ticket: t }: { ticket: Ticket }) {
 /* ------------------------------------------------------------------ */
 
 function Section({
-  title, icon, tone, iconClassName, children,
+  title, icon, tone, iconClassName, action, children,
 }: {
+  /** At the right of the header: the route card's Edit (rl_0057). */
+  action?: ReactNode
   title: string
   icon: LucideIcon
   tone: Tone
@@ -669,9 +689,110 @@ function Section({
       <div className="flex items-center gap-2.5 border-b border-ink-200 bg-ink-50 px-4 py-2">
         <IconChip icon={icon} tone={tone} iconClassName={iconClassName} />
         <h3 className="text-sm font-semibold text-ink-800">{title}</h3>
+        {action && <div className="ml-auto">{action}</div>}
       </div>
       <div className="p-4">{children}</div>
     </div>
+  )
+}
+
+/**
+ * The route card as it was entered, to put right (rl_0057): the field engineer's own until the Revive Lab accepts
+ * it, the coordinator's until it is dispatched back. Where it goes — state, BEMMP, Revive Lab — stays as raised.
+ */
+function EditCardDialog({ ticket: t, items, onClose, onSaved }: {
+  ticket: Ticket
+  items: TicketItem[]
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const save = useEditTicket()
+  const warehouse = t.source === 'warehouse'
+  const ots = t.contract_type === 'OTS'
+  const [f, setF] = useState({
+    hospital: t.facility === 'OTS / Stock' ? '' : t.facility ?? '', district: t.district ?? '', sourceTicketNo: t.source_ticket_no ?? '',
+    equipmentName: t.equipment_name ?? '', equipmentBarcode: t.equipment_barcode ?? '',
+    equipmentMake: t.equipment_make ?? '', equipmentModel: t.equipment_model ?? '',
+    issue: t.issue ?? '', returnAddress: t.return_address ?? '', contactNumber: t.contact_number ?? '',
+  })
+  const [lines, setLines] = useState<ItemLine[]>(() => items.map(i => ({ ...newLine(i.kind), name: i.name })))
+  const [holder, setHolder] = useState<Person | null>({
+    id: t.stakeholder_id, ecode: t.stakeholder_ecode ?? '', full_name: t.stakeholder_name ?? '', designation: null, department: null,
+  })
+  const [error, setError] = useState<string | null>(null)
+  const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
+    setF(x => ({ ...x, [k]: e.target.value }))
+  const namesHolder = t.raised_as === 'coordinator' && !warehouse
+
+  const send = async () => {
+    setError(null)
+    if (!warehouse && !ots && f.hospital.trim().length < 2) { setError('Enter the hospital name.'); return }
+    if (!warehouse && !f.district) { setError('Choose the district.'); return }
+    const clean = cleanItems(lines)
+    if (clean.length === 0) { setError('Enter the spare name.'); return }
+    if (f.issue.trim().length < 3) { setError('Describe the issue identified.'); return }
+    if (f.returnAddress.trim().length < 5) { setError('Enter the spare return address.'); return }
+    if (namesHolder && !holder) { setError('Name the field engineer this spare belongs to.'); return }
+    try {
+      await save.mutateAsync({ id: t.id, ...f, items: clean, stakeholderId: namesHolder ? holder!.id : null })
+      onSaved()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'That did not save.')
+    }
+  }
+
+  const input = (label: string, k: keyof typeof f, opts: { mono?: boolean; required?: boolean; type?: string; max?: number } = {}) => (
+    <label className="block">
+      <span className="label">{label}{opts.required && <span className="text-cyrixRed-600"> *</span>}</span>
+      <input className={clsx('input mt-1', opts.mono && 'font-mono')} type={opts.type ?? 'text'} value={f[k]} onChange={set(k)} maxLength={opts.max} />
+    </label>
+  )
+
+  return (
+    <Dialog title={`Edit route card · ${t.code}`} icon={<IconChip icon={Pencil} tone="sky" />} onClose={onClose} wide>
+      {namesHolder && (
+        <div>
+          <span className="label">Field engineer it belongs to <span className="text-cyrixRed-600">*</span></span>
+          <div className="mt-1"><PersonPicker value={holder} onChange={setHolder} /></div>
+        </div>
+      )}
+      <div className="grid gap-3 sm:grid-cols-2">
+        {!warehouse && input('Hospital name', 'hospital', { required: !ots, max: 200 })}
+        {!warehouse && (
+          <label className="block">
+            <span className="label">District <span className="text-cyrixRed-600">*</span></span>
+            <select className="input mt-1" value={f.district} onChange={set('district')}>
+              <option value="">Choose…</option>
+              {districtsOf(t.state).map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </label>
+        )}
+        {input('Equipment barcode', 'equipmentBarcode', { mono: true })}
+        {input('Equipment name', 'equipmentName')}
+        {input('Make', 'equipmentMake', { max: 80 })}
+        {input('Model', 'equipmentModel', { max: 80 })}
+        <div className="sm:col-span-2">
+          <ItemsField lines={lines} onChange={setLines} required machine={f.equipmentName} />
+        </div>
+        {!warehouse && input('Ticket ID', 'sourceTicketNo', { mono: true })}
+        {input('Contact number', 'contactNumber', { type: 'tel' })}
+      </div>
+      <label className="block">
+        <span className="label">Issue identified <span className="text-cyrixRed-600">*</span></span>
+        <textarea className="input mt-1" rows={3} value={f.issue} onChange={set('issue')} maxLength={2000} />
+      </label>
+      <label className="block">
+        <span className="label">Spare return address <span className="text-cyrixRed-600">*</span></span>
+        <textarea className="input mt-1" rows={2} value={f.returnAddress} onChange={set('returnAddress')} maxLength={500} />
+      </label>
+      {error && <Alert kind="error">{error}</Alert>}
+      <div className="flex gap-2">
+        <button type="button" className="btn-primary" onClick={send} disabled={save.isPending}>
+          {save.isPending ? <Spinner className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />} Save changes
+        </button>
+        <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
+      </div>
+    </Dialog>
   )
 }
 
@@ -750,6 +871,7 @@ function stepLook(
 ): { title: ReactNode; tone: Tone; icon: LucideIcon } {
   const tone = STATUS[e.status]?.tone ?? 'sky'
   if (e.kind === 'eta') return { title: 'Expected repair date changed', tone: 'indigo', icon: CalendarClock }
+  if (e.kind === 'edit') return { title: 'Route card edited', tone: 'sky', icon: Pencil }
   // The desk's category and criticality, set or changed (rl_0024).
   if (e.kind === 'classify') {
     const n = e.note ?? ''
@@ -1906,7 +2028,7 @@ function ActionForm({
             />
           </label>
           <p className="mt-1.5 text-xs text-ink-600">
-            {t.bemmp_code ?? 'Pvt'}{t.contract_type ? ` · ${t.contract_type}` : ''}: the customer can be asked to pay for this repair
+            {t.bemmp_code ?? 'Pvt'}{t.contract_type ? ` · ${CONTRACT_LABEL[t.contract_type]}` : ''}: the customer can be asked to pay for this repair
             {purchased > 0 ? <> — components purchased for it came to <span className="font-medium tabular-nums">{rupees(purchased)}</span></> : null}.
           </p>
         </div>

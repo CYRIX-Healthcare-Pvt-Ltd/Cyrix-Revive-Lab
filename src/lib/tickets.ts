@@ -753,7 +753,21 @@ export function waitingOnMe(t: TicketLike, me: Me | null | undefined): boolean {
  */
 export type SpareCategory = 'A' | 'B' | 'C'
 export type Criticality = 'critical' | 'non_critical'
-export type ContractType = 'AMC' | 'CAMC'
+export type ContractType = 'AMC' | 'CAMC' | 'OTS'
+
+/** How a contract type reads (rl_0057: OTS / Stock). */
+export const CONTRACT_LABEL: Record<ContractType, string> = { AMC: 'AMC', CAMC: 'CAMC', OTS: 'OTS / Stock' }
+
+/**
+ * Whoever raised a ticket corrects what they entered on the route card: the field engineer until the Revive Lab
+ * accepts it, the coordinator until it is dispatched back (rl_0057; the database says the same).
+ */
+export function canEditCard(t: TicketLike & { raised_as?: 'engineer' | 'coordinator' }, me: Me | null | undefined): boolean {
+  if (!me || t.raised_by !== me.employee_id) return false
+  return t.raised_as === 'coordinator'
+    ? !['in_transit_return', 'received_back', 'closed'].includes(t.status)
+    : ['awaiting_approval', 'approved', 'not_approved', 'pending_acceptance'].includes(t.status)
+}
 
 export const SPARE_CATEGORIES: readonly SpareCategory[] = ['A', 'B', 'C']
 
