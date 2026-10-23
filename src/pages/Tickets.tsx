@@ -9,7 +9,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useMyTeam, useTickets, type Ticket } from '@/lib/queries'
 import { branchOf, indexTeam, ownerOfTicket } from '@/lib/team'
 import {
-  STATUS, STATUS_ORDER, TONE_CLASS, TONE_DOT, TONE_EDGE, TONE_TEXT, awaitingManager, canRaise, itemsSummary, parseTicketCode, statusGroups, ticketTabs,
+  STATUS, STATUS_ORDER, TONE_CLASS, TONE_DOT, TONE_EDGE, TONE_TEXT, awaitingManager, canRaise, isMyTicket, itemsSummary, parseTicketCode, scopeTabs, splitsByScope, statusGroups, ticketTabs, type TicketScope,
   type TabId, type TicketStatus, type Tone,
 } from '@/lib/tickets'
 import { EmptyState, PageLoader, ReturnedTag, SectorTag, SortHeader, Spinner, StatusBadge, TransferTag, WarehouseChip } from '@/components/ui'
@@ -123,7 +123,18 @@ export default function Tickets() {
 
   // The tabs for what this person does (tickets.ts); an old link to a tab
   // they do not have lands on All.
-  const tabs = useMemo(() => ticketTabs(me), [me])
+  // A Revive Lab manager's two lists, My tickets and Team tickets, each with its own tabs (the user, 23 Oct).
+  const split = splitsByScope(me)
+  const scope: TicketScope = split && params.get('scope') === 'team' ? 'team' : 'mine'
+  const inScope = useMemo(
+    () => (split && scope === 'mine' ? (tickets ?? []).filter(t => isMyTicket(t, me)) : tickets ?? []),
+    [tickets, split, scope, me],
+  )
+  const scopeCounts = useMemo(() => ({
+    mine: split ? (tickets ?? []).filter(t => isMyTicket(t, me)).length : 0,
+    team: (tickets ?? []).length,
+  }), [tickets, split, me])
+  const tabs = useMemo(() => (split ? scopeTabs(me, scope) : ticketTabs(me)), [me, split, scope])
   const asked = params.get('view') as TabId | null
   const tab = tabs.find(x => x.id === asked) ?? tabs[0]
   const view = tab.id
@@ -162,15 +173,14 @@ export default function Tickets() {
   const onSort = (key: SortKey) => setSort(key, key === sortKey ? !asc : FIRST_ASC[key])
 
   const counts = useMemo(() => {
-    const all = tickets ?? []
-    return Object.fromEntries(tabs.map(x => [x.id, all.filter(x.match).length])) as Record<TabId, number>
-  }, [tickets, tabs])
+    return Object.fromEntries(tabs.map(x => [x.id, inScope.filter(x.match).length])) as Record<TabId, number>
+  }, [inScope, tabs])
 
   // This tab's tickets that pass the search: what every filter chooses among.
   const searched = useMemo(() => {
     const needle = q.trim().toLowerCase()
     const asNumber = parseTicketCode(q)
-    let rows = (tickets ?? []).filter(tab.match)
+    let rows = inScope.filter(tab.match)
     if (needle) {
       rows = rows.filter(t =>
         (asNumber !== null && t.number === asNumber)
@@ -183,7 +193,7 @@ export default function Tickets() {
           .some(v => (v ?? '').toLowerCase().includes(needle)))
     }
     return rows
-  }, [tickets, tab, q])
+  }, [inScope, tab, q])
 
   /*
     The filters offer only what is there, each with how many it would show,
@@ -340,6 +350,24 @@ export default function Tickets() {
           </Link>
         )}
       </div>
+
+      {split && (
+        <div className="inline-flex rounded-lg border border-ink-200 bg-ink-50 p-0.5" role="group" aria-label="Whose tickets">
+          {([['mine', 'My tickets'], ['team', 'Team tickets']] as const).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={scope === id}
+              onClick={() => setParams(p => { if (id === 'team') p.set('scope', 'team'); else p.delete('scope'); p.delete('view'); return p }, { replace: true })}
+              className={clsx('inline-flex items-center gap-2 rounded-md px-4 py-1.5 text-sm font-medium transition-colors',
+                scope === id ? 'bg-surface text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800')}
+            >
+              {label}
+              <span className={clsx('tabular-nums', scope === id ? 'text-ink-500' : 'text-ink-400')}>{scopeCounts[id]}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="card overflow-hidden">
         <div className="border-b border-ink-200 bg-ink-50">

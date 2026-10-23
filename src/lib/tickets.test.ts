@@ -3,6 +3,7 @@ import {
   ticketCode, parseTicketCode, actionsFor, awaitingManager, runsTrc, managesTrc, observesOnly, waitingOnMe, cleanItems, itemsSummary,
   partsWaitingOn, partOpen, requestsStockAt, stockRequestsWaitingOn, ticketTabs, serves, approversOf, orList, statusLook, canRaise, partActor, partStatusLook,
   ITEM_KIND_LABEL, PART_PROGRESS, PART_STATUS, poLabel, canClassify, statusGroups, roundOf, ordinal, mergeDeskRaise,
+  scopeTabs, splitsByScope, isMyTicket,
   type Me, type TicketLike,
 } from './tickets'
 
@@ -737,5 +738,21 @@ describe('component requests for the stock (rl_0044)', () => {
     expect(stockRequestsWaitingOn(rs, me({ is_coordinator: true, trc_ids: [REG] }))).toBe(2)
     expect(stockRequestsWaitingOn(rs, me({ is_purchase: true, trc_ids: [REG] }))).toBe(1)
     expect(stockRequestsWaitingOn(rs, me({ is_engineer: true, trc_ids: [REG] }))).toBe(0)
+  })
+})
+
+describe('a Revive Lab manager’s My tickets and Team tickets (the user, 23 Oct)', () => {
+  const manager = me({ employee_id: 'mgr', is_manager: true, is_engineer: true, trc_ids: [REG] })
+  it('splits for a manager only, not a manager who is an admin too', () => {
+    expect(splitsByScope(manager)).toBe(true)
+    expect(splitsByScope(me({ is_manager: true, is_admin: true }))).toBe(false)
+    expect(splitsByScope(me({ is_coordinator: true }))).toBe(false)
+  })
+  it('My tickets are theirs: repairing it, or waiting on them; Team tickets have no Waiting on you', () => {
+    expect(isMyTicket(ticket({ status: 'in_repair', engineer_id: 'mgr' }), manager)).toBe(true)
+    expect(isMyTicket(ticket({ status: 'in_repair', engineer_id: 'eng' }), manager)).toBe(false)
+    expect(isMyTicket(ticket({ status: 'not_repairable', engineer_id: 'eng' }), manager)).toBe(true)
+    expect(scopeTabs(manager, 'mine').map(x => x.label)).toEqual(['All', 'Waiting on you', 'In repair', 'Assigned', 'Closed'])
+    expect(scopeTabs(manager, 'team').map(x => x.label)).toEqual(['All', 'Not assigned', 'In repair', 'Component pending', 'Closed'])
   })
 })

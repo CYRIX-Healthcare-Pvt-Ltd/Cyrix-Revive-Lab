@@ -867,6 +867,47 @@ export function ticketTabs(me: Me | null | undefined): TicketTab[] {
   ]
 }
 
+/*
+  A Revive Lab manager — not an admin too — sees the list in two (the user, 23 Oct): My tickets, what is theirs to do
+  or touch, and Team tickets, everything at their Revive Labs. Nothing waits on them in the team's, so it has no
+  Waiting on you; it has the desk's view of the work instead.
+*/
+export type TicketScope = 'mine' | 'team'
+
+export const splitsByScope = (me: Me | null | undefined): boolean => !!me && me.is_manager && !me.is_admin && !me.is_sw_admin
+
+/** Theirs: repairing it, raised it, sent it, or waiting on them. */
+export function isMyTicket(t: TicketLike, me: Me | null | undefined): boolean {
+  if (!me) return false
+  const id = me.employee_id
+  return t.engineer_id === id || t.raised_by === id || t.stakeholder_id === id || waitingOnMe(t, me)
+}
+
+export function scopeTabs(me: Me | null | undefined, scope: TicketScope): TicketTab[] {
+  const closed = (t: TicketLike) => t.status === 'closed'
+  const all: TicketTab = { id: 'all', label: 'All', tone: 'slate', match: () => true }
+  const done: TicketTab = { id: 'closed', label: 'Closed', tone: 'green', match: closed }
+  if (scope === 'team') {
+    return [
+      all,
+      { id: 'unassigned', label: 'Not assigned', tone: 'red', match: t => ['pending_acceptance', 'transferred', 'accepted'].includes(t.status) },
+      { id: 'repair', label: 'In repair', tone: 'indigo', match: t => t.status === 'assigned' || REPAIRING.includes(t.status) },
+      { id: 'parts', label: 'Component pending', tone: 'orange', match: t => PARTS_STATUSES.includes(t.status) },
+      done,
+    ]
+  }
+  const waiting: TicketTab = { id: 'mine', label: 'Waiting on you', tone: 'rose', match: t => waitingOnMe(t, me) }
+  if (me?.is_engineer) {
+    return [
+      all, waiting,
+      { id: 'repair', label: 'In repair', tone: 'indigo', match: t => REPAIRING.includes(t.status) },
+      { id: 'assigned', label: 'Assigned', tone: 'sky', match: t => t.status === 'assigned' },
+      done,
+    ]
+  }
+  return [all, waiting, { id: 'open', label: 'Open', tone: 'amber', match: t => !closed(t) }, done]
+}
+
 /**
  * Who raises tickets: whoever sends spares in. A Revive Lab's own engineer
  * repairs what arrives, its manager approves, Purchase buys for it and an
