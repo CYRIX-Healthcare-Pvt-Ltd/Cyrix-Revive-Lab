@@ -19,7 +19,7 @@ import {
 import { signedLinks } from '@/lib/partFiles'
 import { readStockGrid, stockDiff, STOCK_SHEET_HEADINGS, type SheetRead, type StockDiff } from '@/lib/stockSheet'
 import { PartHistoryDialog, StockPartDialog, UploadMenu, WhereTag } from '@/components/StockPart'
-import { Alert, EmptyState, PageLoader, Spinner, StatTile } from '@/components/ui'
+import { Alert, EmptyState, PageLoader, Spinner, StatTile, useError } from '@/components/ui'
 import IconChip from '@/components/IconChip'
 import Lightbox from '@/components/Lightbox'
 import { RequestPartForm } from '@/components/PartForms'
@@ -175,6 +175,7 @@ function StockTab({ labs }: { labs: Array<{ id: string; name: string }> }) {
   /** existing: what to do with part numbers already in stock that the sheet says otherwise about. */
   const apply = async (existing: 'replace' | 'skip') => {
     if (!pending) return
+    setNotice(null)
     try {
       const res = await upload.mutateAsync({ trcId: labId, rows: pending.read.rows, existing })
       setPending(null)
@@ -207,7 +208,7 @@ function StockTab({ labs }: { labs: Array<{ id: string; name: string }> }) {
 
   return (
     <div className="space-y-4">
-      {notice && <Alert kind={notice.kind}>{notice.text}</Alert>}
+      {notice && !(pending && notice.kind === 'error') && <Alert kind={notice.kind}>{notice.text}</Alert>}
 
       {pending && (
         <div className="card space-y-3 p-4">
@@ -263,6 +264,7 @@ function StockTab({ labs }: { labs: Array<{ id: string; name: string }> }) {
             </div>
           )}
           <p className="text-xs text-ink-500">A part replaced takes the sheet&rsquo;s count. What engineers took since the sheet was counted is not added back.</p>
+          {notice?.kind === 'error' && <Alert kind="error">{notice.text}</Alert>}
           <div className="flex flex-wrap gap-2">
             {pending.diff.changed.length > 0 ? (
               <>
@@ -441,13 +443,14 @@ function TakenTab() {
   )
   const waiting = (rows ?? []).filter(u => u.status === 'requested').length
 
+  const [refused, setRefused] = useState<{ id: string; text: string } | null>(null)
   const take = async (u: StockUseRow) => {
-    setNotice(null)
+    setNotice(null); setRefused(null)
     try {
       await approve.mutateAsync({ id: u.id })
       setNotice({ kind: 'success', text: `${u.qty} × ${u.part_no} off the stock for ${u.ticket_code}.` })
     } catch (err) {
-      setNotice({ kind: 'error', text: err instanceof Error ? err.message : 'That did not go through.' })
+      setRefused({ id: u.id, text: err instanceof Error ? err.message : 'That did not go through.' })
     }
   }
 
@@ -520,6 +523,7 @@ function TakenTab() {
                       </button>
                     </div>
                   )}
+                  {refused?.id === u.id && <div className="mt-2"><Alert kind="error">{refused.text}</Alert></div>}
                 </li>
               )
             })}
@@ -647,6 +651,7 @@ function RequestsTab({ desk, engineerOnly }: { desk: boolean; engineerOnly: bool
   }, [requests])
   const [asking, setAsking] = useState(false)
   const [notice, setNotice] = useState<{ kind: 'success' | 'error' | 'warning'; text: string } | null>(null)
+  const [askError, setAskError, askNth] = useError()
   const [billFor, setBillFor] = useState<PartRequest | null>(null)
   const [orderFor, setOrderFor] = useState<PartRequest | null>(null)
   const [stockFor, setStockFor] = useState<PartRequest | null>(null)
@@ -688,14 +693,15 @@ function RequestsTab({ desk, engineerOnly }: { desk: boolean; engineerOnly: bool
       {asking && (
         <RequestPartForm
           labs={askAt}
-          onCancel={() => setAsking(false)}
-          onError={text => setNotice({ kind: 'error', text })}
+          onCancel={() => { setAsking(false); setAskError(null) }}
+          onError={setAskError}
           onDone={(text, warning) => {
-            setAsking(false)
+            setAsking(false); setAskError(null)
             setNotice(warning ? { kind: 'warning', text: `${text} ${warning}` } : { kind: 'success', text })
           }}
         />
       )}
+      {asking && askError && <Alert key={askNth} kind="error">{askError}</Alert>}
 
       <div className="flex flex-wrap items-center gap-2">
         <div className="inline-flex overflow-hidden rounded-lg border border-ink-200">

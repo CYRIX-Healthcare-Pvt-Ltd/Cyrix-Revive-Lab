@@ -23,7 +23,7 @@ import clsx from 'clsx'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Building2, Hourglass, Layers, Pencil, Plus, RotateCcw, Search, Trash2, UserPlus, Users, Warehouse, X } from 'lucide-react'
 import { supabase, friendlyError } from '@/lib/supabase'
-import { Alert, EmptyState, Spinner, StatTile } from '@/components/ui'
+import { Alert, EmptyState, Spinner, StatTile, useError } from '@/components/ui'
 
 type TrcKind = 'regional' | 'project'
 const KIND_LABEL: Record<TrcKind, string> = { regional: 'Regional Revive Lab', project: 'Project Revive Lab' }
@@ -173,7 +173,7 @@ export function ReviveLabAccess() {
   const [editing, setEditing] = useState<Draft | null>(null)
   const [adding, setAdding] = useState(false)
   const [q, setQ] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError, nth] = useError()
   const [notice, setNotice] = useState<string | null>(null)
   const [part, setPart] = useState<Part>('people')
 
@@ -253,7 +253,7 @@ export function ReviveLabAccess() {
         ))}
       </div>
 
-      {part === 'people' && error && <Alert kind="error">{error}</Alert>}
+      {part === 'people' && error && !editing && <Alert key={nth} kind="error">{error}</Alert>}
       {part === 'people' && notice && <Alert kind="success">{notice}</Alert>}
 
       {part === 'people' && <div className="card overflow-hidden">
@@ -293,7 +293,7 @@ export function ReviveLabAccess() {
 
         {editing && !(members ?? []).some(m => m.employee_id === editing.employee_id) && (
           <div className="border-b border-ink-200 p-3">
-            <EditRow draft={editing} trcs={trcs ?? []} busy={saveMember.isPending}
+            <EditRow draft={editing} trcs={trcs ?? []} busy={saveMember.isPending} error={error} nth={nth}
               onChange={setEditing} onSave={() => save(editing)} onCancel={() => setEditing(null)} />
           </div>
         )}
@@ -321,7 +321,7 @@ export function ReviveLabAccess() {
                 {shown.map(m => editing?.employee_id === m.employee_id ? (
                   <tr key={m.employee_id}>
                     <td colSpan={canEdit ? 6 : 5} className="p-3">
-                      <EditRow draft={editing} trcs={trcs ?? []} busy={saveMember.isPending}
+                      <EditRow draft={editing} trcs={trcs ?? []} busy={saveMember.isPending} error={error} nth={nth}
                         onChange={setEditing} onSave={() => save(editing)} onCancel={() => setEditing(null)}
                         onRemove={m.employee_id === me?.employee_id ? undefined : () => save(editing, true)} />
                     </td>
@@ -489,7 +489,7 @@ function BemmpTable({ canEdit }: { canEdit: boolean }) {
   const [adding, setAdding] = useState('')
   const [addingState, setAddingState] = useState<string | null | undefined>(undefined)
   const [editing, setEditing] = useState<{ id: string; code: string; state: string | null | undefined; head: string; headName: string } | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError, nth] = useError()
   const setHead = useMutation({
     mutationFn: (h: { id: string; ecode: string }) => call('revive_set_bemmp_head', { p_id: h.id, p_ecode: h.ecode || null }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['revive', 'bemmp'] }),
@@ -529,7 +529,6 @@ function BemmpTable({ canEdit }: { canEdit: boolean }) {
         <span className="text-xs text-ink-400">· the programmes a route card can name</span>
       </div>
       <div className="space-y-3 p-4">
-        {error && <Alert kind="error">{error}</Alert>}
         {isLoading ? <Spinner className="h-4 w-4 text-ink-400" /> : (
           <div className="flex flex-wrap gap-2">
             {(rows ?? []).map(b => editing?.id === b.id ? (
@@ -585,6 +584,7 @@ function BemmpTable({ canEdit }: { canEdit: boolean }) {
             ))}
           </div>
         )}
+        {error && <Alert key={nth} kind="error">{error}</Alert>}
         {canEdit && (
           <form onSubmit={add} className="flex flex-wrap items-center gap-2">
             <input
@@ -640,7 +640,7 @@ function WarehouseTable({ canEdit }: { canEdit: boolean }) {
   const [adding, setAdding] = useState('')
   const [addingState, setAddingState] = useState<string | null | undefined>(undefined)
   const [editing, setEditing] = useState<{ id: string; name: string; state: string | null | undefined } | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError, nth] = useError()
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -670,7 +670,6 @@ function WarehouseTable({ canEdit }: { canEdit: boolean }) {
         <span className="text-xs text-ink-400">· where a defective spare can come from, besides a hospital</span>
       </div>
       <div className="space-y-3 p-4">
-        {error && <Alert kind="error">{error}</Alert>}
         {isLoading ? <Spinner className="h-4 w-4 text-ink-400" /> : (rows ?? []).length === 0 ? (
           <p className="text-sm text-ink-500">
             None yet. {canEdit ? 'Add each warehouse once;' : 'An admin adds each warehouse once;'} a coordinator then chooses it on the route card.
@@ -729,6 +728,7 @@ function WarehouseTable({ canEdit }: { canEdit: boolean }) {
             ))}
           </div>
         )}
+        {error && <Alert key={nth} kind="error">{error}</Alert>}
         {canEdit && (
           <form onSubmit={add} className="flex flex-wrap items-center gap-2">
             <input
@@ -858,7 +858,7 @@ function LimitRow({ row, fresh = false, onDone }: { row: CloseLimit; fresh?: boo
   const qc = useQueryClient()
   const [transit, setTransit] = useState(row.in_transit_days?.toString() ?? '')
   const [back, setBack] = useState(row.received_back_days?.toString() ?? '')
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError, nth] = useError()
   const [notice, setNotice] = useState<string | null>(null)
   const number = (v: string) => (v.trim() === '' ? null : Number(v))
   const fits = (n: number | null) => n === null || (Number.isInteger(n) && n >= 1 && n <= 90)
@@ -939,7 +939,7 @@ function LimitRow({ row, fresh = false, onDone }: { row: CloseLimit; fresh?: boo
           )}
         </div>
       )}
-      {error && <div className="mt-2"><Alert kind="error">{error}</Alert></div>}
+      {error && <div className="mt-2"><Alert key={nth} kind="error">{error}</Alert></div>}
       {notice && !changed && <p className="mt-2 text-xs font-medium text-green-700">{notice}</p>}
     </div>
   )
@@ -964,7 +964,7 @@ function ReopenTicket() {
   const [typed, setTyped] = useState('')
   const [found, setFound] = useState<{ id: string; code: string; facility: string; status: string; engineer: string | null } | null>(null)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError, nth] = useError()
   const [notice, setNotice] = useState<string | null>(null)
 
   const number = ticketNumberOf(typed)
@@ -1016,7 +1016,6 @@ function ReopenTicket() {
         <span className="text-xs text-ink-400">· software administrator only</span>
       </div>
       <div className="space-y-3 p-4">
-        {error && <Alert kind="error">{error}</Alert>}
         {notice && <Alert kind="success">{notice}</Alert>}
         <form
           className="flex flex-wrap items-end gap-2"
@@ -1052,6 +1051,7 @@ function ReopenTicket() {
             </div>
           </div>
         )}
+        {error && <Alert key={nth} kind="error">{error}</Alert>}
       </div>
     </div>
   )
@@ -1099,7 +1099,7 @@ function LiveFloorRoles() {
   })
   const [picked, setPicked] = useState<Set<string> | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError, nth] = useError()
   const current = picked ?? new Set(saved ?? [])
   const save = useMutation({
     mutationFn: async (roles: string[]) => {
@@ -1122,7 +1122,7 @@ function LiveFloorRoles() {
         <span className="text-xs text-ink-400">· software administrator only</span>
       </div>
       <div className="space-y-3 p-4">
-        {error && <Alert kind="error">{error}</Alert>}
+        {error && <Alert key={nth} kind="error">{error}</Alert>}
         {notice && <Alert kind="success">{notice}</Alert>}
         {isLoading ? <Spinner className="h-4 w-4 text-ink-400" /> : (
           <div className="flex flex-wrap gap-2">
@@ -1157,7 +1157,7 @@ function DeleteTicket() {
   const [typed, setTyped] = useState('')
   const [found, setFound] = useState<{ kind: 'ticket' | 'pr'; id: string; code: string; facility: string; status: string } | null>(null)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError, nth] = useError()
   const [notice, setNotice] = useState<string | null>(null)
 
   const pr = prNumberOf(typed)
@@ -1227,7 +1227,6 @@ function DeleteTicket() {
         <span className="text-xs text-ink-400">· software administrator only</span>
       </div>
       <div className="space-y-3 p-4">
-        {error && <Alert kind="error">{error}</Alert>}
         {notice && <Alert kind="success">{notice}</Alert>}
         <form
           className="flex flex-wrap items-end gap-2"
@@ -1265,6 +1264,7 @@ function DeleteTicket() {
             </div>
           </div>
         )}
+        {error && <Alert key={nth} kind="error">{error}</Alert>}
       </div>
     </div>
   )
@@ -1290,8 +1290,10 @@ function Check({ checked, onChange, label, tone }: {
   )
 }
 
-function EditRow({ draft, trcs, busy, onChange, onSave, onCancel, onRemove }: {
+function EditRow({ draft, trcs, busy, error, nth, onChange, onSave, onCancel, onRemove }: {
   draft: Draft; trcs: Trc[]; busy: boolean
+  /** Why Save was refused, said in the row above its button — not at the top of a long list (the user, 24 Oct). */
+  error: string | null; nth: number
   onChange: (d: Draft) => void; onSave: () => void; onCancel: () => void; onRemove?: () => void
 }) {
   const toggleTrc = (id: string, on: boolean) =>
@@ -1360,6 +1362,7 @@ function EditRow({ draft, trcs, busy, onChange, onSave, onCancel, onRemove }: {
         </p>
       )}
 
+      {error && <Alert key={nth} kind="error">{error}</Alert>}
       <div className="flex flex-wrap gap-2">
         <button type="button" className="btn-primary" onClick={onSave} disabled={busy || observerNeedsLab}>
           {busy && <Spinner className="h-4 w-4" />} Save
@@ -1438,7 +1441,7 @@ function TrcTable({ trcs, canEdit, members }: { trcs: Trc[]; canEdit: boolean; m
     onSuccess: () => qc.invalidateQueries({ queryKey: ['revive'] }),
   })
   const [draft, setDraft] = useState<TrcDraft | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError, nth] = useError()
 
   const staff = (id: string) => members.filter(m => m.trc_ids.includes(id))
 
@@ -1464,7 +1467,7 @@ function TrcTable({ trcs, canEdit, members }: { trcs: Trc[]; canEdit: boolean; m
         )}
       </div>
 
-      {error && <div className="p-3"><Alert kind="error">{error}</Alert></div>}
+      {error && <div className="p-3"><Alert key={nth} kind="error">{error}</Alert></div>}
 
       {draft && (
         <div className="flex flex-wrap items-end gap-2 border-b border-ink-200 p-3">

@@ -6,7 +6,7 @@
  * as one product. Only the appraisal-specific pieces (score pills, bands)
  * are left behind; nothing here has been restyled.
  */
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import { AlertCircle, ArrowDown, ArrowUp, CheckCircle2, ChevronsUpDown, Forward, Info, Loader2, RotateCcw, Warehouse } from 'lucide-react'
 import { STATUS, TONE_CLASS, statusLook, type Closure, type Proposal, type TicketStatus } from '@/lib/tickets'
@@ -80,7 +80,7 @@ export function Alert({
       className={clsx(
         'flex gap-3 rounded-lg border p-3.5 text-sm',
         styles,
-        kind === 'error' && 'sticky top-16 z-20 shadow-lg',
+        kind === 'error' && 'animate-pop-in sticky top-16 z-20 shadow-lg',
       )}
     >
       <Icon className="mt-0.5 h-4.5 w-4.5 shrink-0" />
@@ -90,6 +90,21 @@ export function Alert({
       </div>
     </div>
   )
+}
+
+/**
+ * What stops a button, said again on every press (the user, 24 Oct): the same message twice would otherwise change
+ * nothing on the page, and a second press looks ignored. `nth` counts the refusals — given as the error Alert's key,
+ * the message pops in and is scrolled to each time. Shown beside the button that was pressed, never only at the top.
+ */
+export function useError() {
+  const [error, set] = useState<string | null>(null)
+  const [nth, setNth] = useState(0)
+  const setError = useCallback((text: string | null) => {
+    set(text)
+    if (text) setNth(n => n + 1)
+  }, [])
+  return [error, setError, nth] as const
 }
 
 export function EmptyState({

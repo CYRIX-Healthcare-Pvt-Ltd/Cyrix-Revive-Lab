@@ -16,7 +16,7 @@ import Choices, { type ChoiceOption } from '@/components/Choices'
 import { ClassificationFields } from '@/components/Classification'
 import { STATES, districtsOf } from '@/lib/india'
 import { uploadAttachment, type Slot } from '@/lib/attachments'
-import { Alert, PageLoader, Spinner, StatusBadge } from '@/components/ui'
+import { Alert, PageLoader, Spinner, StatusBadge, useError } from '@/components/ui'
 import { supabase } from '@/lib/supabase'
 import { dateTime } from '@/lib/when'
 import PersonPicker from '@/components/PersonPicker'
@@ -101,7 +101,7 @@ export default function NewTicket() {
   const [photos, setPhotos] = useState<PendingPhoto[]>([])
   const [video, setVideo] = useState<Blob | null>(null)
   const [voice, setVoice] = useState<Blob | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError, nth] = useError()
   const [stage, setStage] = useState<'idle' | 'raising' | 'uploading'>('idle')
   // The open tickets that look like this one, found before a coordinator raises it (rl_0053).
   const [dupes, setDupes] = useState<Similar[] | null>(null)
@@ -310,8 +310,6 @@ export default function NewTicket() {
           The spare&rsquo;s route card. It gets the next RL number when you raise it.
         </p>
       </div>
-
-      {error && <Alert kind="error">{error}</Alert>}
 
       {dupes && (
         <Dialog title="Already in Revive Lab?" icon={<IconChip icon={Copy} tone="amber" />} onClose={() => setDupes(null)} wide>
@@ -577,6 +575,8 @@ export default function NewTicket() {
           </div>
         </div>
 
+        {/* What stops the ticket, said beside Raise ticket — not at the top of a long form (the user, 24 Oct). */}
+        {error && <Alert key={nth} kind="error">{error}</Alert>}
         <div className="flex flex-wrap items-center justify-end gap-2">
           {far && (
             <p className="w-full text-xs text-ink-500 sm:mr-auto sm:w-auto">
@@ -650,7 +650,7 @@ function AskAnotherState({ labs, headName, initial, onClose, onChoose }: {
 }) {
   const [trcId, setTrcId] = useState(initial?.trcId ?? (labs.length === 1 ? labs[0].id : ''))
   const [reason, setReason] = useState(initial?.reason ?? '')
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError, nth] = useError()
 
   const choose = () => {
     if (!trcId) { setError('Choose the Revive Lab.'); return }
@@ -682,7 +682,7 @@ function AskAnotherState({ labs, headName, initial, onClose, onChoose }: {
           placeholder="e.g. Needs FPGA rework that only they do"
         />
       </label>
-      {error && <Alert kind="error">{error}</Alert>}
+      {error && <Alert key={nth} kind="error">{error}</Alert>}
       <div className="flex gap-2">
         <button type="button" className="btn-primary" onClick={choose}>
           <ShieldQuestion className="h-4 w-4" /> Choose this Revive Lab

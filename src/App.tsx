@@ -3,7 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { Grid2x2, LogIn, Wrench } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { supabase, ecodeToEmail, friendlyError } from '@/lib/supabase'
-import { Alert, PageLoader, Spinner } from '@/components/ui'
+import { Alert, PageLoader, Spinner, useError } from '@/components/ui'
 import Shell from '@/components/Shell'
 import { Logo } from '@/components/Logo'
 import { lazyRoute } from '@/lib/lazyRoute'
@@ -95,7 +95,7 @@ function SignInHere() {
   const [ecode, setEcode] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError, nth] = useError()
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -114,7 +114,6 @@ function SignInHere() {
       <h1 className="text-lg font-semibold text-ink-900">Revive Lab</h1>
       <p className="text-sm text-ink-500">Sign in with your employee code.</p>
       <form onSubmit={submit} className="space-y-3 text-left">
-        {error && <Alert kind="error">{error}</Alert>}
         <label className="block">
           <span className="label">Employee code</span>
           <input className="input mt-1" value={ecode} onChange={e => setEcode(e.target.value)} autoComplete="username" required />
@@ -123,6 +122,7 @@ function SignInHere() {
           <span className="label">Password</span>
           <input className="input mt-1" type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" required />
         </label>
+        {error && <Alert key={nth} kind="error">{error}</Alert>}
         <button type="submit" className="btn-primary w-full justify-center" disabled={busy}>
           {busy ? <Spinner className="h-4 w-4" /> : <LogIn className="h-4 w-4" />} Sign in
         </button>

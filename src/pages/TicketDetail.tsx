@@ -31,7 +31,7 @@ import { ClassificationFields, TatChip } from '@/components/Classification'
 import CourierSelect from '@/components/CourierSelect'
 import { tracking } from '@/lib/couriers'
 import Choices, { type ChoiceOption } from '@/components/Choices'
-import { Alert, EmptyState, PageLoader, SectorTag, Spinner, StatusBadge, WarehouseChip } from '@/components/ui'
+import { Alert, EmptyState, PageLoader, SectorTag, Spinner, StatusBadge, WarehouseChip, useError } from '@/components/ui'
 import IconChip from '@/components/IconChip'
 import AttachmentsCard from '@/components/TicketAttachments'
 import PartsCard, { rupees } from '@/components/PartsCard'
@@ -719,7 +719,7 @@ function EditCardDialog({ ticket: t, items, onClose, onSaved }: {
   const [holder, setHolder] = useState<Person | null>({
     id: t.stakeholder_id, ecode: t.stakeholder_ecode ?? '', full_name: t.stakeholder_name ?? '', designation: null, department: null,
   })
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError, nth] = useError()
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
     setF(x => ({ ...x, [k]: e.target.value }))
   const namesHolder = t.raised_as === 'coordinator' && !warehouse
@@ -785,7 +785,7 @@ function EditCardDialog({ ticket: t, items, onClose, onSaved }: {
         <span className="label">Spare return address <span className="text-cyrixRed-600">*</span></span>
         <textarea className="input mt-1" rows={2} value={f.returnAddress} onChange={set('returnAddress')} maxLength={500} />
       </label>
-      {error && <Alert kind="error">{error}</Alert>}
+      {error && <Alert key={nth} kind="error">{error}</Alert>}
       <div className="flex gap-2">
         <button type="button" className="btn-primary" onClick={send} disabled={save.isPending}>
           {save.isPending ? <Spinner className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />} Save changes
@@ -1224,7 +1224,7 @@ function actionMeta(action: Action, t: Ticket) {
  */
 function ActionBar({ ticket: t, actions, spoken }: { ticket: Ticket; actions: Action[]; spoken: number }) {
   const [open, setOpen] = useState<Action | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError, nth] = useError()
   const [done, setDone] = useState<string | null>(null)
 
   const toggle = (a: Action) => { setOpen(open === a ? null : a); setError(null); setDone(null) }
@@ -1235,10 +1235,17 @@ function ActionBar({ ticket: t, actions, spoken }: { ticket: Ticket; actions: Ac
   const finish = (msg: string) => { setOpen(null); setError(null); setDone(msg) }
   // Stable, so a dialog is not refocused every time the ticket refreshes behind it.
   const close = useCallback(() => setOpen(null), [])
+  /*
+    What stops a form is said where the button was pressed — under the form — and comes to you on every press (the
+    user, 24 Oct: a return to the Revive Lab said "add a photo" at the top of the page, out of sight, and was reported
+    as not working).
+  */
+  const formOpen = !!open && !POP_UP.includes(open)
+  const errorBox = error && <Alert key={nth} kind="error">{error}</Alert>
 
   return (
     <div className="space-y-3">
-      {error && <Alert kind="error">{error}</Alert>}
+      {!formOpen && errorBox}
       {done && <Alert kind="success">{done}</Alert>}
 
       {/* The move forward and the ways out on one line; the tools under it in an even grid, every one the same width
@@ -1334,6 +1341,7 @@ function ActionBar({ ticket: t, actions, spoken }: { ticket: Ticket; actions: Ac
       {open && !POP_UP.includes(open) && open !== 'use_part' && open !== 'request_part' && open !== 'hand_over' && (
         <ActionForm key={open} ticket={t} action={open} spoken={spoken} onCancel={() => setOpen(null)} onError={setError} onDone={finish} />
       )}
+      {formOpen && errorBox}
     </div>
   )
 }
@@ -2160,7 +2168,7 @@ function ClassifyDialog({ ticket: t, onClose, onDone }: {
   const camc = t.contract_type === 'CAMC'
   const [category, setCategory] = useState<SpareCategory | null>(t.spare_category)
   const [criticality, setCriticality] = useState<Criticality | null>(camc ? 'critical' : t.criticality)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError, nth] = useError()
 
   const save = async () => {
     setError(null)
@@ -2187,7 +2195,7 @@ function ClassifyDialog({ ticket: t, onClose, onDone }: {
       <p className="text-xs text-ink-500">
         The TAT counts from when it was accepted{t.accepted_at ? ` — ${dateTime(t.accepted_at)}` : ''}. Each change is kept in the history.
       </p>
-      {error && <Alert kind="error">{error}</Alert>}
+      {error && <Alert key={nth} kind="error">{error}</Alert>}
       <div className="flex gap-2">
         <button type="button" className="btn-primary" onClick={save} disabled={set.isPending}>
           {set.isPending ? <Spinner className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />} Save
@@ -2243,7 +2251,7 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
   const [date, setDate] = useState(action === 'expect' ? t.expected_by ?? '' : '')
   const [note, setNote] = useState('')
   const [toTrc, setToTrc] = useState(action === 'approve' ? a?.to_trc_id ?? '' : '')
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError, nth] = useError()
   const busy = [start, expect, scrap, approve, decline, cancelTransfer, discard, answer, cancelHandover, approveNr, declineNr].some(m => m.isPending)
   const meta = actionMeta(action, t)
   // Approving a transfer for the Revive Lab it is already at would be no transfer.
@@ -2453,7 +2461,7 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
             } />
         </label>
       )}
-      {error && <Alert kind="error">{error}</Alert>}
+      {error && <Alert key={nth} kind="error">{error}</Alert>}
       <div className="flex gap-2">
         <button type="button" className="btn-primary" onClick={run} disabled={busy}>
           {busy ? <Spinner className="h-4 w-4" /> : <meta.icon className={clsx('h-4 w-4', TONE_TEXT[meta.tone])} />}

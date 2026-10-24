@@ -4,7 +4,7 @@ import clsx from 'clsx'
 import { Boxes, CheckCircle2, ChevronDown, FileSpreadsheet, History, MapPin, Pencil, Plus, ShoppingCart, Undo2, Upload, Wrench, X } from 'lucide-react'
 import Dialog from '@/components/Dialog'
 import IconChip from '@/components/IconChip'
-import { Alert, Spinner } from '@/components/ui'
+import { Alert, Spinner, useError } from '@/components/ui'
 import { useAddComponent, useEditComponent, usePartHistory, type Component, type PartFields, type PartHistoryLine } from '@/lib/queries'
 import { dateTime } from '@/lib/when'
 import { partNamed, partNoSuggestions } from '@/lib/stockSheet'
@@ -62,7 +62,7 @@ export function StockPartDialog({ labId, labName, stock, part, onClose, onDone }
     location: part?.location ?? '',
     qty: part ? String(part.qty) : '',
   })
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError, nth] = useError()
   const set = (k: keyof PartFields) => (e: React.ChangeEvent<HTMLInputElement>) => setF(x => ({ ...x, [k]: e.target.value }))
 
   const clash = partNamed(stock, f.part_no, part)
@@ -152,7 +152,7 @@ export function StockPartDialog({ labId, labName, stock, part, onClose, onDone }
           <input className="input mt-1 tabular-nums" type="number" inputMode="numeric" min={0} step={1} value={f.qty} onChange={set('qty')} />
         </label>
       </div>
-      {error && <Alert kind="error">{error}</Alert>}
+      {error && <Alert key={nth} kind="error">{error}</Alert>}
       <div className="flex gap-2">
         <button type="button" className="btn-primary" onClick={() => void save()} disabled={busy || !!clash}>
           {busy ? <Spinner className="h-4 w-4" /> : part ? <Pencil className="h-4 w-4" /> : <Boxes className="h-4 w-4" />}

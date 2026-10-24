@@ -21,7 +21,7 @@ import { supabase } from '@/lib/supabase'
 import MarkUp from '@/components/MarkUp'
 import { dateTime, localDay } from '@/lib/when'
 import { readBillAmount } from '@/lib/billOcr'
-import { Alert, Spinner } from '@/components/ui'
+import { Alert, Spinner, useError } from '@/components/ui'
 import IconChip from '@/components/IconChip'
 import Dialog from '@/components/Dialog'
 import { WhereTag } from '@/components/StockPart'
@@ -190,12 +190,16 @@ export default function PartsCard({ ticket: t }: { ticket: Ticket }) {
   )
 }
 
-/** A running of a mutation with the card's own message line. */
-const runner = (onNotice: (n: Notice) => void) => async (fn: () => Promise<unknown>, done: string) => {
-  onNotice(null)
-  try { await fn(); onNotice({ kind: 'success', text: done }) }
-  catch (err) { onNotice({ kind: 'error', text: err instanceof Error ? err.message : 'That did not go through.' }) }
-}
+/**
+ * A running of a mutation: what was done is said on the card's message line; what was refused, under the item's own
+ * buttons, where it was pressed (the user, 24 Oct) — a desk lists many of these.
+ */
+const runner = (onNotice: (n: Notice) => void, onRefused: (text: string | null) => void) =>
+  async (fn: () => Promise<unknown>, done: string) => {
+    onNotice(null); onRefused(null)
+    try { await fn(); onNotice({ kind: 'success', text: done }) }
+    catch (err) { onRefused(err instanceof Error ? err.message : 'That did not go through.') }
+  }
 
 function StockUseItem({ use: u, desk, isAsker, onDecline, onNotice }: {
   use: ComponentUse
@@ -206,7 +210,8 @@ function StockUseItem({ use: u, desk, isAsker, onDecline, onNotice }: {
 }) {
   const approve = useApproveUse()
   const cancel = useCancelUse()
-  const run = runner(onNotice)
+  const [refused, refuse, nth] = useError()
+  const run = runner(onNotice, refuse)
   const status = STOCK_USE_STATUS[u.status]
   const busy = approve.isPending || cancel.isPending
   const waiting = u.status === 'requested'
@@ -253,6 +258,7 @@ function StockUseItem({ use: u, desk, isAsker, onDecline, onNotice }: {
           )}
         </div>
       )}
+      {refused && <div className="mt-2"><Alert key={nth} kind="error">{refused}</Alert></div>}
     </li>
   )
 }
@@ -284,7 +290,8 @@ export function RequestItem({
   const confirm = useConfirmPart()
   const cancel = useCancelPart()
   const setProgress = useSetPartProgress()
-  const run = runner(onNotice)
+  const [refused, refuse, nth] = useError()
+  const run = runner(onNotice, refuse)
   const status = partStatusLook(r)
   const photo = r.photo_path ? links[r.photo_path] : undefined
   // Whoever attached the photo can mark it again afterwards, if it was forgotten while uploading (the user, 22 Oct).
@@ -294,18 +301,14 @@ export function RequestItem({
   const [lightTop, setLightTop] = useState(false)
   const canMark = !!photo && !!me && r.requested_by === me.employee_id
   const saveMarked = async (blob: Blob) => {
-    try {
-      const path = await uploadPartFile(r.ticket_id, r.id, 'photo', blob)
-      if (path !== r.photo_path) {
-        const { error } = await supabase.rpc('revive_set_part_photo', { p_request_id: r.id, p_path: path })
-        if (error) throw new Error(error.message)
-      }
-      setMarking(false)
-      await qc.invalidateQueries({ queryKey: ['revive'] })
-      onNotice({ kind: 'success', text: 'Photo marked and saved.' })
-    } catch (err) {
-      onNotice({ kind: 'error', text: err instanceof Error ? err.message : 'The marked photo did not save.' })
+    const path = await uploadPartFile(r.ticket_id, r.id, 'photo', blob)
+    if (path !== r.photo_path) {
+      const { error } = await supabase.rpc('revive_set_part_photo', { p_request_id: r.id, p_path: path })
+      if (error) throw new Error(error.message)
     }
+    setMarking(false)
+    await qc.invalidateQueries({ queryKey: ['revive'] })
+    onNotice({ kind: 'success', text: 'Photo marked and saved.' })
   }
   const bills = r.bill_paths.map(p => links[p]).filter(Boolean)
   const busy = take.isPending || forward.isPending || makeLocal.isPending || confirm.isPending || cancel.isPending
@@ -472,6 +475,7 @@ export function RequestItem({
           )}
         </div>
       )}
+      {refused && <div className="mt-3"><Alert key={nth} kind="error">{refused}</Alert></div>}
     </li>
   )
 }
@@ -495,7 +499,7 @@ export function BillDialog({ ticket: t, request: r, onClose, onDone }: {
   const [vendor, setVendor] = useState('')
   const [reading, setReading] = useState<number | null>(null)
   const [readNote, setReadNote] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError, nth] = useError()
   const [firstPage, setFirstPage] = useState<File | null>(null)
 
   // Read the first page once, as soon as there is one.
@@ -576,7 +580,7 @@ export function BillDialog({ ticket: t, request: r, onClose, onDone }: {
         <input className="input mt-1" value={vendor} onChange={e => setVendor(e.target.value)} maxLength={120} placeholder="Shop or supplier" />
       </label>
 
-      {error && <Alert kind="error">{error}</Alert>}
+      {error && <Alert key={nth} kind="error">{error}</Alert>}
       <div className="flex gap-2">
         <button type="button" className="btn-primary" onClick={send} disabled={purchase.isPending}>
           {purchase.isPending ? <Spinner className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />} Save the bill
@@ -613,7 +617,7 @@ export function StockDialog({ request: r, onClose, onDone }: {
   const [bin, setBin] = useState('')
   const [location, setLocation] = useState('')
   const [touchedWhere, setTouchedWhere] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError, nth] = useError()
   const suggestion = usePartNo(r.trc_id, value, item)
   const { data: labStock } = useComponents(r.trc_id)
 
@@ -725,7 +729,7 @@ export function StockDialog({ request: r, onClose, onDone }: {
         )}
       </div>
 
-      {error && <Alert kind="error">{error}</Alert>}
+      {error && <Alert key={nth} kind="error">{error}</Alert>}
       <div className="flex gap-2">
         <button type="button" className="btn-primary" onClick={send} disabled={stock.isPending}>
           {stock.isPending ? <Spinner className="h-4 w-4" /> : <Send className="h-4 w-4" />} {pr ? 'Add to stock' : 'Add to stock and send'}
@@ -754,7 +758,7 @@ export function OrderDialog({ ticket: t, request: r, onClose, onDone }: {
   const [edd, setEdd] = useState('')
   const [itemCode, setItemCode] = useState('')
   const [vendor, setVendor] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError, nth] = useError()
   // No date on the ticket before the day it was raised (the user, 23 Sep); none before a PR was requested.
   const floor = localDay(t?.created_at ?? r.requested_at)
 
@@ -803,7 +807,7 @@ export function OrderDialog({ ticket: t, request: r, onClose, onDone }: {
           <input className="input mt-1" value={vendor} onChange={e => setVendor(e.target.value)} maxLength={120} placeholder="Supplier" />
         </label>
       </div>
-      {error && <Alert kind="error">{error}</Alert>}
+      {error && <Alert key={nth} kind="error">{error}</Alert>}
       <div className="flex gap-2">
         <button type="button" className="btn-primary" onClick={send} disabled={order.isPending}>
           {order.isPending ? <Spinner className="h-4 w-4" /> : <Send className="h-4 w-4" />} Send to the coordinator
@@ -823,7 +827,7 @@ export function DeclineDialog({ request: r, buyer, onClose, onDone }: {
 }) {
   const decline = useDeclinePart()
   const [reason, setReason] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError, nth] = useError()
 
   const send = async () => {
     setError(null)
@@ -846,7 +850,7 @@ export function DeclineDialog({ request: r, buyer, onClose, onDone }: {
         <textarea className="input mt-1" rows={3} value={reason} onChange={e => setReason(e.target.value)} maxLength={500}
           placeholder={buyer ? 'e.g. None of our suppliers stock it' : 'e.g. Not available locally — use the IRFP450 in stock'} />
       </label>
-      {error && <Alert kind="error">{error}</Alert>}
+      {error && <Alert key={nth} kind="error">{error}</Alert>}
       <div className="flex gap-2">
         <button type="button" className="btn-primary" onClick={send} disabled={decline.isPending}>
           {decline.isPending && <Spinner className="h-4 w-4" />} {buyer ? 'Hand back' : 'Decline'}
@@ -874,7 +878,7 @@ export function DeclineUseDialog({ use: u, onClose, onDone }: {
 }) {
   const decline = useDeclineUse()
   const [reason, setReason] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError, nth] = useError()
 
   const send = async () => {
     setError(null)
@@ -898,7 +902,7 @@ export function DeclineUseDialog({ use: u, onClose, onDone }: {
         <textarea className="input mt-1" rows={3} value={reason} onChange={e => setReason(e.target.value)} maxLength={500}
           placeholder="e.g. Those are for the Ernakulam job — use C-118 instead" />
       </label>
-      {error && <Alert kind="error">{error}</Alert>}
+      {error && <Alert key={nth} kind="error">{error}</Alert>}
       <div className="flex gap-2">
         <button type="button" className="btn-primary" onClick={send} disabled={decline.isPending}>
           {decline.isPending && <Spinner className="h-4 w-4" />} Decline

@@ -98,14 +98,18 @@ export default function MarkUp({ src, onSave, onClose }: {
     setStrokes(list => [...list, s])
   }
 
+  // A save that fails is said here, beside Save — nothing behind the marker can be seen (the user, 24 Oct).
+  const [failedSave, setFailedSave] = useState<string | null>(null)
   const save = async () => {
     const c = canvas.current
     if (!c) return
-    setSaving(true)
+    setSaving(true); setFailedSave(null)
     try {
       const blob = await new Promise<Blob | null>(res => c.toBlob(res, 'image/jpeg', 0.85))
       if (!blob) throw new Error('The photo could not be saved.')
       await onSave(blob)
+    } catch (err) {
+      setFailedSave(err instanceof Error ? err.message : 'The marked photo did not save.')
     } finally {
       setSaving(false)
     }
@@ -157,6 +161,11 @@ export default function MarkUp({ src, onSave, onClose }: {
             {saving ? <Spinner className="h-4 w-4" /> : <Check className="h-4 w-4 text-emerald-600" />} Save
           </button>
         </div>
+        {failedSave && (
+          <p role="alert" className="animate-pop-in w-full rounded-md bg-cyrixRed-600 px-3 py-1.5 text-sm font-medium text-white sm:text-right">
+            {failedSave}
+          </p>
+        )}
       </div>
       <div className="flex min-h-0 flex-1 items-center justify-center p-2 sm:p-4">
         {failed ? <p className="text-sm text-white/80">The photo could not be opened.</p>

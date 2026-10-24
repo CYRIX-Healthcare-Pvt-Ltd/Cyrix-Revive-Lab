@@ -57,7 +57,8 @@ export default function TicketAttachments({ ticket: t }: { ticket: Ticket }) {
   const [newVoice, setNewVoice] = useState<Blob | null>(null)
   const [busy, setBusy] = useState(false)
   const [viewing, setViewing] = useState<number | null>(null)
-  const [message, setMessage] = useState<{ kind: 'error' | 'success'; text: string } | null>(null)
+  // Said beside the button pressed (the user, 24 Oct): Send's under its box, a removal's under what is left.
+  const [message, setMessage] = useState<{ kind: 'error' | 'success'; text: string; from: 'send' | 'remove' } | null>(null)
 
   const refresh = () => qc.invalidateQueries({ queryKey: ['revive', 'attachments', t.id] })
 
@@ -71,9 +72,9 @@ export default function TicketAttachments({ ticket: t }: { ticket: Ticket }) {
       ])
       newPhotos.forEach(p => URL.revokeObjectURL(p.preview))
       setNewPhotos([]); setNewVideo(null); setNewVoice(null)
-      setMessage({ kind: 'success', text: 'Added.' })
+      setMessage({ kind: 'success', text: 'Added.', from: 'send' })
     } catch (err) {
-      setMessage({ kind: 'error', text: err instanceof Error ? err.message : 'That did not upload.' })
+      setMessage({ kind: 'error', text: err instanceof Error ? err.message : 'That did not upload.', from: 'send' })
     } finally {
       setBusy(false)
       refresh()
@@ -83,7 +84,7 @@ export default function TicketAttachments({ ticket: t }: { ticket: Ticket }) {
   const remove = async (a: Attachment) => {
     setBusy(true); setMessage(null)
     try { await removeAttachment(a.path) }
-    catch (err) { setMessage({ kind: 'error', text: err instanceof Error ? err.message : 'Could not remove that.' }) }
+    catch (err) { setMessage({ kind: 'error', text: err instanceof Error ? err.message : 'Could not remove that.', from: 'remove' }) }
     finally { setBusy(false); refresh() }
   }
 
@@ -109,8 +110,6 @@ export default function TicketAttachments({ ticket: t }: { ticket: Ticket }) {
         <h3 className="text-sm font-semibold text-ink-800">Issue identified</h3>
       </div>
       <div className="space-y-4 p-4">
-        {message && <Alert kind={message.kind}>{message.text}</Alert>}
-
         <p className="whitespace-pre-wrap text-sm text-ink-900">
           {t.issue || <span className="text-ink-400">Not described.</span>}
         </p>
@@ -166,6 +165,8 @@ export default function TicketAttachments({ ticket: t }: { ticket: Ticket }) {
               </div>
             )}
 
+            {message?.from === 'remove' && <Alert kind={message.kind}>{message.text}</Alert>}
+
             {closed && (
               <p className="text-xs text-ink-400">Any video is deleted once the ticket closes, to keep storage free.</p>
             )}
@@ -193,6 +194,7 @@ export default function TicketAttachments({ ticket: t }: { ticket: Ticket }) {
                 )}
               </div>
             )}
+            {message?.from === 'send' && <Alert kind={message.kind}>{message.text}</Alert>}
           </>
         )}
       </div>
