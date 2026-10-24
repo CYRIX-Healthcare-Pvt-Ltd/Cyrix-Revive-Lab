@@ -1,3 +1,5 @@
+// First of all: storage the browser refuses must not crash the page (lib/safeStorage).
+import './lib/safeStorage'
 import { startSessionGuard } from '@/lib/sessionGuard'
 import { startIdleSignOut } from './lib/idleSignOut'
 import { supabase } from './lib/supabase'
