@@ -66,7 +66,7 @@ const PORTAL_HOST = 'app.cyrix.in'
  *
  * On app.cyrix.in the portal owns signing in for every module, and its
  * session is already in this page's storage the moment somebody signs in
- * there — so this sends people to it rather than keeping a second form.
+ * there — so this goes straight to it, with no form or card of its own.
  *
  * Anywhere else — a developer's localhost, the Vercel domain opened
  * directly — there is no portal on the same origin to borrow a session
@@ -74,20 +74,11 @@ const PORTAL_HOST = 'app.cyrix.in'
  * the same employee codes.
  */
 function SignInElsewhere() {
-  if (window.location.hostname === PORTAL_HOST) {
-    return (
-      <Frame>
-        <Wrench className="mx-auto h-8 w-8 text-ink-300" />
-        <h1 className="text-lg font-semibold text-ink-900">Revive Lab</h1>
-        <p className="text-sm text-ink-500">
-          Sign in on the Cyrix portal with your employee code, then open Revive Lab from your modules.
-        </p>
-        <a href="/" className="btn-primary inline-flex">
-          <LogIn className="h-4 w-4" /> Go to sign in
-        </a>
-      </Frame>
-    )
-  }
+  const portal = window.location.hostname === PORTAL_HOST
+  // Straight to the portal's sign-in rather than a card that only pointed there (the user, 24 Oct: "why
+  // this is showing? after sign out"): signed out here, in another tab, or for being idle.
+  useEffect(() => { if (portal) window.location.replace('/') }, [portal])
+  if (portal) return null
   return <SignInHere />
 }
 
