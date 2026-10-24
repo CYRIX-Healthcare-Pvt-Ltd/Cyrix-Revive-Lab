@@ -6,7 +6,7 @@ import {
   ArrowLeft, ArrowRightLeft, BadgeCheck, Ban, Boxes, CalendarClock, Camera, CheckCircle2, CircleCheck, CircleX, ClipboardCheck,
   ClipboardList, Factory, Forward, Hand, History as HistoryIcon, PackageCheck, PackagePlus, PackageX, PlayCircle, Receipt, RotateCcw, ScanSearch, Tag,
   Send, ShieldQuestion, ShieldX, ShoppingCart, Signpost, Timer, Trash2, TriangleAlert, Truck, Undo2, UserCheck, UserCog, UserPlus,
-  UserX, Wrench, X, ExternalLink, FileInput, PackageOpen, Pencil,
+  UserX, Wrench, X, ExternalLink, FileInput, PackageOpen, Pencil, Sparkles,
   type LucideIcon,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
@@ -46,6 +46,8 @@ import { signedLinks } from '@/lib/partFiles'
 import ItemsField, { newLine, type ItemLine } from '@/components/ItemsField'
 import PersonPicker from '@/components/PersonPicker'
 import { districtsOf } from '@/lib/india'
+import { CYRA_RECORD_REQUIRED } from '@/lib/cyraLink'
+import { cyraRecorded, openCyra } from '@/lib/cyra'
 
 /** "21 Sept 2026, 11:53 AM" — twelve-hour, AM or PM, whatever the device's clock (lib/when). */
 const when = (iso: string | null | undefined) => (iso ? dateTime(iso) : '—')
@@ -1166,6 +1168,7 @@ const ACTION_META: Record<Action, { label: string; icon: LucideIcon; tone: Tone;
   use_part: { label: 'Use component', icon: Boxes, tone: 'indigo', weight: 'tool' },
   request_part: { label: 'Request component', icon: ShoppingCart, tone: 'orange', weight: 'tool' },
   observe: { label: 'Add observation', icon: ScanSearch, tone: 'indigo', weight: 'tool' },
+  cyra: { label: 'Record in CYRA', icon: Sparkles, tone: 'indigo', weight: 'tool' },
   expect: { label: 'Change expected date', icon: CalendarClock, tone: 'indigo', weight: 'tool' },
   // Many parts: the field engineer raises a PI in the other software (rl_0055).
   request_pi: { label: 'Ask field engineer to raise PI', icon: FileInput, tone: 'fuchsia', weight: 'tool' },
@@ -1227,7 +1230,11 @@ function ActionBar({ ticket: t, actions, spoken }: { ticket: Ticket; actions: Ac
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState<string | null>(null)
 
-  const toggle = (a: Action) => { setOpen(open === a ? null : a); setError(null); setDone(null) }
+  const toggle = (a: Action) => {
+    // Record in CYRA opens CYRA on this ticket (its own window); everything else opens its form here.
+    if (a === 'cyra') { setError(null); openCyra(t.id).catch(e => setError(e instanceof Error ? e.message : 'Could not open CYRA.')); return }
+    setOpen(open === a ? null : a); setError(null); setDone(null)
+  }
   const weighing = (w: Weight) => actions.filter(a => ACTION_META[a].weight === w)
   const main = weighing('main')
   const tools = weighing('tool')
@@ -1609,6 +1616,11 @@ function ActionForm({
           if (note.trim().length < 3) { onError(outcome === 'repaired' ? 'Say what action was taken on it.' : 'Say why.'); return }
           // A photo or a video of it working, either will do; the voice note is extra (the user, 24 Sep).
           if (outcome === 'repaired' && shots.length === 0 && !video) { onError('Add a photo or a video of the repaired spare working.'); return }
+          // Switched on with CYRA for Revive Lab engineers (VITE_CYRA_RECORD_REQUIRED): the repair's technical record must be
+          // in CYRA first. When CYRA cannot be reached the check is skipped -- a CYRA outage never stops lab work.
+          if (CYRA_RECORD_REQUIRED && (await cyraRecorded(t.id)) === 'not_recorded') {
+            onError(`Record this repair in CYRA first (Record in CYRA), then close it here.`); return
+          }
           await complete.mutateAsync({
             id: t.id, note, outcome,
             proposal: outcome === 'not_repairable' ? proposal : null,

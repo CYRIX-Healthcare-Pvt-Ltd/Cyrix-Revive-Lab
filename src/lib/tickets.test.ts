@@ -6,6 +6,7 @@ import {
   scopeTabs, splitsByScope, isMyTicket,
   type Me, type TicketLike,
 } from './tickets'
+import { CYRA_RECORD_REQUIRED, CYRA_URL, canUseCyra, cyraLink } from './cyraLink'
 
 const REG = 'trc-regional'
 const PRJ = 'trc-project'
@@ -375,7 +376,8 @@ describe('states, approval and the proposal (rl_0014)', () => {
   it('gives an admin the desk’s moves at every Revive Lab, and leaves the queue to its coordinators', () => {
     const admin = me({ employee_id: 'adm', is_admin: true })
     expect(actionsFor(ticket(), admin)).toEqual(['accept'])
-    expect(actionsFor(ticket({ status: 'accepted' }), admin)).toEqual(['assign', 'transfer'])
+    // …and, while CYRA is admin-only, Record in CYRA (cyraLink.ts).
+    expect(actionsFor(ticket({ status: 'accepted' }), admin)).toEqual(['assign', 'cyra', 'transfer'])
     expect(actionsFor(ticket({ status: 'repaired' }), admin)).toEqual(['dispatch'])
     expect(actionsFor(ticket({ status: 'not_repairable', proposal: 'oem', nr_approved_at: '2026-09-30T03:05:00Z' }), admin)).toEqual(['dispatch'])
     expect(actionsFor(ticket({ status: 'not_repairable', proposal: 'scrap', nr_approved_at: '2026-09-30T03:05:00Z' }), admin)).toEqual(['scrap'])
@@ -754,5 +756,46 @@ describe('a Revive Lab manager’s My tickets and Team tickets (the user, 23 Oct
     expect(isMyTicket(ticket({ status: 'not_repairable', engineer_id: 'eng' }), manager)).toBe(true)
     expect(scopeTabs(manager, 'mine').map(x => x.label)).toEqual(['All', 'Waiting on you', 'In repair', 'Assigned', 'Closed'])
     expect(scopeTabs(manager, 'team').map(x => x.label)).toEqual(['All', 'Not assigned', 'In repair', 'Component pending', 'Closed'])
+  })
+})
+
+describe('CYRA (cyraLink.ts)', () => {
+  const T = '11111111-1111-1111-1111-111111111111'
+
+  it('offers Record in CYRA to admins on a ticket still being worked', () => {
+    const admin = me({ is_admin: true, employee_id: 'adm' })
+    for (const status of ['accepted', 'assigned', 'in_repair', 'parts_requested', 'pi_requested'] as const) {
+      expect(actionsFor(ticket({ status, engineer_id: 'eng' }), admin)).toContain('cyra')
+    }
+  })
+
+  it('never to field engineers or a non-admin Revive Lab engineer while it is admin-only', () => {
+    expect(actionsFor(ticket({ status: 'in_repair', engineer_id: 'me' }), me({ is_engineer: true, trc_ids: [REG] }))).not.toContain('cyra')
+    expect(actionsFor(ticket({ status: 'in_repair', engineer_id: 'eng', stakeholder_id: 'me' }), me())).not.toContain('cyra')
+  })
+
+  it('not on a ticket that is finished or not yet here', () => {
+    const admin = me({ is_admin: true })
+    for (const status of ['pending_acceptance', 'repaired', 'not_repairable', 'in_transit_return', 'closed'] as const) {
+      expect(actionsFor(ticket({ status }), admin)).not.toContain('cyra')
+    }
+  })
+
+  it('who may use CYRA is decided in one place', () => {
+    expect(canUseCyra(me({ is_admin: true }))).toBe(true)
+    expect(canUseCyra(me({ is_engineer: true, is_coordinator: true, is_manager: true }))).toBe(false)
+    expect(canUseCyra(null)).toBe(false)
+  })
+
+  it('the hand-off link keeps the token in the fragment and the ticket only when it is a ticket id', () => {
+    const link = cyraLink('a.b+c', T)
+    expect(link).toBe(`${CYRA_URL}/sso#pt=a.b%2Bc&to=rl&rl=${T}`)
+    expect(link.split('#')[0]).not.toContain('a.b')
+    expect(cyraLink('tok')).toBe(`${CYRA_URL}/sso#pt=tok&to=rl`)
+    expect(cyraLink('tok', 'RL-385&x=1')).toBe(`${CYRA_URL}/sso#pt=tok&to=rl`)
+  })
+
+  it('the record-before-close check ships switched off', () => {
+    expect(CYRA_RECORD_REQUIRED).toBe(false)
   })
 })
