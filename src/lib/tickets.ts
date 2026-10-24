@@ -1,3 +1,4 @@
+import { CYRA_OPEN_STATUSES, canUseCyra } from './cyraLink'
 /**
  * A Revive Lab ticket: its states, its number, and what can be done to it.
  *
@@ -626,6 +627,7 @@ export type Action =
   | 'hand_over' | 'accept_handover' | 'decline_handover' | 'cancel_handover'
   | 'approve_nr' | 'decline_nr'
   | 'request_pi' | 'pi_received'
+  | 'cyra'
 
 /**
  * What this person may do to this ticket now, in the order the buttons
@@ -692,6 +694,8 @@ export function actionsFor(t: TicketLike, me: Me | null | undefined): Action[] {
   if (handing && handing.to_id === me.employee_id && t.status === 'in_transit_return') out.push('accept_handover', 'decline_handover')
   // Back in their hands: they fit it, then close the ticket saying whether it works.
   if (t.stakeholder_id === me.employee_id && t.status === 'received_back') out.push('close_ticket')
+  // The repair's technical record lives in CYRA (src/lib/cyraLink.ts): admins only while the owner trials it.
+  if (canUseCyra(me) && (CYRA_OPEN_STATUSES as readonly string[]).includes(t.status)) out.push('cyra')
   if (mine && (t.status === 'assigned' || t.status === 'in_repair')) out.push('return')
   if (desk && (t.status === 'accepted' || t.status === 'assigned' || t.status === 'in_repair')) out.push('transfer')
   if (desk && open?.kind === 'transfer' && (t.status === 'awaiting_approval' || t.status === 'approved')) out.push('cancel_transfer')
