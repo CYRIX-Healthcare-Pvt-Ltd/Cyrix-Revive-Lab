@@ -154,11 +154,9 @@ export default function NewTicket() {
   )
   // The BEMMP's project head approves another state's Revive Lab; with none, it is just another choice (rl_0049).
   const head = (bemmp ?? []).find(b => b.id === form.bemmpId && b.head_id) ?? null
-  // The desk asks too, for a hospital's spare, among the Revive Labs not its own (rl_0058; the user, 28 Oct: "need it for coordinator also").
-  const elsewhere = useMemo(
-    () => (fromWarehouse || !state ? [] : active.filter(t => !serves(t, state) && !(atLab && runsTrc(me, t.id)))),
-    [fromWarehouse, atLab, active, state, me],
-  )
+  // The desk asks too, for a hospital's spare — any other state's Revive Lab, one it runs too (rl_0058, rl_0060;
+  // the user, 28 Oct: "need it for coordinator also").
+  const elsewhere = useMemo(() => (fromWarehouse || !state ? [] : active.filter(t => !serves(t, state))), [fromWarehouse, active, state])
   const asksHead = !!head && elsewhere.length > 0
   const farLab = far ? active.find(t => t.id === far.trcId) ?? null : null
   // Pvt asks whether the spare is billed to the customer.
