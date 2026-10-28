@@ -489,12 +489,22 @@ export function useBemmpProjects() {
     // ['revive', 'bemmp'] there still refreshes this.
     queryKey: ['revive', 'bemmp', 'for-tickets'],
     staleTime: 5 * 60_000,
-    queryFn: async () => unwrap<BemmpProject[]>(
+    queryFn: async () => withHeads(unwrap<Omit<BemmpProject, 'head'>[]>(
       await supabase.from('revive_bemmp_projects')
-        .select('id, code, is_active, sort_order, asks_billing, asks_contract, state, head_id, head:employees!revive_bemmp_projects_head_id_fkey(full_name)')
+        .select('id, code, is_active, sort_order, asks_billing, asks_contract, state, head_id')
         .order('sort_order').order('code'),
-    ),
+    )),
   })
+}
+
+/**
+ * Each BEMMP's project head by name, through revive_bemmp_heads (rl_0059). Joined from employees, a Revive Lab admin
+ * outside the heads' teams saw no names at all (E1337, 28 Oct): the employee list shows a person only their own people.
+ */
+export async function withHeads<T extends { id: string }>(rows: T[]): Promise<(T & { head: { full_name: string; ecode: string } | null })[]> {
+  const heads = unwrap<{ bemmp_id: string; full_name: string; ecode: string }[]>(await supabase.rpc('revive_bemmp_heads'))
+  const by = new Map(heads.map(h => [h.bemmp_id, { full_name: h.full_name, ecode: h.ecode }]))
+  return rows.map(r => ({ ...r, head: by.get(r.id) ?? null }))
 }
 
 export function useFindPeople(q: string) {

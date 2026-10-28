@@ -23,6 +23,7 @@ import clsx from 'clsx'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Building2, Hourglass, Layers, Pencil, Plus, RotateCcw, Search, Trash2, UserPlus, Users, Warehouse, X } from 'lucide-react'
 import { supabase, friendlyError } from '@/lib/supabase'
+import { withHeads } from '@/lib/queries'
 import { Alert, EmptyState, Spinner, StatTile, useError } from '@/components/ui'
 
 type TrcKind = 'regional' | 'project'
@@ -471,10 +472,10 @@ function BemmpTable({ canEdit }: { canEdit: boolean }) {
     queryKey: ['revive', 'bemmp'],
     queryFn: async () => {
       const { data, error } = await supabase.from('revive_bemmp_projects')
-        .select('id, code, state, is_active, sort_order, head_id, head:employees!revive_bemmp_projects_head_id_fkey(full_name, ecode)')
+        .select('id, code, state, is_active, sort_order, head_id')
         .order('sort_order').order('code')
       if (error) throw new Error(friendlyError(error))
-      return data as unknown as Bemmp[]
+      return withHeads(data as Omit<Bemmp, 'head'>[])
     },
   })
   const save = useMutation({

@@ -154,7 +154,11 @@ export default function NewTicket() {
   )
   // The BEMMP's project head approves another state's Revive Lab; with none, it is just another choice (rl_0049).
   const head = (bemmp ?? []).find(b => b.id === form.bemmpId && b.head_id) ?? null
-  const elsewhere = useMemo(() => (atLab || !state ? [] : active.filter(t => !serves(t, state))), [atLab, active, state])
+  // The desk asks too, for a hospital's spare, among the Revive Labs not its own (rl_0058; the user, 28 Oct: "need it for coordinator also").
+  const elsewhere = useMemo(
+    () => (fromWarehouse || !state ? [] : active.filter(t => !serves(t, state) && !(atLab && runsTrc(me, t.id)))),
+    [fromWarehouse, atLab, active, state, me],
+  )
   const asksHead = !!head && elsewhere.length > 0
   const farLab = far ? active.find(t => t.id === far.trcId) ?? null : null
   // Pvt asks whether the spare is billed to the customer.
@@ -168,6 +172,10 @@ export default function NewTicket() {
   const observerRaise = !atLab && !!me?.is_observer && !!me?.may_raise
   const namesHolder = atLab || observerRaise
   useEffect(() => { if (!asksContract) setContractType(null) }, [asksContract])
+  // A warehouse's spare has no BEMMP, so nobody to approve another state's Revive Lab.
+  useEffect(() => { if (fromWarehouse) setFar(null) }, [fromWarehouse])
+  // Asked for elsewhere, the desk does not accept it as it raises it: the Revive Lab it goes to classifies it on arrival.
+  const classify = atLab && !far
 
   // One Revive Lab to choose from: it is the answer, not a question. The same for a warehouse.
   useEffect(() => {
@@ -217,8 +225,8 @@ export default function NewTicket() {
     if (namedHeld) { setError(`${named!.full_name} has spares to close first — a ticket cannot be raised in their name yet.`); return }
 
     if (asksContract && !contractType) { setError('Choose the contract type — AMC, CAMC or OTS / Stock.'); return }
-    if (atLab && !category) { setError('Choose the spare category — A, B or C.'); return }
-    if (atLab && !camc && !criticality) { setError('Choose whether the spare is critical or non-critical.'); return }
+    if (classify && !category) { setError('Choose the spare category — A, B or C.'); return }
+    if (classify && !camc && !criticality) { setError('Choose whether the spare is critical or non-critical.'); return }
 
     /*
       Already in Revive Lab? (the user, 19 Oct: an engineer raised hospital A's equipment B, and the
@@ -249,8 +257,8 @@ export default function NewTicket() {
         stakeholderId: namesHolder ? holder!.id : null,
         billingSpare: !fromWarehouse && asksBilling ? form.billingSpare === 'yes' : null,
         contractType: asksContract ? contractType : null,
-        category: atLab ? category : null,
-        criticality: atLab ? (camc ? 'critical' : criticality) : null,
+        category: classify ? category : null,
+        criticality: classify ? (camc ? 'critical' : criticality) : null,
       })
     } catch (err) {
       setStage('idle')
@@ -391,7 +399,7 @@ export default function NewTicket() {
               <p className="mt-1 text-xs text-ink-500">They and their reporting manager follow this ticket as if they had raised it.</p>
             </div>
             {/* Raised here, it is accepted as it is raised: what it is, now (rl_0024). */}
-            <div className="border-t border-ink-100 pt-3">
+            {classify && <div className="border-t border-ink-100 pt-3">
               <ClassificationFields
                 category={category}
                 criticality={criticality}
@@ -402,7 +410,7 @@ export default function NewTicket() {
               <p className="mt-1.5 text-xs text-ink-500">
                 Raised here, it is accepted as it is raised — its TAT counts from now: A 3 days, B 2, C 1.
               </p>
-            </div>
+            </div>}
           </div>
         )}
 
