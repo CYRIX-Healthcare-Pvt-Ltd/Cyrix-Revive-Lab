@@ -14,7 +14,7 @@
      * Light here; dark restates the same names further down and nothing
      * else in the app has to know which one is in force.
      */
-    --canvas: 255 255 255;
+    --canvas: 243 244 247;  /* a step from the white cards, as in dark (the user, 29 Oct: light "looks blank") */
     --surface: 255 255 255;
     --on-ink: 255 255 255;
 
