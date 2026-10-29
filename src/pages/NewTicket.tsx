@@ -145,8 +145,9 @@ export default function NewTicket() {
   // those of its own. A Kerala card at the Jodhpur Revive Lab was offered once.
   const headId = (bemmp ?? []).find(b => b.id === form.bemmpId)?.head_id ?? null
   const labChoices = useMemo(
-    () => (state ? (atLab ? deskTrcs : active).filter(t => serves(t, state) || (!atLab && !headId)) : []),
-    [atLab, deskTrcs, active, state, headId],
+    // A warehouse's spare may go to any Revive Lab, not only the desk's own (the user, 29 Oct: "add that option ie send to other revive lab").
+    () => (!state ? [] : fromWarehouse ? active : (atLab ? deskTrcs : active).filter(t => serves(t, state) || (!atLab && !headId))),
+    [atLab, deskTrcs, active, state, headId, fromWarehouse],
   )
   const warehouseChoices = useMemo(
     () => (warehouses ?? []).filter(w => w.is_active && serves(w, state)),
@@ -173,7 +174,8 @@ export default function NewTicket() {
   // A warehouse's spare has no BEMMP, so nobody to approve another state's Revive Lab.
   useEffect(() => { if (fromWarehouse) setFar(null) }, [fromWarehouse])
   // Asked for elsewhere, the desk does not accept it as it raises it: the Revive Lab it goes to classifies it on arrival.
-  const classify = atLab && !far
+  // Sent to another Revive Lab, it is that lab's to accept and classify.
+  const classify = atLab && !far && (!fromWarehouse || !trcId || runsTrc(me, trcId))
 
   // One Revive Lab to choose from: it is the answer, not a question. The same for a warehouse.
   useEffect(() => {
