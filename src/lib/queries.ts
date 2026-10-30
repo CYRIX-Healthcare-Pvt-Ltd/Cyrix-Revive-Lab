@@ -1107,13 +1107,15 @@ export const useCancelPart = () => useTicketMutation(
   (a: { id: string; reason?: string }) => rpc('revive_cancel_part', { p_request_id: a.id, p_reason: a.reason || null }))
 
 export const useDispatch = () => useTicketMutation(
-  (a: { id: string; courier: string; awb: string; on: string; note?: string; estimate?: number | null; oemAddress?: string | null }) =>
+  (a: { id: string; courier: string; awb: string; on: string; note?: string; estimate?: number | null; oemAddress?: string | null; defectiveReturned?: boolean | null }) =>
     rpc('revive_dispatch', {
       p_ticket_id: a.id, p_courier: a.courier, p_awb: a.awb,
       p_dispatched_on: a.on || null, p_note: a.note || null,
       p_billing_estimate: a.estimate ?? null,
       // Not repairable and proposed for the OEM: where it goes (rl_0033).
       p_oem_address: a.oemAddress ?? null,
+      // A PI was asked for on it: whether the defective went back (rl_0064).
+      p_defective_returned: a.defectiveReturned ?? null,
     }))
 
 /** A manager of its Revive Lab agrees it cannot be repaired; the coordinator then moves it (rl_0034). */

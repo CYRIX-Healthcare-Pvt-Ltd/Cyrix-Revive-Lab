@@ -1566,6 +1566,10 @@ function ActionForm({
   const toOem = action === 'dispatch' && t.status === 'not_repairable' && t.proposal === 'oem'
   const [oemAddress, setOemAddress] = useState(toOem && t.equipment_make ? `${t.equipment_make}\n` : '')
   const { data: requests } = usePartRequests(asksEstimate ? t.id : undefined)
+  // A PI was asked for on it: whether the defective went back, Yes or No, chosen every time (rl_0064; the user, 31 Oct).
+  const { data: steps } = useTrail(action === 'dispatch' ? t.id : undefined)
+  const asksDefective = action === 'dispatch' && !!steps?.some(e => e.status === 'pi_requested')
+  const [defective, setDefective] = useState<'' | 'yes' | 'no'>('')
   const purchased = (requests ?? []).reduce((sum, r) => sum + (r.bill_amount ?? 0), 0)
 
   const engineers = (members ?? [])
@@ -1643,7 +1647,8 @@ function ActionForm({
             onError('Enter the estimated billing cost — under Pvt the customer can be asked to pay it.'); return
           }
           if (toOem && oemAddress.trim().length < 5) { onError('Enter the OEM’s name and address — where it is going.'); return }
-          await dispatch.mutateAsync({ id: t.id, courier, awb, on, note, estimate: asksEstimate ? amount : null, oemAddress: toOem ? oemAddress.trim() : null })
+          if (asksDefective && !defective) { onError('Choose whether the defective was returned.'); return }
+          await dispatch.mutateAsync({ id: t.id, courier, awb, on, note, estimate: asksEstimate ? amount : null, oemAddress: toOem ? oemAddress.trim() : null, defectiveReturned: asksDefective ? defective === 'yes' : null })
           onDone(toOem ? 'Dispatched to the OEM.'
             : asksEstimate ? `Dispatched back, with the estimated billing of ${rupees(amount!)}.` : 'Dispatched back to the field.')
           break
@@ -2026,6 +2031,19 @@ function ActionForm({
         </label>
       )}
 
+      {/* Defective returned and the estimate side by side on a computer, stacked on a phone (the user, 31 Oct). */}
+      {(asksDefective || asksEstimate) && (
+      <div className={asksDefective && asksEstimate ? 'grid items-start gap-3 sm:grid-cols-2' : ''}>
+      {asksDefective && (
+        <label className={`block ${asksEstimate ? 'sm:pt-3' : 'sm:max-w-xs'}`}>
+          <span className="label">Defective returned <span className="text-cyrixRed-600">*</span></span>
+          <select className="input mt-1" value={defective} onChange={e => setDefective(e.target.value as '' | 'yes' | 'no')}>
+            <option value="">Choose…</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+          </select>
+        </label>
+      )}
       {asksEstimate && (
         <div className="rounded-lg border border-fuchsia-200 bg-fuchsia-50/60 p-3">
           <label className="block sm:max-w-xs">
@@ -2046,6 +2064,8 @@ function ActionForm({
             {purchased > 0 ? <> — components purchased for it came to <span className="font-medium tabular-nums">{rupees(purchased)}</span></> : null}.
           </p>
         </div>
+      )}
+      </div>
       )}
 
       {action === 'courier' && (
