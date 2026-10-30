@@ -112,6 +112,9 @@ const ROLES: Array<[keyof Pick<Draft, 'is_engineer' | 'is_coordinator' | 'is_man
   ['is_warehouse', 'Warehouse in-charge'],
 ]
 
+/** The roles a Revive Lab tick is for: a warehouse in-charge's labs come from the warehouse's state. */
+const usesLabs = (d: Draft) => d.is_engineer || d.is_coordinator || d.is_manager || d.is_purchase || d.is_observer || d.is_admin
+
 const call = async <T,>(name: string, args?: Record<string, unknown>): Promise<T> => {
   const { data, error } = await supabase.rpc(name, args)
   if (error) throw new Error(friendlyError(error))
@@ -169,7 +172,7 @@ export function ReviveLabAccess() {
       p_employee_id: d.employee_id,
       p_engineer: d.is_engineer, p_coordinator: d.is_coordinator,
       p_manager: d.is_manager, p_admin: d.is_admin,
-      p_trc_ids: d.trc_ids,
+      p_trc_ids: usesLabs(d) ? d.trc_ids : [],
       p_purchase: d.is_purchase,
       p_observer: d.is_observer,
       // The Observer's box: it goes when Observer does.
@@ -1361,8 +1364,9 @@ function EditRow({ draft, trcs, warehouses, busy, error, nth, onChange, onSave, 
       )}
 
       {/* For the Revive Lab roles and Admin only: a warehouse in-charge's labs come from the warehouse's state, as a
-          field engineer's do (the user, 30 Oct: "why was revive lab selection checkbox for?"). */}
-      {(draft.is_engineer || draft.is_coordinator || draft.is_manager || draft.is_purchase || draft.is_observer || draft.is_admin || draft.trc_ids.length > 0) && (
+          field engineer's do (the user, 30 Oct: "why was revive lab selection checkbox for?"; "jodhpur is in RJ, so
+          automatically RJ rl will map to him isnt?"). Ticks left from a role taken away go when they are saved. */}
+      {usesLabs(draft) && (
         <div>
           <p className="label">Revive Lab(s)</p>
           <div className="mt-1 flex flex-wrap gap-2">
