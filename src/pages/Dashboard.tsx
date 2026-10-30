@@ -336,8 +336,8 @@ export default function Dashboard() {
       ) : (<>
       {/* The period opens the overview, as the Revive Lab picker opens the live floor; the header keeps the view switch and
           Raise ticket only, so nothing in it moves (the user, 9 Oct: "in desktop the toggle is here looks bad"). */}
-      {/* The period and its dates on one row, the Revive Lab under them, since Custom brings From and To (the user, 30 Oct). */}
-      <div className="space-y-2">
+      {/* The period and its dates on one row, the Revive Lab under them, since Custom brings From and To (the user, 30 Oct); on a computer all on one row ("in desktop we have space"). */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
       <div className="flex flex-wrap items-center gap-2">
         <div className="grid w-full grid-cols-3 rounded-lg border border-ink-200 bg-ink-50 p-0.5 sm:inline-flex sm:w-auto" role="group" aria-label="Period">
           {PERIODS.map(p => (
