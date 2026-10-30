@@ -83,6 +83,9 @@ interface Member {
   is_observer?: boolean
   /** An Observer who also raises tickets, as a field engineer does (rl_0040). */
   may_raise?: boolean
+  /** Raises their warehouse(s)' spares, as a field engineer does (rl_0063). */
+  is_warehouse?: boolean
+  warehouse_ids?: string[]
 }
 interface Person { id: string; ecode: string; full_name: string; designation: string | null; department: string | null }
 
@@ -92,10 +95,12 @@ interface Draft {
   is_purchase: boolean
   is_observer: boolean
   may_raise: boolean
+  is_warehouse: boolean
+  warehouse_ids: string[]
   trc_ids: string[]
 }
 
-const ROLES: Array<[keyof Pick<Draft, 'is_engineer' | 'is_coordinator' | 'is_manager' | 'is_purchase' | 'is_observer'>, string]> = [
+const ROLES: Array<[keyof Pick<Draft, 'is_engineer' | 'is_coordinator' | 'is_manager' | 'is_purchase' | 'is_observer' | 'is_warehouse'>, string]> = [
   ['is_engineer', 'Revive Lab Engineer'],
   ['is_coordinator', 'Revive Lab Coordinator'],
   ['is_manager', 'Revive Lab Manager'],
@@ -103,6 +108,8 @@ const ROLES: Array<[keyof Pick<Draft, 'is_engineer' | 'is_coordinator' | 'is_man
   ['is_purchase', 'Revive Lab Purchase'],
   // Only watches: a dashboard and the tickets of the Revive Labs ticked, and nothing to press (rl_0039).
   ['is_observer', 'Revive Lab Observer'],
+  // Raises their own warehouse's spares, for the warehouse(s) ticked (rl_0063; the user, 30 Oct).
+  ['is_warehouse', 'Warehouse in-charge'],
 ]
 
 const call = async <T,>(name: string, args?: Record<string, unknown>): Promise<T> => {
@@ -167,6 +174,8 @@ export function ReviveLabAccess() {
       p_observer: d.is_observer,
       // The Observer's box: it goes when Observer does.
       p_may_raise: d.is_observer && d.may_raise,
+      p_warehouse: d.is_warehouse,
+      p_warehouse_ids: d.is_warehouse ? d.warehouse_ids : [],
     }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['revive'] }),
   })
@@ -178,8 +187,11 @@ export function ReviveLabAccess() {
   const [notice, setNotice] = useState<string | null>(null)
   const [part, setPart] = useState<Part>('people')
 
+  const { data: warehouses } = useQuery({ queryKey: ['revive', 'warehouses'], queryFn: fetchWarehouses })
+
   const canEdit = !!me?.is_admin
   const trcName = useMemo(() => new Map((trcs ?? []).map(t => [t.id, t.name])), [trcs])
+  const warehouseName = useMemo(() => new Map((warehouses ?? []).map(w => [w.id, w.name])), [warehouses])
 
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase()
@@ -205,14 +217,15 @@ export function ReviveLabAccess() {
     setEditing({
       employee_id: m.employee_id, full_name: m.full_name, ecode: m.ecode,
       is_engineer: m.is_engineer, is_coordinator: m.is_coordinator, is_manager: m.is_manager,
-      is_admin: m.is_admin, is_purchase: m.is_purchase, is_observer: !!m.is_observer, may_raise: !!m.may_raise, trc_ids: [...m.trc_ids],
+      is_admin: m.is_admin, is_purchase: m.is_purchase, is_observer: !!m.is_observer, may_raise: !!m.may_raise,
+      is_warehouse: !!m.is_warehouse, warehouse_ids: [...(m.warehouse_ids ?? [])], trc_ids: [...m.trc_ids],
     })
   }
 
   const save = async (d: Draft, removing = false) => {
     setError(null); setNotice(null)
     const payload = removing
-      ? { ...d, is_engineer: false, is_coordinator: false, is_manager: false, is_admin: false, is_purchase: false, is_observer: false, may_raise: false, trc_ids: [] }
+      ? { ...d, is_engineer: false, is_coordinator: false, is_manager: false, is_admin: false, is_purchase: false, is_observer: false, may_raise: false, is_warehouse: false, warehouse_ids: [], trc_ids: [] }
       : d
     try {
       await saveMember.mutateAsync(payload)
@@ -285,6 +298,7 @@ export function ReviveLabAccess() {
               setEditing({
                 employee_id: p.id, full_name: p.full_name, ecode: p.ecode,
                 is_engineer: false, is_coordinator: false, is_manager: false, is_admin: false, is_purchase: false, is_observer: false, may_raise: false,
+                is_warehouse: false, warehouse_ids: [],
                 trc_ids: (trcs ?? []).length === 1 ? [trcs![0].id] : [],
               })
             }}
@@ -294,7 +308,7 @@ export function ReviveLabAccess() {
 
         {editing && !(members ?? []).some(m => m.employee_id === editing.employee_id) && (
           <div className="border-b border-ink-200 p-3">
-            <EditRow draft={editing} trcs={trcs ?? []} busy={saveMember.isPending} error={error} nth={nth}
+            <EditRow draft={editing} trcs={trcs ?? []} warehouses={warehouses ?? []} busy={saveMember.isPending} error={error} nth={nth}
               onChange={setEditing} onSave={() => save(editing)} onCancel={() => setEditing(null)} />
           </div>
         )}
@@ -322,7 +336,7 @@ export function ReviveLabAccess() {
                 {shown.map(m => editing?.employee_id === m.employee_id ? (
                   <tr key={m.employee_id}>
                     <td colSpan={canEdit ? 6 : 5} className="p-3">
-                      <EditRow draft={editing} trcs={trcs ?? []} busy={saveMember.isPending} error={error} nth={nth}
+                      <EditRow draft={editing} trcs={trcs ?? []} warehouses={warehouses ?? []} busy={saveMember.isPending} error={error} nth={nth}
                         onChange={setEditing} onSave={() => save(editing)} onCancel={() => setEditing(null)}
                         onRemove={m.employee_id === me?.employee_id ? undefined : () => save(editing, true)} />
                     </td>
@@ -345,7 +359,11 @@ export function ReviveLabAccess() {
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1">
                         {ROLES.filter(([k]) => m[k]).map(([k, label]) => (
-                          <span key={k} className="badge bg-sky-100 text-sky-900">{label}</span>
+                          <span key={k} className="badge bg-sky-100 text-sky-900">
+                            {k === 'is_warehouse' && m.warehouse_ids?.length
+                              ? `${label} · ${m.warehouse_ids.map(id => warehouseName.get(id) ?? '?').join(', ')}`
+                              : label}
+                          </span>
                         ))}
                         {!ROLES.some(([k]) => m[k]) && <span className="text-ink-300">—</span>}
                       </div>
@@ -618,16 +636,18 @@ function BemmpTable({ canEdit }: { canEdit: boolean }) {
  */
 interface WarehouseRow { id: string; name: string; state: string | null; is_active: boolean; sort_order: number }
 
+async function fetchWarehouses(): Promise<WarehouseRow[]> {
+  const { data, error } = await supabase.from('revive_warehouses')
+    .select('id, name, state, is_active, sort_order').order('sort_order').order('name')
+  if (error) throw new Error(friendlyError(error))
+  return data as WarehouseRow[]
+}
+
 function WarehouseTable({ canEdit }: { canEdit: boolean }) {
   const qc = useQueryClient()
   const { data: rows, isLoading } = useQuery({
     queryKey: ['revive', 'warehouses'],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('revive_warehouses')
-        .select('id, name, state, is_active, sort_order').order('sort_order').order('name')
-      if (error) throw new Error(friendlyError(error))
-      return data as WarehouseRow[]
-    },
+    queryFn: fetchWarehouses,
   })
   const save = useMutation({
     // No state leaves it as it is: retiring a warehouse does not move it.
@@ -751,10 +771,11 @@ function WarehouseTable({ canEdit }: { canEdit: boolean }) {
   )
 }
 
-/** "RL-07", "rl-7", "7" → 7. Anything else → null. */
-const ticketNumberOf = (typed: string): number | null => {
-  const m = typed.trim().match(/^(?:rl-?)?0*([0-9]{1,7})$/i)
-  return m ? Number(m[1]) : null
+/** "RL-07", "rl-7", "7" → "RL-07"; "wrl3" → "WRL-03", a warehouse's (rl_0063). Anything else → null. */
+const ticketCodeOf = (typed: string): string | null => {
+  const m = typed.trim().match(/^(w?rl)?\s*-?\s*0*([0-9]{1,7})$/i)
+  if (!m || Number(m[2]) < 1) return null
+  return `${m[1]?.toLowerCase() === 'wrl' ? 'WRL' : 'RL'}-${m[2].padStart(2, '0')}`
 }
 
 /** "PR-01", "pr1", "PR 01" → 1: a component request for the stock (rl_0044). Anything else → null. */
@@ -968,18 +989,18 @@ function ReopenTicket() {
   const [error, setError, nth] = useError()
   const [notice, setNotice] = useState<string | null>(null)
 
-  const number = ticketNumberOf(typed)
+  const wanted = ticketCodeOf(typed)
 
   const lookUp = async () => {
     setError(null); setNotice(null); setFound(null)
-    if (!number) { setError('Type a ticket number, like RL-05.'); return }
+    if (!wanted) { setError('Type a ticket number, like RL-05.'); return }
     setBusy(true)
     try {
       const { data, error: err } = await supabase.from('revive_tickets')
-        .select('id, code, facility, status, engineer_id').eq('number', number).maybeSingle()
+        .select('id, code, facility, status, engineer_id').eq('code', wanted).maybeSingle()
       if (err) { setError(friendlyError(err)); return }
       const t = data as { id: string; code: string; facility: string; status: string; engineer_id: string | null } | null
-      if (!t) { setError(`There is no ticket RL-${number < 10 ? '0' : ''}${number}.`); return }
+      if (!t) { setError(`There is no ticket ${wanted}.`); return }
       if (!REOPENABLE.includes(t.status)) {
         setError(`${t.code} is ${STATUS_WORDS[t.status] ?? t.status}. Only a repair the engineer has closed, and the coordinator has not yet dispatched or scrapped, can be reopened.`)
         return
@@ -1162,11 +1183,11 @@ function DeleteTicket() {
   const [notice, setNotice] = useState<string | null>(null)
 
   const pr = prNumberOf(typed)
-  const number = pr === null ? ticketNumberOf(typed) : null
+  const wanted = pr === null ? ticketCodeOf(typed) : null
 
   const lookUp = async () => {
     setError(null); setNotice(null); setFound(null)
-    if (pr === null && !number) { setError('Type a ticket number, like RL-05, or a component request’s, like PR-01.'); return }
+    if (pr === null && !wanted) { setError('Type a ticket number, like RL-05, or a component request’s, like PR-01.'); return }
     setBusy(true)
     if (pr !== null) {
       const { data, error: err } = await supabase.from('revive_part_requests')
@@ -1179,10 +1200,10 @@ function DeleteTicket() {
       return
     }
     const { data, error: err } = await supabase.from('revive_tickets')
-      .select('id, code, facility, status').eq('number', number!).maybeSingle()
+      .select('id, code, facility, status').eq('code', wanted!).maybeSingle()
     setBusy(false)
     if (err) { setError(friendlyError(err)); return }
-    if (!data) { setError(`There is no ticket RL-${number! < 10 ? '0' : ''}${number}.`); return }
+    if (!data) { setError(`There is no ticket ${wanted}.`); return }
     setFound({ kind: 'ticket', ...(data as { id: string; code: string; facility: string; status: string }) })
   }
 
@@ -1291,8 +1312,8 @@ function Check({ checked, onChange, label, tone }: {
   )
 }
 
-function EditRow({ draft, trcs, busy, error, nth, onChange, onSave, onCancel, onRemove }: {
-  draft: Draft; trcs: Trc[]; busy: boolean
+function EditRow({ draft, trcs, warehouses, busy, error, nth, onChange, onSave, onCancel, onRemove }: {
+  draft: Draft; trcs: Trc[]; warehouses: WarehouseRow[]; busy: boolean
   /** Why Save was refused, said in the row above its button — not at the top of a long list (the user, 24 Oct). */
   error: string | null; nth: number
   onChange: (d: Draft) => void; onSave: () => void; onCancel: () => void; onRemove?: () => void
@@ -1302,6 +1323,10 @@ function EditRow({ draft, trcs, busy, error, nth, onChange, onSave, onCancel, on
   // An Observer sees the tickets of the Revive Labs ticked, so with none ticked they see nothing —
   // two were saved that way the day the role came in. It is not saved until one is ticked.
   const observerNeedsLab = draft.is_observer && draft.trc_ids.length === 0
+  // An in-charge's card offers only their warehouse(s); one alone is filled in (the user, 30 Oct).
+  const inChargeNeedsWarehouse = draft.is_warehouse && draft.warehouse_ids.length === 0
+  const toggleWarehouse = (id: string, on: boolean) =>
+    onChange({ ...draft, warehouse_ids: on ? [...draft.warehouse_ids, id] : draft.warehouse_ids.filter(x => x !== id) })
 
   return (
     <div className="space-y-3 rounded-xl border border-ink-200 bg-surface p-4">
@@ -1322,6 +1347,18 @@ function EditRow({ draft, trcs, busy, error, nth, onChange, onSave, onCancel, on
           ))}
         </div>
       </div>
+
+      {draft.is_warehouse && (
+        <div>
+          <p className="label">Warehouse(s)</p>
+          <div className="mt-1 flex flex-wrap gap-2">
+            {warehouses.filter(w => w.is_active || draft.warehouse_ids.includes(w.id)).map(w => (
+              <Check key={w.id} label={`${w.name}${w.is_active ? '' : ' (closed)'}`}
+                checked={draft.warehouse_ids.includes(w.id)} onChange={v => toggleWarehouse(w.id, v)} />
+            ))}
+          </div>
+        </div>
+      )}
 
       <div>
         <p className="label">Revive Lab(s)</p>
@@ -1349,6 +1386,9 @@ function EditRow({ draft, trcs, busy, error, nth, onChange, onSave, onCancel, on
       {(draft.is_engineer || draft.is_coordinator || draft.is_manager || draft.is_purchase) && draft.trc_ids.length === 0 && (
         <p className="text-xs text-amber-700">A role does nothing without a Revive Lab — tick the Revive Lab(s) they work in.</p>
       )}
+      {inChargeNeedsWarehouse && (
+        <p className="text-xs font-medium text-cyrixRed-700">Tick the warehouse(s) this in-charge raises tickets for.</p>
+      )}
       {observerNeedsLab && (
         <p className="text-xs font-medium text-cyrixRed-700">
           Tick the Revive Lab(s) this Observer should watch — with none ticked they would see no tickets.
@@ -1365,7 +1405,7 @@ function EditRow({ draft, trcs, busy, error, nth, onChange, onSave, onCancel, on
 
       {error && <Alert key={nth} kind="error">{error}</Alert>}
       <div className="flex flex-wrap gap-2">
-        <button type="button" className="btn-primary" onClick={onSave} disabled={busy || observerNeedsLab}>
+        <button type="button" className="btn-primary" onClick={onSave} disabled={busy || observerNeedsLab || inChargeNeedsWarehouse}>
           {busy && <Spinner className="h-4 w-4" />} Save
         </button>
         <button type="button" className="btn-secondary" onClick={onCancel}>Cancel</button>

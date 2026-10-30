@@ -31,7 +31,10 @@ export interface Ticket {
   trc_kind: TrcKind
   trc_id: string
   trc_name: string
+  /** The field service ticket; a warehouse's card, its document number (rl_0063). */
   source_ticket_no: string | null
+  /** A warehouse's item code (rl_0063). */
+  item_code?: string | null
   /** The hospital. The route card calls it Hospital name. */
   facility: string
   district: string | null
@@ -263,6 +266,7 @@ export interface Member {
   updated_by_name: string | null
   is_purchase: boolean
   is_observer?: boolean
+  is_warehouse?: boolean
 }
 
 export interface Person {
@@ -467,6 +471,8 @@ export interface Warehouse {
   state: string | null
   is_active: boolean
   sort_order: number
+  /** Where its spares go back to, saved from a card (rl_0063). */
+  return_address?: string | null
 }
 
 export function useWarehouses() {
@@ -476,7 +482,7 @@ export function useWarehouses() {
     staleTime: 5 * 60_000,
     queryFn: async () => unwrap<Warehouse[]>(
       await supabase.from('revive_warehouses')
-        .select('id, name, state, is_active, sort_order')
+        .select('id, name, state, is_active, sort_order, return_address')
         .order('sort_order').order('name'),
     ),
   })
@@ -745,6 +751,8 @@ export interface RaiseInput {
   billingSpare: boolean | null
   district: string
   sourceTicketNo: string
+  /** A warehouse's item code (rl_0063). */
+  itemCode?: string | null
   equipmentName: string
   equipmentMake: string
   equipmentModel: string
@@ -798,6 +806,8 @@ export function useRaiseTicket() {
     p_warehouse_id: a.warehouseId,
     p_contract_type: a.contractType,
     p_category: a.category,
+    // Sent only when there is one: an older database does not know it.
+    ...(a.itemCode ? { p_item_code: a.itemCode } : {}),
     p_criticality: a.criticality,
   }) as Promise<{ id: string; code: string; number: number; status: TicketStatus }>)
 }

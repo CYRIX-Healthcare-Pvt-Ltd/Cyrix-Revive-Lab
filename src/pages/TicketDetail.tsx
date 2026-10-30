@@ -54,9 +54,9 @@ const day = (iso: string | null | undefined) => (iso ? dayDate(iso) : null)
 
 export default function TicketDetail() {
   const { code } = useParams()
-  const number = parseTicketCode(code)
+  const wanted = parseTicketCode(code)
   const { data: tickets, isLoading } = useTickets()
-  const ticket = (tickets ?? []).find(t => t.number === number)
+  const ticket = (tickets ?? []).find(t => t.code === wanted)
 
   if (isLoading) return <PageLoader />
   if (!ticket) {
@@ -241,7 +241,7 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
                 <span className="text-xs text-ink-500"> · {stateLabel(t.trc_state)}</span>
               </Row>
               <Row label={t.source === 'warehouse' ? 'Warehouse' : 'Hospital name'}>{t.facility}</Row>
-              <Row label="Equipment barcode">{t.equipment_barcode && <span className="font-mono">{t.equipment_barcode}</span>}</Row>
+              <Row label={t.source === 'warehouse' ? 'Barcode' : 'Equipment barcode'}>{t.equipment_barcode && <span className="font-mono">{t.equipment_barcode}</span>}</Row>
               <Row label="Equipment name">{t.equipment_name}</Row>
               <Row label="Make">{t.equipment_make}</Row>
               <Row label="Model">{t.equipment_model}</Row>
@@ -259,7 +259,13 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
                   </ul>
                 )}
               </Row>
-              {t.source !== 'warehouse' && (
+              {t.source === 'warehouse' ? (
+                <>
+                  {/* As the warehouse's own sheet has them (rl_0063). */}
+                  <Row label="Document number">{t.source_ticket_no && <span className="font-mono">{t.source_ticket_no}</span>}</Row>
+                  <Row label="Item code">{t.item_code && <span className="font-mono">{t.item_code}</span>}</Row>
+                </>
+              ) : (
                 <Row label="Ticket ID">{t.source_ticket_no && <span className="font-mono">{t.source_ticket_no}</span>}</Row>
               )}
               <Row label="Raised on">{when(t.created_at)}</Row>

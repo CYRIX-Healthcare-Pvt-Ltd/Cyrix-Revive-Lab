@@ -24,14 +24,17 @@ describe('ticket numbers', () => {
     expect(ticketCode(9)).toBe('RL-09')
     expect(ticketCode(10)).toBe('RL-10')
     expect(ticketCode(100)).toBe('RL-100')
+    expect(ticketCode(3, 'WRL')).toBe('WRL-03')
   })
 
   it('reads a number however it was typed', () => {
-    expect(parseTicketCode('RL-07')).toBe(7)
-    expect(parseTicketCode('rl-7')).toBe(7)
-    expect(parseTicketCode('RL07')).toBe(7)
-    expect(parseTicketCode('7')).toBe(7)
-    expect(parseTicketCode('RL-100')).toBe(100)
+    expect(parseTicketCode('RL-07')).toBe('RL-07')
+    expect(parseTicketCode('rl-7')).toBe('RL-07')
+    expect(parseTicketCode('RL07')).toBe('RL-07')
+    expect(parseTicketCode('7')).toBe('RL-07')
+    expect(parseTicketCode('RL-100')).toBe('RL-100')
+    expect(parseTicketCode('wrl-3')).toBe('WRL-03')
+    expect(parseTicketCode('WRL12')).toBe('WRL-12')
   })
 
   it('refuses what is not a ticket number', () => {

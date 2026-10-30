@@ -326,16 +326,19 @@ export const TONE_DOT: Record<Tone, string> = {
  * the same, and a helper that truncated 100 to "10" would show a second
  * ticket's number on the first.
  */
-export function ticketCode(n: number): string {
-  return `RL-${n < 10 ? '0' : ''}${n}`
+export function ticketCode(n: number, series: 'RL' | 'WRL' = 'RL'): string {
+  return `${series}-${n < 10 ? '0' : ''}${n}`
 }
 
-/** "RL-07", "rl-7", "7" → 7. Anything else → null. */
-export function parseTicketCode(raw: string | null | undefined): number | null {
-  const m = String(raw ?? '').trim().match(/^(?:rl-?)?0*(\d{1,7})$/i)
+/**
+ * "RL-07", "rl-7", "7" → "RL-07"; "WRL-3", "wrl3" → "WRL-03". Anything else → null.
+ * A warehouse's tickets are numbered on their own (rl_0063), so a number alone is not a ticket: its code is.
+ */
+export function parseTicketCode(raw: string | null | undefined): string | null {
+  const m = String(raw ?? '').trim().match(/^(w?rl)?\s*-?\s*0*(\d{1,7})$/i)
   if (!m) return null
-  const n = Number(m[1])
-  return Number.isInteger(n) && n > 0 ? n : null
+  const n = Number(m[2])
+  return Number.isInteger(n) && n > 0 ? ticketCode(n, m[1]?.toLowerCase() === 'wrl' ? 'WRL' : 'RL') : null
 }
 
 export interface Me {
@@ -354,6 +357,10 @@ export interface Me {
   is_observer?: boolean
   /** An Observer who also raises tickets, as a field engineer does (rl_0040). */
   may_raise?: boolean
+  /** Raises their warehouse's defective spares themselves, as a field engineer does (rl_0063). */
+  is_warehouse?: boolean
+  /** The warehouse(s) they raise for: their card offers only these. */
+  warehouse_ids?: string[]
 }
 
 /* ------------------------------------------------------------------ */

@@ -69,7 +69,7 @@ interface Facet { value: string; label: string; n: number }
 
 function sortValue(key: SortKey, t: Ticket, team: string | null): string | number | null {
   switch (key) {
-    case 'code': return t.number
+    case 'code': return Date.parse(t.created_at)
     case 'raised': return Date.parse(t.created_at)
     case 'status': return STATUS[t.status]?.order ?? 99
     // A before B before C, and within a category the critical ones first.
@@ -179,11 +179,11 @@ export default function Tickets() {
   // This tab's tickets that pass the search: what every filter chooses among.
   const searched = useMemo(() => {
     const needle = q.trim().toLowerCase()
-    const asNumber = parseTicketCode(q)
+    const asCode = parseTicketCode(q)
     let rows = inScope.filter(tab.match)
     if (needle) {
       rows = rows.filter(t =>
-        (asNumber !== null && t.number === asNumber)
+        (asCode !== null && t.code === asCode)
         || [t.code, t.source_ticket_no, t.facility, t.spare_name, t.equipment_name, t.equipment_make, t.equipment_model,
             t.equipment_barcode, t.district, t.state, t.bemmp_code,
             t.stakeholder_name, t.stakeholder_ecode, t.engineer_name, t.in_awb, t.out_awb,
