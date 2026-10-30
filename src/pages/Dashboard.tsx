@@ -111,8 +111,18 @@ export default function Dashboard() {
   const { data: parts } = usePartRequests(undefined, seesComponents)
   const prMine = useMemo(() => (parts ?? []).filter(r => r.ticket_id === null && partActor(r, me, r.trc_id, null)), [parts, me])
   const [params, setParams] = useSearchParams()
-  const period: Period = PERIODS.some(p => p.id === params.get('period')) ? params.get('period') as Period : 'month'
-  const words = PERIODS.find(p => p.id === period)!.words
+  const period: Period = PERIODS.some(p => p.id === params.get('period')) ? params.get('period') as Period : 'all'
+  // Custom's From – To, kept in the address with the period (the user, 30 Oct).
+  const todayIso = new Date().toLocaleDateString('en-CA')
+  const firstIso = todayIso.slice(0, 8) + '01'
+  const custom = { from: params.get('from') ?? firstIso, to: params.get('to') ?? todayIso }
+  const setDate = (k: 'from' | 'to', v: string) => setParams(q => { if (v) q.set(k, v); else q.delete(k); return q }, { replace: true })
+  const shortDay = (iso: string) => new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+  const words = period === 'custom' ? `from ${shortDay(custom.from <= custom.to ? custom.from : custom.to)} to ${shortDay(custom.from <= custom.to ? custom.to : custom.from)}` : PERIODS.find(p => p.id === period)!.words
+  // One Revive Lab, or all of this person's, beside the period (the user, 30 Oct); kept in the address like the period.
+  const labs = useMemo(() => (trcs ?? []).filter(trc => (tickets ?? []).some(t => t.trc_id === trc.id)), [trcs, tickets])
+  const labId = labs.some(l => l.id === params.get('lab')) ? params.get('lab')! : ''
+  const seen = useMemo(() => (labId ? (tickets ?? []).filter(t => t.trc_id === labId) : tickets ?? []), [tickets, labId])
   // The TAT trend by the day, week, month or year tickets closed in (the user, 29 Sep).
   const [trendBy, setTrendBy] = useState<TrendBy>('month')
   // Which stages the trend draws — kept for next time — and the one being pointed at on the card (the user, 6 Oct).
@@ -149,7 +159,7 @@ export default function Dashboard() {
       else, and a dashboard counting the rest counted other people's work.
     */
     const [mine] = ticketTabs(me)
-    const all = (tickets ?? []).filter(mine.match)
+    const all = seen.filter(mine.match)
     const byTicket = new Map<string, TatEvent[]>()
     for (const e of events ?? []) {
       const list = byTicket.get(e.ticket_id) ?? []
@@ -160,7 +170,7 @@ export default function Dashboard() {
 
     const now = new Date()
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
-    const range = periodRange(period)
+    const range = periodRange(period, Date.now(), custom)
 
     // A ticket discarded before it went anywhere took no turnaround to count.
     const closed = all.filter(t => t.status === 'closed' && t.closed_at && t.closure !== 'discarded')
@@ -246,12 +256,12 @@ export default function Dashboard() {
       trend,
       total: all.length,
     }
-  }, [tickets, events, trcs, me, period, trendBy])
+  }, [seen, events, trcs, me, period, trendBy, custom.from, custom.to])
 
   // Every Revive Lab engineer at this person's Revive Labs (all of them for an admin), and the reports on them.
   const lab = useMemo(() => {
     if (!desk) return null
-    const all = tickets ?? []
+    const all = seen
     const history = new Map<string, TatEvent[]>()
     for (const e of events ?? []) {
       const list = history.get(e.ticket_id) ?? []
@@ -259,21 +269,21 @@ export default function Dashboard() {
       history.set(e.ticket_id, list)
     }
     const roster = (members ?? [])
-      .filter(m => m.is_engineer && (me!.is_admin || m.trc_ids.some(id => me!.trc_ids.includes(id))))
+      .filter(m => m.is_engineer && (me!.is_admin || m.trc_ids.some(id => me!.trc_ids.includes(id))) && (!labId || m.trc_ids.includes(labId)))
       .map(m => ({ id: m.employee_id, name: m.full_name }))
-    const range = periodRange(period)
+    const range = periodRange(period, Date.now(), custom)
     return {
       engineers: engineerWork(all, id => history.get(id) ?? [], roster, Date.now(), range),
       categories: categoryReport(all),
     }
-  }, [desk, tickets, events, members, me, period])
+  }, [desk, seen, events, members, me, period, labId, custom.from, custom.to])
 
   // The viewer's team's spares, for the card that leads to My team (rl_0029).
   const teamCounts = useMemo(() => {
     const ix = indexTeam(team)
-    const list = (tickets ?? []).filter(t => ownerOfTicket(ix, t))
+    const list = seen.filter(t => ownerOfTicket(ix, t))
     return list.length ? countTickets(list) : null
-  }, [team, tickets])
+  }, [team, seen])
 
   if (isLoading) return <PageLoader />
 
@@ -326,14 +336,16 @@ export default function Dashboard() {
       ) : (<>
       {/* The period opens the overview, as the Revive Lab picker opens the live floor; the header keeps the view switch and
           Raise ticket only, so nothing in it moves (the user, 9 Oct: "in desktop the toggle is here looks bad"). */}
+      {/* The period and its dates on one row, the Revive Lab under them, since Custom brings From and To (the user, 30 Oct). */}
+      <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="inline-flex rounded-lg border border-ink-200 bg-ink-50 p-0.5" role="group" aria-label="Period">
+        <div className="grid w-full grid-cols-3 rounded-lg border border-ink-200 bg-ink-50 p-0.5 sm:inline-flex sm:w-auto" role="group" aria-label="Period">
           {PERIODS.map(p => (
             <button
               key={p.id}
               type="button"
               aria-pressed={period === p.id}
-              onClick={() => setParams(q => { if (p.id === 'month') q.delete('period'); else q.set('period', p.id); return q }, { replace: true })}
+              onClick={() => setParams(q => { if (p.id === 'all') q.delete('period'); else q.set('period', p.id); return q }, { replace: true })}
               className={clsx('rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
                 period === p.id ? 'bg-surface text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-800')}
             >
@@ -341,6 +353,22 @@ export default function Dashboard() {
             </button>
           ))}
         </div>
+        {period === 'custom' && (
+          <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto">
+            <label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-ink-500">From
+              <input type="date" className="input min-w-0 flex-1 !py-1.5 text-sm sm:!w-auto" value={custom.from} max={todayIso} onChange={e => setDate('from', e.target.value)} /></label>
+            <label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-ink-500">To
+              <input type="date" className="input min-w-0 flex-1 !py-1.5 text-sm sm:!w-auto" value={custom.to} max={todayIso} onChange={e => setDate('to', e.target.value)} /></label>
+          </div>
+        )}
+      </div>
+      {labs.length > 1 && (
+          <select className="input !py-1.5 text-sm sm:!w-auto" value={labId} aria-label="Revive Lab"
+            onChange={e => setParams(q => { if (e.target.value) q.set('lab', e.target.value); else q.delete('lab'); return q }, { replace: true })}>
+            <option value="">All Revive Labs</option>
+            {labs.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+          </select>
+      )}
       </div>
       {/* Total, completed and the average TAT, then the pending a whole row, by who has it (the user, 22 Oct). */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">

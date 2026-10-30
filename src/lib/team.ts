@@ -289,19 +289,29 @@ export function countTickets(list: readonly ReportTicket[], now = Date.now()): T
  * way (the user, 23 Sep: "what is this 30 and 90? why you always come with
  * it?"). What is true now — open, late, with them — needs no period.
  */
-export type Period = 'month' | 'last_month' | 'all'
+export type Period = 'month' | 'last_month' | 'all' | 'custom'
 
 export const PERIODS: ReadonlyArray<{ id: Period; label: string; words: string }> = [
-  { id: 'month', label: 'This month', words: 'this month' },
-  { id: 'last_month', label: 'Last month', words: 'last month' },
+  // No Last month on any screen (the user, 28 and 30 Oct); periodRange still knows it.
+  // All time first and the default, then This month, then Custom (the user, 30 Oct).
   { id: 'all', label: 'All time', words: 'so far' },
+  { id: 'month', label: 'This month', words: 'this month' },
+  // From – To, chosen on the dashboard (the user, 30 Oct: "custom dates needed"); its words are the dates.
+  { id: 'custom', label: 'Custom', words: 'in these dates' },
 ]
 
 export interface Range { from: number; to: number }
 
 /** From the 1st of this month, the month before it, or all of time. */
-export function periodRange(p: Period, now = Date.now()): Range {
+export function periodRange(p: Period, now = Date.now(), custom?: { from: string; to: string }): Range {
   if (p === 'all') return { from: -Infinity, to: Infinity }
+  // Custom: from the start of the first day to the end of the last, either order.
+  if (p === 'custom') {
+    if (!custom) return { from: -Infinity, to: Infinity }
+    const [a, b] = custom.from <= custom.to ? [custom.from, custom.to] : [custom.to, custom.from]
+    const end = new Date(b + 'T00:00:00'); end.setDate(end.getDate() + 1)
+    return { from: new Date(a + 'T00:00:00').getTime(), to: end.getTime() }
+  }
   const d = new Date(now)
   const thisMonth = new Date(d.getFullYear(), d.getMonth(), 1).getTime()
   if (p === 'month') return { from: thisMonth, to: Infinity }
