@@ -1360,15 +1360,19 @@ function EditRow({ draft, trcs, warehouses, busy, error, nth, onChange, onSave, 
         </div>
       )}
 
-      <div>
-        <p className="label">Revive Lab(s)</p>
-        <div className="mt-1 flex flex-wrap gap-2">
-          {trcs.map(t => (
-            <Check key={t.id} label={`${t.name}${t.is_active ? '' : ' (closed)'}`}
-              checked={draft.trc_ids.includes(t.id)} onChange={v => toggleTrc(t.id, v)} />
-          ))}
+      {/* For the Revive Lab roles and Admin only: a warehouse in-charge's labs come from the warehouse's state, as a
+          field engineer's do (the user, 30 Oct: "why was revive lab selection checkbox for?"). */}
+      {(draft.is_engineer || draft.is_coordinator || draft.is_manager || draft.is_purchase || draft.is_observer || draft.is_admin || draft.trc_ids.length > 0) && (
+        <div>
+          <p className="label">Revive Lab(s)</p>
+          <div className="mt-1 flex flex-wrap gap-2">
+            {trcs.map(t => (
+              <Check key={t.id} label={`${t.name}${t.is_active ? '' : ' (closed)'}`}
+                checked={draft.trc_ids.includes(t.id)} onChange={v => toggleTrc(t.id, v)} />
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       <div>
         <p className="label">Access</p>
