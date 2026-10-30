@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { reportError } from '@/lib/reportErrors'
 import { RefreshCw, AlertTriangle } from 'lucide-react'
 
 /**
@@ -28,9 +29,9 @@ export default class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    // The only record there is. Worth keeping until something like
-    // Sentry exists — see architecture.md, "No observability".
     console.error('Unhandled error', error, info.componentStack)
+    // And to the Ops page (0230), so a crash on somebody's phone is seen by somebody else.
+    reportError(error, 'Crash')
   }
 
   render() {
