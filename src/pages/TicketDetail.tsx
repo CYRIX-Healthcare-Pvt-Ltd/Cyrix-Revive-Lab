@@ -1566,9 +1566,10 @@ function ActionForm({
   const toOem = action === 'dispatch' && t.status === 'not_repairable' && t.proposal === 'oem'
   const [oemAddress, setOemAddress] = useState(toOem && t.equipment_make ? `${t.equipment_make}\n` : '')
   const { data: requests } = usePartRequests(asksEstimate ? t.id : undefined)
-  // A PI was asked for on it: whether the defective went back, Yes or No, chosen every time (rl_0064; the user, 31 Oct).
-  const { data: steps } = useTrail(action === 'dispatch' ? t.id : undefined)
-  const asksDefective = action === 'dispatch' && !!steps?.some(e => e.status === 'pi_requested')
+  // A PI was asked for on it: whether the defective went back, Yes or No, chosen every time — by the Revive Lab
+  // engineer closing the repair, who knows (rl_0066; the user, 31 Oct).
+  const { data: steps } = useTrail(action === 'complete' ? t.id : undefined)
+  const asksDefective = action === 'complete' && !!steps?.some(e => e.status === 'pi_requested')
   const [defective, setDefective] = useState<'' | 'yes' | 'no'>('')
   const purchased = (requests ?? []).reduce((sum, r) => sum + (r.bill_amount ?? 0), 0)
 
@@ -1623,6 +1624,7 @@ function ActionForm({
         case 'pi_received':
           await piReceived.mutateAsync({ id: t.id, note }); onDone('PI parts received. The repair carries on.'); break
         case 'complete':
+          if (asksDefective && !defective) { onError('Choose whether the defective was returned.'); return }
           if (outcome === 'not_repairable' && !proposal) { onError('Say what should become of it: scrap, or back to the field engineer.'); return }
           if (note.trim().length < 3) { onError(outcome === 'repaired' ? 'Say what action was taken on it.' : 'Say why.'); return }
           // A photo or a video of it working, either will do; the voice note is extra (the user, 24 Sep).
@@ -1634,6 +1636,7 @@ function ActionForm({
             video: outcome === 'repaired' ? video : null,
             voice: outcome === 'repaired' ? voice : null,
             round,
+            defectiveReturned: asksDefective ? defective === 'yes' : null,
           })
           onDone(outcome === 'repaired' ? 'Repair closed. It is with the coordinator for dispatch.'
             : outcome === 'not_repairable'
@@ -1647,8 +1650,7 @@ function ActionForm({
             onError('Enter the estimated billing cost — under Pvt the customer can be asked to pay it.'); return
           }
           if (toOem && oemAddress.trim().length < 5) { onError('Enter the OEM’s name and address — where it is going.'); return }
-          if (asksDefective && !defective) { onError('Choose whether the defective was returned.'); return }
-          await dispatch.mutateAsync({ id: t.id, courier, awb, on, note, estimate: asksEstimate ? amount : null, oemAddress: toOem ? oemAddress.trim() : null, defectiveReturned: asksDefective ? defective === 'yes' : null })
+          await dispatch.mutateAsync({ id: t.id, courier, awb, on, note, estimate: asksEstimate ? amount : null, oemAddress: toOem ? oemAddress.trim() : null })
           onDone(toOem ? 'Dispatched to the OEM.'
             : asksEstimate ? `Dispatched back, with the estimated billing of ${rupees(amount!)}.` : 'Dispatched back to the field.')
           break
@@ -1820,6 +1822,17 @@ function ActionForm({
             ))}
           </div>
         </div>
+      )}
+
+      {asksDefective && (
+        <label className="block sm:max-w-xs">
+          <span className="label">Defective returned <span className="text-cyrixRed-600">*</span></span>
+          <select className="input mt-1" value={defective} onChange={e => setDefective(e.target.value as '' | 'yes' | 'no')}>
+            <option value="">Choose…</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+          </select>
+        </label>
       )}
 
       {/* The coordinator may not know what a board is worth: the engineer says, and the coordinator does it. */}
@@ -2031,19 +2044,6 @@ function ActionForm({
         </label>
       )}
 
-      {/* Defective returned and the estimate side by side on a computer, stacked on a phone (the user, 31 Oct). */}
-      {(asksDefective || asksEstimate) && (
-      <div className={asksDefective && asksEstimate ? 'grid items-start gap-3 sm:grid-cols-2' : ''}>
-      {asksDefective && (
-        <label className={`block ${asksEstimate ? 'sm:pt-3' : 'sm:max-w-xs'}`}>
-          <span className="label">Defective returned <span className="text-cyrixRed-600">*</span></span>
-          <select className="input mt-1" value={defective} onChange={e => setDefective(e.target.value as '' | 'yes' | 'no')}>
-            <option value="">Choose…</option>
-            <option value="yes">Yes</option>
-            <option value="no">No</option>
-          </select>
-        </label>
-      )}
       {asksEstimate && (
         <div className="rounded-lg border border-fuchsia-200 bg-fuchsia-50/60 p-3">
           <label className="block sm:max-w-xs">
@@ -2064,8 +2064,6 @@ function ActionForm({
             {purchased > 0 ? <> — components purchased for it came to <span className="font-medium tabular-nums">{rupees(purchased)}</span></> : null}.
           </p>
         </div>
-      )}
-      </div>
       )}
 
       {action === 'courier' && (

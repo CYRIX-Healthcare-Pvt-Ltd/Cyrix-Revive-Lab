@@ -133,6 +133,8 @@ export interface Ticket {
   billing_estimate: number | null
   /** Its BEMMP asks for that estimate — Pvt. */
   asks_billing_estimate: boolean
+  /** A PI was asked for on it: whether the defective went back, said on closing the repair (rl_0066). */
+  defective_returned: boolean | null
   /** Each time the field engineer sent it back not working, oldest first (rl_0027). */
   field_returns: FieldReturn[]
   /** Its latest transfer to another field engineer, whatever became of it (rl_0028). */
@@ -912,6 +914,7 @@ export const useCompleteRepair = () => useTicketMutation(
     id: string; note?: string; outcome: Outcome; proposal?: Proposal | null
     photos?: Blob[]; video?: Blob | null; voice?: Blob | null
     round?: number
+    defectiveReturned?: boolean | null
   }) => {
     const repaired = a.outcome === 'repaired'
     const photos = repaired ? await uploadStage(a.id, 'done', a.photos, a.round) : []
@@ -920,6 +923,8 @@ export const useCompleteRepair = () => useTicketMutation(
     return rpc('revive_complete_repair', {
       p_ticket_id: a.id, p_note: a.note || null, p_outcome: a.outcome, p_proposal: a.proposal ?? null,
       p_photos: photos, p_video: video, p_voice: voice,
+      // A PI was asked for on it: whether the defective went back (rl_0066).
+      p_defective_returned: a.defectiveReturned ?? null,
     })
   })
 
@@ -1107,15 +1112,13 @@ export const useCancelPart = () => useTicketMutation(
   (a: { id: string; reason?: string }) => rpc('revive_cancel_part', { p_request_id: a.id, p_reason: a.reason || null }))
 
 export const useDispatch = () => useTicketMutation(
-  (a: { id: string; courier: string; awb: string; on: string; note?: string; estimate?: number | null; oemAddress?: string | null; defectiveReturned?: boolean | null }) =>
+  (a: { id: string; courier: string; awb: string; on: string; note?: string; estimate?: number | null; oemAddress?: string | null }) =>
     rpc('revive_dispatch', {
       p_ticket_id: a.id, p_courier: a.courier, p_awb: a.awb,
       p_dispatched_on: a.on || null, p_note: a.note || null,
       p_billing_estimate: a.estimate ?? null,
       // Not repairable and proposed for the OEM: where it goes (rl_0033).
       p_oem_address: a.oemAddress ?? null,
-      // A PI was asked for on it: whether the defective went back (rl_0064).
-      p_defective_returned: a.defectiveReturned ?? null,
     }))
 
 /** A manager of its Revive Lab agrees it cannot be repaired; the coordinator then moves it (rl_0034). */
