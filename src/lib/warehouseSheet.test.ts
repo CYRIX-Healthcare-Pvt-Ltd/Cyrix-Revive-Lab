@@ -14,9 +14,12 @@ describe("a warehouse's sheet, a ticket a unit (rl_0063)", () => {
     expect(units.map(u => u.barcode)).toEqual(['BC1', 'BC2'])
   })
 
-  it('puts a single barcode on the first of the units', () => {
+  it('gives a single barcode, and every other field, to each of the units', () => {
     const { units } = readWarehouseGrid([HEAD, ['D1', 'I1', 'Probe', '2 Nos', 'BC1', 'Noisy']])
-    expect(units.map(u => u.barcode)).toEqual(['BC1', ''])
+    expect(units).toEqual([
+      { doc: 'D1', item: 'I1', desc: 'Probe', barcode: 'BC1', issue: 'Noisy' },
+      { doc: 'D1', item: 'I1', desc: 'Probe', barcode: 'BC1', issue: 'Noisy' },
+    ])
   })
 
   it('writes a long numeric barcode out whole, skips empty rows, finds headings under a title', () => {

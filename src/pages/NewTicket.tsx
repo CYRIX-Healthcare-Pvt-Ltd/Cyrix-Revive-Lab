@@ -272,9 +272,10 @@ export default function NewTicket() {
     // One photo of the spare at least, whoever raises it — field engineer or the desk (the user, 24 Sep).
     // Not for a warehouse's spare (the user, 30 Oct: "For wh, this is not mandatory").
     if (photos.length === 0 && !ots && !fromWarehouse) { setError('Add a photo of the spare — one at least.'); return }
-    const codes = fromWarehouse && !sheet ? barcodes.slice(0, units).map(b => b.trim()) : []
-    const twice = codes.findIndex((b, i) => b && codes.indexOf(b) !== i)
-    if (twice >= 0) { setError(`Barcode ${codes.indexOf(codes[twice]) + 1} and barcode ${twice + 1} are the same.`); return }
+    // The units of one quantity may share a barcode, and one left empty takes the first's (the user, 31 Oct:
+    // "for warehouse if qty is more than 1 then why duplicates checking").
+    const typed = fromWarehouse && !sheet ? barcodes.slice(0, units).map(b => b.trim()) : []
+    const codes = typed.map(b => b || typed[0])
     if (form.returnAddress.trim().length < 5) { setError('Enter the spare return address.'); return }
     if (namesHolder && !holder) {
       setError(fromWarehouse ? 'Name the warehouse in-charge this spare belongs to.' : 'Name the field engineer this spare belongs to.')
@@ -289,14 +290,10 @@ export default function NewTicket() {
     // Each row of the sheet is a ticket: what is missing is said on its row, and beside Raise.
     if (sheet) {
       if (rows.length === 0) { setError('Upload the Excel sheet.'); return }
-      const seen = new Map<string, number>()
-      const checked = rows.map((r, i) => {
-        const bc = r.barcode.trim().toLowerCase()
-        const twin = bc ? seen.get(bc) : undefined
-        if (bc && twin === undefined) seen.set(bc, i + 1)
+      // No barcode is checked against another: a warehouse's spares may share one (the user, 31 Oct).
+      const checked = rows.map(r => {
         const why = r.desc.trim().length < 2 ? 'Enter the spare name.'
-          : r.issue.trim().length < 3 ? 'Enter the issue identified.'
-          : twin !== undefined ? `The same barcode as ticket ${twin}.` : undefined
+          : r.issue.trim().length < 3 ? 'Enter the issue identified.' : undefined
         return { ...r, error: why }
       })
       setRows(checked)

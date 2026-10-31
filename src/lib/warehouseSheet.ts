@@ -3,9 +3,9 @@
  * Description, Quantity, Barcode, Complaint. The template has the card's names, in its order (the user: "give the
  * same field names"), and their own headings are read too.
  *
- * One ticket a unit: a quantity of 2 is two tickets. The barcodes in the cell are shared out between
- * them, one each, when the cell has more than one; a single barcode goes on the first, and the rest are
- * typed on the page before raising.
+ * One ticket a unit: a quantity of 2 is two tickets, each with the row's every field. The barcodes in the
+ * cell are shared out between them, one each, when the cell has more than one; a single barcode goes on
+ * every one of them (the user, 31 Oct: "for the 2nd ticket some field data is missing example barcode").
  */
 export const SHEET_HEADERS = ['Document number', 'Item code', 'Quantity', 'Barcode', 'Spares and accessories', 'Issue identified'] as const
 
@@ -47,7 +47,7 @@ export function readWarehouseGrid(grid: readonly (readonly unknown[])[]): { unit
     for (let u = 0; u < qty; u++) {
       units.push({
         doc: cell(row, 'doc'), item: cell(row, 'item'), desc: cell(row, 'desc'), issue: cell(row, 'issue'),
-        barcode: codes.length <= 1 ? (u === 0 ? codes[0] ?? '' : '') : u < qty - 1 ? codes[u] ?? '' : codes.slice(u).join(', '),
+        barcode: codes.length <= 1 ? codes[0] ?? '' : u < qty - 1 ? codes[u] ?? '' : codes.slice(u).join(', '),
       })
     }
     if (units.length > MAX_UNITS) return { units: [], error: `More than ${MAX_UNITS} tickets in one sheet — split it in two.` }
