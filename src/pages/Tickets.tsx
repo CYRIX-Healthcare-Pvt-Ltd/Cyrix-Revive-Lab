@@ -268,7 +268,11 @@ export default function Tickets() {
   const shown = useMemo(() => {
     const rows = searched.filter(t => passes(t))
     const dir = asc ? 1 : -1
+    // A ticket number searched for comes first, above the others that only hold it in an AWB or a barcode
+    // (the user, 31 Oct: "why searching 244 doesnt show rl-244?").
+    const asCode = parseTicketCode(q)
     return [...rows].sort((a, b) => {
+      if (asCode !== null && (a.code === asCode) !== (b.code === asCode)) return a.code === asCode ? -1 : 1
       const x = sortValue(sortKey, a, teamOf(a)?.name ?? null), y = sortValue(sortKey, b, teamOf(b)?.name ?? null)
       // Nobody yet (no engineer, no spare named) goes last whichever way it runs.
       if (x === null || y === null) {
@@ -281,7 +285,7 @@ export default function Tickets() {
       return Date.parse(b.created_at) - Date.parse(a.created_at)
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searched, params.toString(), sortKey, asc, teamOf])
+  }, [searched, params.toString(), sortKey, asc, teamOf, q])
 
   // How many filters are narrowing the list, and the way back to all of it.
   const narrowing = [trcId, inState, inDistrict, bemmp, status, from, cat, crit, team, eng].filter(v => v.length > 0).length
