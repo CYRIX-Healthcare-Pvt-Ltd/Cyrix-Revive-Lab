@@ -17,16 +17,16 @@ import { ticketFileName, ticketWorkbook } from '@/lib/ticketSheet'
 import { ClassTag } from '@/components/Classification'
 import { clockTime, dayDate } from '@/lib/when'
 
-type SortKey = 'code' | 'raised' | 'status' | 'category' | 'hospital' | 'spare' | 'trc' | 'field' | 'team' | 'engineer' | 'age'
+type SortKey = 'code' | 'raised' | 'repaired' | 'status' | 'category' | 'hospital' | 'spare' | 'trc' | 'field' | 'team' | 'engineer' | 'age'
 
 const COLUMN: Record<SortKey, string> = {
-  code: 'Ticket', raised: 'Raised', status: 'Status', category: 'Category', hospital: 'Hospital', spare: 'Spare',
+  code: 'Ticket', raised: 'Raised', repaired: 'Repaired', status: 'Status', category: 'Category', hospital: 'Hospital', spare: 'Spare',
   trc: 'Revive Lab', field: 'Field engineer', team: 'Team of', engineer: 'Revive Lab engineer', age: 'Age',
 }
 
 /** A column's first click: dates newest first, ages longest first, words A to Z. */
 const FIRST_ASC: Record<SortKey, boolean> = {
-  code: false, raised: false, age: false,
+  code: false, raised: false, repaired: false, age: false,
   status: true, category: true, hospital: true, spare: true, trc: true, field: true, team: true, engineer: true,
 }
 
@@ -34,6 +34,7 @@ const FIRST_ASC: Record<SortKey, boolean> = {
 const PHONE_SORTS: Array<{ key: SortKey; asc: boolean; label: string }> = [
   { key: 'raised', asc: false, label: 'Newest first' },
   { key: 'raised', asc: true, label: 'Oldest first' },
+  { key: 'repaired', asc: false, label: 'Recently repaired' },
   { key: 'status', asc: true, label: 'Status' },
   { key: 'category', asc: true, label: 'Category' },
   { key: 'hospital', asc: true, label: 'Hospital' },
@@ -71,6 +72,7 @@ function sortValue(key: SortKey, t: Ticket, team: string | null): string | numbe
   switch (key) {
     case 'code': return Date.parse(t.created_at)
     case 'raised': return Date.parse(t.created_at)
+    case 'repaired': return t.repaired_at ? Date.parse(t.repaired_at) : null
     case 'status': return STATUS[t.status]?.order ?? 99
     // A before B before C, and within a category the critical ones first.
     case 'category': return t.spare_category ? `${t.spare_category}${t.criticality === 'critical' ? 0 : 1}` : null
@@ -513,6 +515,7 @@ export default function Tickets() {
                   <tr className="border-b border-ink-200 text-left text-xs font-semibold uppercase tracking-wide text-ink-500">
                     <SortHeader label="Ticket" col="code" sortKey={sortKey} asc={asc} onSort={onSort} className={pinned} />
                     <SortHeader label="Raised" col="raised" sortKey={sortKey} asc={asc} onSort={onSort} />
+                    <SortHeader label="Repaired" col="repaired" sortKey={sortKey} asc={asc} onSort={onSort} />
                     <SortHeader label="Status" col="status" sortKey={sortKey} asc={asc} onSort={onSort} />
                     <SortHeader label="Category" col="category" sortKey={sortKey} asc={asc} onSort={onSort} />
                     <SortHeader label={anyWarehouse ? 'Hospital / Warehouse' : 'Hospital'} col="hospital" sortKey={sortKey} asc={asc} onSort={onSort} />
@@ -529,7 +532,7 @@ export default function Tickets() {
                   <Fragment key={g.key}>
                   {grouped && (
                     <tr className="bg-ink-50/70">
-                      <td colSpan={showTeam ? 11 : 10} className="px-4 py-1.5">
+                      <td colSpan={showTeam ? 12 : 11} className="px-4 py-1.5">
                         <span className="sticky left-4 inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-label">
                           <span aria-hidden className={clsx('h-2 w-2 rounded-full', TONE_DOT[g.tone])} />
                           <span className={TONE_TEXT[g.tone]}>{g.label}</span>
@@ -556,6 +559,11 @@ export default function Tickets() {
                         <td className="px-4 py-3">
                           <p className="text-ink-800">{raised.date}</p>
                           <p className="text-xs text-ink-500">{raised.time}</p>
+                        </td>
+                        <td className="px-4 py-3">
+                          {t.repaired_at
+                            ? <><p className="text-ink-800">{dayDate(t.repaired_at)}</p><p className="text-xs text-ink-500">{clockTime(t.repaired_at)}</p></>
+                            : <span className="text-ink-300">—</span>}
                         </td>
                         <td className="px-4 py-3">
                           {/* One row of pills, level, wrapping neatly when the column is narrow. */}
@@ -669,6 +677,7 @@ export default function Tickets() {
                         </p>
                         <p className="shrink-0 text-xs text-ink-500">{raised.date}, {raised.time}</p>
                       </div>
+                      {t.repaired_at && <p className="text-xs text-ink-500">Repaired {dayDate(t.repaired_at)}, {clockTime(t.repaired_at)}</p>}
                       {spare && <p className="text-xs text-ink-500">{spare}</p>}
                       <p className="text-xs text-ink-500">
                         {t.trc_name} · {t.stakeholder_name}{teamOf(t) ? ` (team of ${teamOf(t)!.name})` : ''} · {age(t)}
