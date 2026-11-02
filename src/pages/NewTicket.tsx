@@ -86,7 +86,6 @@ export default function NewTicket() {
   const [params, setParams] = useSearchParams()
   const canSheet = atLab || whIn
   const sheet = canSheet && params.get('mode') === 'sheet'
-  const choosing = canSheet && !params.get('mode')
   const [rows, setRows] = useState<SheetRow[]>([])
   const [progress, setProgress] = useState<string | null>(null)
   // Another state's Revive Lab for a warehouse's spare: no BEMMP, so the Regional Revive Lab admins approve it.
@@ -100,6 +99,8 @@ export default function NewTicket() {
   const [holder, setHolder] = useState<Person | null>(null)
   // The desk's own question: a hospital's spare, or a warehouse's (rl_0020).
   const [source, setSource] = useState<TicketSource>('hospital')
+  // The Excel sheet is a warehouse's only (the user, 2 Nov): the in-charge is asked on arriving, the desk once it picks A warehouse.
+  const choosing = !params.get('mode') && (whIn || (atLab && source === 'warehouse'))
   const [warehouseId, setWarehouseId] = useState('')
   // A Pvt spare says which contract it is under (rl_0024).
   const [contractType, setContractType] = useState<ContractType | null>(null)
@@ -424,7 +425,7 @@ export default function NewTicket() {
       </div>
 
       {choosing && (
-        <Dialog title="Raise a ticket" icon={<IconChip icon={PackagePlus} tone="red" />} onClose={() => navigate(-1)}>
+        <Dialog title="Raise a ticket" icon={<IconChip icon={PackagePlus} tone="red" />} onClose={() => (whIn ? navigate(-1) : setSource('hospital'))}>
           {/* One ticket first, Upload Excel second (the user, 30 Oct). */}
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             <button
@@ -500,7 +501,7 @@ export default function NewTicket() {
                   <button
                     key={s}
                     type="button"
-                    onClick={() => setSource(s)}
+                    onClick={() => { setSource(s); if (s === 'warehouse') setParams({}, { replace: true }) }}
                     aria-pressed={source === s}
                     className={clsx(
                       'flex items-center gap-2.5 rounded-lg border px-3 py-2 text-left transition-colors',
