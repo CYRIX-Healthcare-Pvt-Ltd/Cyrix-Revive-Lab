@@ -120,6 +120,7 @@ export const TICKET_COLUMNS: readonly Column[] = [
   { heading: 'Sent on', width: 13, kind: 'date', value: t => excelDate(t.in_dispatched_on) },
   { heading: 'Accepted on', width: 22, kind: 'datetime', value: t => excelDateTime(t.accepted_at) },
   { heading: 'Repair expected by', width: 13, kind: 'date', value: t => excelDate(t.expected_by) },
+  { heading: 'Repaired on', width: 22, kind: 'datetime', value: t => excelDateTime(t.repaired_at) },
   { heading: 'Repair outcome', width: 22, kind: 'text', value: t => (t.outcome ? OUTCOME_LABEL[t.outcome] : null) },
   { heading: 'Defective returned', width: 11, kind: 'text', value: t => (t.defective_returned == null ? null : t.defective_returned ? 'Yes' : 'No') },
   { heading: 'Dispatched back on', width: 13, kind: 'date', value: t => excelDate(t.out_dispatched_on) },
