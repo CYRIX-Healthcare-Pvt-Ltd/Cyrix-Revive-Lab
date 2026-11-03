@@ -12,7 +12,7 @@ import {
   STATUS, STATUS_ORDER, TONE_CLASS, TONE_DOT, TONE_EDGE, TONE_TEXT, awaitingManager, canRaise, isMyTicket, itemsSummary, parseTicketCode, scopeTabs, splitsByScope, statusGroups, ticketTabs, type TicketScope,
   type TabId, type TicketStatus, type Tone,
 } from '@/lib/tickets'
-import { EmptyState, PageLoader, ReturnedTag, SectorTag, SortHeader, Spinner, StatusBadge, TransferTag, WarehouseChip } from '@/components/ui'
+import { Alert, EmptyState, PageLoader, ReturnedTag, SectorTag, SortHeader, Spinner, StatusBadge, TransferTag, WarehouseChip } from '@/components/ui'
 import { ticketFileName, ticketWorkbook } from '@/lib/ticketSheet'
 import { ClassTag } from '@/components/Classification'
 import { clockTime, dayDate } from '@/lib/when'
@@ -95,7 +95,7 @@ export default function Tickets() {
   const navigate = useNavigate()
   const { search } = useLocation()
   const [params, setParams] = useSearchParams()
-  const { data: tickets, isLoading } = useTickets()
+  const { data: tickets, isLoading, error: loadError, refetch, isFetching } = useTickets()
 
   /*
     Which of this person's teams each ticket is from — the report of theirs it
@@ -492,7 +492,13 @@ export default function Tickets() {
           </div>
         </div>
 
-        {shown.length === 0 ? (
+        {/* A list that did not load says so, rather than "No tickets here" (rl_0067; the user, 3 Nov: "why no tickets"). */}
+        {loadError && !tickets ? (
+          <div className="space-y-3 p-4">
+            <Alert kind="error" title="The tickets did not load">{(loadError as Error).message}</Alert>
+            <button type="button" className="btn-secondary" disabled={isFetching} onClick={() => void refetch()}>{isFetching ? <Spinner className="h-4 w-4" /> : null} Try again</button>
+          </div>
+        ) : shown.length === 0 ? (
           <div className="p-4">
             <EmptyState
               icon={Inbox}
