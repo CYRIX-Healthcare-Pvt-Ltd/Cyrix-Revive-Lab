@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import clsx from 'clsx'
-import { Boxes, ClipboardList, LayoutDashboard, ListChecks, PackagePlus, ShieldCheck, Grid2x2, LogOut, Users } from 'lucide-react'
+import { Boxes, ClipboardList, LayoutDashboard, ListChecks, PackagePlus, ShieldCheck, Grid2x2, LogOut, Sparkles, Users } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useMyTeam, usePartRequests, useTickets } from '@/lib/queries'
 import { TONE_TEXT, canRaise, observesOnly, stockRequestsWaitingOn, waitingOnMe, type Tone } from '@/lib/tickets'
@@ -9,6 +9,8 @@ import { indexTeam, ownerOfTicket } from '@/lib/team'
 import { Logo } from '@/components/Logo'
 import ThemeToggle from '@/components/ThemeToggle'
 import Avatar from '@/components/Avatar'
+import { canUseCyra } from '@/lib/cyraLink'
+import { openCyra } from '@/lib/cyra'
 
 /**
  * The frame every Revive Lab screen sits in.
@@ -129,6 +131,17 @@ export default function Shell() {
               </span>
               <Avatar name={employee?.full_name} src={employee?.avatar} size="header" />
             </div>
+            {/* CYRA: the repair's technical record, next to the lab work here (src/lib/cyraLink.ts). */}
+            {canUseCyra(me) && (
+              <button
+                type="button"
+                onClick={() => openCyra().catch(e => window.alert(e instanceof Error ? e.message : 'Could not open CYRA.'))}
+                className="btn-secondary px-3 py-2"
+                title="Open CYRA — record the repair's technical knowledge"
+              >
+                <Sparkles className="h-4 w-4 text-indigo-500" /> <span className="hidden sm:inline">Open CYRA</span>
+              </button>
+            )}
             <ThemeToggle />
             <button onClick={handleSignOut} className="btn-icon" aria-label="Sign out" title="Sign out">
               <LogOut className="h-4.5 w-4.5 text-cyrixRed-600" />
