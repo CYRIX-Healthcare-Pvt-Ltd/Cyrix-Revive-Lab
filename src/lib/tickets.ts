@@ -554,6 +554,11 @@ export function managesTrc(me: Me | null | undefined, trcId: string): boolean {
   return !!me && me.is_manager && me.trc_ids.includes(trcId)
 }
 
+/** Not repairable, waiting on this manager's approval: its own card and sub-tab in Waiting on you (the user, 12 Nov). */
+export function isMyApproval(t: { status: TicketStatus; nr_approved_at?: string | null; trc_id: string }, me: Me | null | undefined): boolean {
+  return awaitingManager(t) && managesTrc(me, t.trc_id)
+}
+
 /**
  * Somebody who only watches (rl_0039): an Observer with no other Revive Lab
  * role. They get a plain dashboard and the tickets of the Revive Labs ticked
@@ -750,6 +755,31 @@ export function waitingOnMe(t: TicketLike, me: Me | null | undefined): boolean {
   // Asked to raise a PI for the parts, in the other software: the field engineer's until the parts reach the Revive Lab (rl_0055).
   if (t.status === 'pi_requested' && !!me && t.stakeholder_id === me.employee_id) return true
   return actionsFor(t, queue).some(forward) || partsWaitingOn(t, queue) > 0
+}
+
+/**
+ * In which of this person's roles a ticket waits on them — the sub-tabs of Waiting on you
+ * (the user, 12 Nov: "add all, and role wise also, split everything else").
+ */
+export type WaitRole = 'manager' | 'coordinator' | 'engineer' | 'purchase' | 'approver' | 'field'
+export const WAIT_ROLES: ReadonlyArray<{ id: WaitRole; label: string }> = [
+  { id: 'manager', label: 'Manager approval' },
+  { id: 'coordinator', label: 'Coordinator' },
+  { id: 'engineer', label: 'Revive Lab engineer' },
+  { id: 'purchase', label: 'Purchase' },
+  { id: 'approver', label: 'Approver' },
+  { id: 'field', label: 'Field engineer' },
+]
+export function waitRole(t: TicketLike, me: Me | null | undefined): WaitRole {
+  if (!me) return 'coordinator'
+  if (isMyApproval(t, me)) return 'manager'
+  // Their own, with no Revive Lab role at all: raised by them, sent back to them, a PI to raise.
+  const base: Me = { ...me, is_engineer: false, is_coordinator: false, is_manager: false, is_admin: false, is_purchase: false, approves: false }
+  if (waitingOnMe(t, base)) return 'field'
+  if (me.approves && waitingOnMe(t, { ...base, approves: true })) return 'approver'
+  if (me.is_engineer && waitingOnMe(t, { ...base, is_engineer: true })) return 'engineer'
+  if (me.is_purchase && waitingOnMe(t, { ...base, is_purchase: true })) return 'purchase'
+  return 'coordinator'
 }
 
 /**

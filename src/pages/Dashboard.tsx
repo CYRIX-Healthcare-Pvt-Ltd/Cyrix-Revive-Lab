@@ -5,14 +5,14 @@ import { useQuery } from '@tanstack/react-query'
 import {
   Bar, BarChart, CartesianGrid, Cell, LabelList, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
-import { AlarmClock, ArrowRight, BellRing, Box, LayoutDashboard, Building2, ChartColumn, Check, ChevronDown, ClipboardList, HardHat, Inbox, PackagePlus, TrendingUp, Users } from 'lucide-react'
+import { AlarmClock, ArrowRight, BadgeCheck, BellRing, Box, LayoutDashboard, Building2, ChartColumn, Check, ChevronDown, ClipboardList, HardHat, Inbox, PackagePlus, TrendingUp, Users } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { supabase } from '@/lib/supabase'
 import { useMembers, useMyTeam, usePartRequests, useTickets, useTrcs, useVisibleEvents, type PartRequest, type Ticket } from '@/lib/queries'
 import { dateTime as dateTimeOf, dayDate } from '@/lib/when'
 import {
   REPAIRING, STATUS, STATUS_ORDER, TONE_DOT, TONE_FILL, TONE_TEXT, canRaise, itemsSummary, observesOnly, partActor, partStatusLook, statusGroups,
-  ticketTabs, waitingOnMe,
+  isMyApproval, ticketTabs, waitingOnMe,
 } from '@/lib/tickets'
 import { formatSpan, ticketTat, type TatBreakdown, type TatEvent } from '@/lib/tat'
 import { EmptyState, PageLoader, ReturnedTag, SectorTag, StatTile, TransferTag, WarehouseChip } from '@/components/ui'
@@ -129,8 +129,8 @@ export default function Dashboard() {
   const [picked, setPicked] = useStagePick()
   const [focus, setFocus] = useState<StageKey | null>(null)
   // The two Waiting on you cards, each closed until its bar is pressed (the user, 22 Oct).
-  const [open, setOpen] = useState({ tickets: false, pr: false })
-  const flip = (k: 'tickets' | 'pr') => setOpen(o => ({ ...o, [k]: !o[k] }))
+  const [open, setOpen] = useState({ approve: false, tickets: false, pr: false })
+  const flip = (k: 'approve' | 'tickets' | 'pr') => setOpen(o => ({ ...o, [k]: !o[k] }))
   const dark = useDark()
   const [chosen, setMode] = useViewMode()
   // Animation is for the Revive Lab's own people, the roles ticked in People & Revive Labs, and the
@@ -257,6 +257,8 @@ export default function Dashboard() {
       total: all.length,
     }
   }, [seen, events, trcs, me, period, trendBy, custom.from, custom.to])
+  const approvals = useMemo(() => stats.mine.filter(t => isMyApproval(t, me)), [stats.mine, me])
+  const others = useMemo(() => stats.mine.filter(t => !isMyApproval(t, me)), [stats.mine, me])
 
   // Every Revive Lab engineer at this person's Revive Labs (all of them for an admin), and the reports on them.
   const lab = useMemo(() => {
@@ -434,28 +436,33 @@ export default function Dashboard() {
               edge in the Cyrix red, and what waits in groups by where each
               spare stands — Pending acceptance, Pending dispatch … — in the
               order a spare goes through them (the user, 23 Sep). */}
-          {stats.mine.length > 0 && (
-            <div className="neon-card">
+          {/* A manager's approvals as a card of their own, above the rest of Waiting on you
+              (the user, 12 Nov: "where approval?" — they were under some 180 coordinator tickets). */}
+          {([
+            { key: 'approve', title: 'Waiting on you · Manager approval', icon: BadgeCheck, rows: approvals, to: '/tickets?view=mine&sub=manager' },
+            { key: 'tickets', title: 'Waiting on you · Tickets', icon: BellRing, rows: others, to: '/tickets?view=mine' },
+          ] as const).filter(c => c.rows.length > 0).map(c => (
+            <div key={c.key} className="neon-card">
               <div className="neon-card-body">
                 {/* A bar that opens and closes the list, closed to begin with (the user, 22 Oct: "many is there"). */}
-                <div role="button" tabIndex={0} aria-expanded={open.tickets} onClick={() => flip('tickets')} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip('tickets') } }}
-                  className={clsx('flex cursor-pointer select-none items-center justify-between bg-ink-50 px-4 py-2.5 hover:bg-ink-100', open.tickets && 'border-b border-ink-200')}>
+                <div role="button" tabIndex={0} aria-expanded={open[c.key]} onClick={() => flip(c.key)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(c.key) } }}
+                  className={clsx('flex cursor-pointer select-none items-center justify-between bg-ink-50 px-4 py-2.5 hover:bg-ink-100', open[c.key] && 'border-b border-ink-200')}>
                   <h3 className="flex items-center gap-2.5 text-sm font-semibold text-ink-800">
-                    <IconChip icon={BellRing} tone="red" /> Waiting on you · Tickets
+                    <IconChip icon={c.icon} tone="red" /> {c.title}
                   </h3>
                   <span className="flex items-center gap-2">
                     <Link
-                      to="/tickets?view=mine"
+                      to={c.to}
                       onClick={e => e.stopPropagation()}
                       className="rounded-full bg-cyrixRed-600 px-2.5 py-0.5 text-xs font-semibold tabular-nums text-white hover:bg-cyrixRed-700"
                       title="Open them on Tickets"
                     >
-                      {stats.mine.length}
+                      {c.rows.length}
                     </Link>
-                    <ChevronDown className={clsx('h-4 w-4 text-ink-500 transition-transform', open.tickets && 'rotate-180')} />
+                    <ChevronDown className={clsx('h-4 w-4 text-ink-500 transition-transform', open[c.key] && 'rotate-180')} />
                   </span>
                 </div>
-                {open.tickets && statusGroups(stats.mine).map(g => ({ ...g, rows: longestWaitFirst(g.rows) })).map(g => (
+                {open[c.key] && statusGroups(c.rows).map(g => ({ ...g, rows: longestWaitFirst(g.rows) })).map(g => (
                   <section key={g.key} aria-label={`${g.label}: ${g.rows.length}`}>
                     <h4 className="flex items-center gap-2 border-b border-ink-100 bg-ink-50/60 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-label">
                       <span aria-hidden className={clsx('h-2 w-2 rounded-full', TONE_DOT[g.tone])} />
@@ -486,7 +493,7 @@ export default function Dashboard() {
                 ))}
               </div>
             </div>
-          )}
+          ))}
 
           {/* Component requests for the stock (rl_0044): no ticket carries them, so a card of their own,
               apart from the tickets (the user, 7 Oct: "show separate ie rl an pr, like 2 modules"). */}

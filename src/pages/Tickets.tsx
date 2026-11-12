@@ -9,8 +9,8 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useMyTeam, useTickets, type Ticket } from '@/lib/queries'
 import { branchOf, indexTeam, ownerOfTicket } from '@/lib/team'
 import {
-  STATUS, STATUS_ORDER, TONE_CLASS, TONE_DOT, TONE_EDGE, TONE_TEXT, awaitingManager, canRaise, isMyTicket, itemsSummary, parseTicketCode, scopeTabs, splitsByScope, statusGroups, ticketTabs, type TicketScope,
-  type TabId, type TicketStatus, type Tone,
+  STATUS, STATUS_ORDER, TONE_CLASS, TONE_DOT, TONE_EDGE, TONE_TEXT, WAIT_ROLES, awaitingManager, canRaise, isMyTicket, waitRole, itemsSummary, parseTicketCode, scopeTabs, splitsByScope, statusGroups, ticketTabs, type TicketScope,
+  type TabId, type TicketStatus, type Tone, type WaitRole,
 } from '@/lib/tickets'
 import { Alert, EmptyState, PageLoader, ReturnedTag, SectorTag, SortHeader, Spinner, StatusBadge, TransferTag, WarehouseChip } from '@/components/ui'
 import { ticketFileName, ticketWorkbook } from '@/lib/ticketSheet'
@@ -199,6 +199,22 @@ export default function Tickets() {
     return rows
   }, [inScope, tab, q])
 
+  // A manager's approvals apart from the rest of Waiting on you, in a sub-tab of their own, first
+  // (the user, 12 Nov: "where approval?" — they were under some 180 coordinator tickets). The filters
+  // offer only the chosen sub-tab's values (the user, 12 Nov). Then All, and the rest by the role it waits on
+  // them in (the user, 12 Nov: "add all, and role wise also, split everything else").
+  const roleOf = useMemo(() => {
+    const m = new Map<string, WaitRole>()
+    if (tab.id === 'mine') for (const t of inScope) if (tab.match(t)) m.set(t.id, waitRole(t, me))
+    return m
+  }, [inScope, tab, me])
+  const roles = useMemo(() => WAIT_ROLES.filter(r => [...roleOf.values()].includes(r.id)), [roleOf])
+  const subs = roles.length > 1
+  const askedSub = params.get('sub')
+  // All first (the user, 12 Nov: "make all as default").
+  const sub: WaitRole | 'all' = (subs && roles.find(r => r.id === askedSub)?.id) || 'all'
+  const inSub = useMemo(() => (sub === 'all' ? searched : searched.filter(t => roleOf.get(t.id) === sub)), [sub, searched, roleOf])
+
   /*
     The filters offer only what is there, each with how many it would show,
     and each counts what the others already allow — choose a Revive Lab and
@@ -226,7 +242,7 @@ export default function Tickets() {
   const facets = useMemo(() => {
     const tally = (skip: Filter, key: (t: Ticket) => string, name: (t: Ticket) => string) => {
       const m = new Map<string, Facet>()
-      for (const t of searched) {
+      for (const t of inSub) {
         if (!passes(t, skip)) continue
         const k = key(t)
         const f = m.get(k) ?? { value: k, label: name(t), n: 0 }
@@ -267,10 +283,10 @@ export default function Tickets() {
       engineers: keep(engineers, eng, () => 'That engineer'),
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searched, params.toString(), teamOf])
+  }, [inSub, params.toString(), teamOf])
 
   const shown = useMemo(() => {
-    const rows = searched.filter(t => passes(t))
+    const rows = inSub.filter(t => passes(t))
     const dir = asc ? 1 : -1
     // A ticket number searched for comes first, above the others that only hold it in an AWB or a barcode
     // (the user, 31 Oct: "why searching 244 doesnt show rl-244?").
@@ -289,7 +305,7 @@ export default function Tickets() {
       return Date.parse(b.created_at) - Date.parse(a.created_at)
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searched, params.toString(), sortKey, asc, teamOf, q])
+  }, [inSub, params.toString(), sortKey, asc, teamOf, q])
 
   // How many filters are narrowing the list, and the way back to all of it.
   const narrowing = [trcId, inState, inDistrict, bemmp, status, from, cat, crit, team, eng].filter(v => v.length > 0).length
@@ -310,9 +326,12 @@ export default function Tickets() {
   // What waits on this person, in groups by where each spare stands — the
   // same groups as the dashboard's card. Every other tab is one list.
   const grouped = view === 'mine'
+  const listed = shown
+  // Each sub-tab's count with the filters as they are.
+  const subCount = (id: WaitRole | 'all') => searched.filter(t => (id === 'all' || roleOf.get(t.id) === id) && passes(t)).length
   const groups: Array<{ key: string; label: string; tone: Tone; rows: Ticket[] }> = grouped
-    ? statusGroups(shown)
-    : [{ key: 'all', label: '', tone: 'slate', rows: shown }]
+    ? statusGroups(listed)
+    : [{ key: 'all', label: '', tone: 'slate', rows: listed }]
 
   // The phone's order, named; one set by a column heading on a wider
   // screen is kept rather than shown as something it is not.
@@ -437,9 +456,9 @@ export default function Tickets() {
                 type="button"
                 className="btn-secondary flex-1 !py-1.5 text-sm sm:flex-none"
                 onClick={() => void download()}
-                disabled={shown.length === 0 || saving}
-                title={shown.length
-                  ? `The ${shown.length} ticket${shown.length === 1 ? '' : 's'} listed below — this tab, with its filters — in an Excel sheet`
+                disabled={listed.length === 0 || saving}
+                title={listed.length
+                  ? `The ${listed.length} ticket${listed.length === 1 ? '' : 's'} listed below — this tab, with its filters — in an Excel sheet`
                   : 'Nothing listed to download'}
               >
                 {saving ? <Spinner className="h-4 w-4" /> : <Download className="h-4 w-4 text-green-600" />} Excel
@@ -491,6 +510,25 @@ export default function Tickets() {
             </div>
           </div>
         </div>
+
+        {subs && (
+          <div className="flex flex-wrap gap-2 border-b border-ink-200 px-3 py-2">
+            {[{ id: 'all' as const, label: 'All' }, ...roles].map(({ id, label }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setParam('sub', id === 'all' ? null : id)}
+                className={clsx(
+                  'inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-medium transition-colors',
+                  sub === id ? clsx(TONE_CLASS[id === 'manager' ? 'rose' : 'slate'], 'border-transparent shadow-sm') : 'border-ink-200 text-ink-500 hover:text-ink-800',
+                )}
+              >
+                {label}
+                <span className="tabular-nums opacity-70">{subCount(id)}</span>
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* A list that did not load says so, rather than "No tickets here" (rl_0067; the user, 3 Nov: "why no tickets"). */}
         {loadError && !tickets ? (
@@ -638,7 +676,7 @@ export default function Tickets() {
                 sideways scroll — with the order named above them, since
                 there are no headings to click. */}
             <div className="flex items-center justify-between gap-3 border-b border-ink-100 px-4 py-2 lg:hidden">
-              <p className="text-xs text-ink-500">{shown.length} {shown.length === 1 ? 'ticket' : 'tickets'}</p>
+              <p className="text-xs text-ink-500">{listed.length} {listed.length === 1 ? 'ticket' : 'tickets'}</p>
               <label className="flex items-center gap-1.5 text-xs text-ink-500">
                 <ArrowDownUp aria-hidden className="h-3.5 w-3.5" />
                 Sort
