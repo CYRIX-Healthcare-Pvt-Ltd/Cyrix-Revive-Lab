@@ -364,6 +364,9 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
  */
 function WhereItIs({ ticket: t }: { ticket: Ticket }) {
   const a = t.approval
+  // Not repairable: name the managers who can approve it (the user, 12 Nov: "which manager? why no name?").
+  const { data: members } = useMembers(t.status === 'not_repairable' && awaitingManager(t))
+  const managers = orList((members ?? []).filter(m => m.is_manager && m.trc_ids.includes(t.trc_id)).map(m => m.full_name))
   const at = (
     <>
       At {t.trc_name}
@@ -387,7 +390,7 @@ function WhereItIs({ ticket: t }: { ticket: Ticket }) {
       return <>{t.trc_name} not approved · waiting on {t.stakeholder_name} to send it elsewhere or discard it</>
     case 'not_repairable':
       // First a manager of the Revive Lab agrees it cannot be repaired (rl_0034).
-      if (awaitingManager(t)) return <>{at} · waiting on a manager of {t.trc_name} to approve it as not repairable</>
+      if (awaitingManager(t)) return <>{at} · waiting on {managers || `a manager of ${t.trc_name}`} to approve it as not repairable</>
       return (
         <>
           {at} · approved{t.nr_approved_by_name ? <> by {t.nr_approved_by_name}</> : null} · waiting on the coordinator to {t.proposal === 'scrap' ? 'move it to scrap, as the engineer proposed'
