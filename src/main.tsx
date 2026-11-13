@@ -14,6 +14,19 @@ import ErrorBoundary from '@/components/ErrorBoundary'
 import App from './App'
 import './index.css'
 
+/*
+  A number box changes only by typing: the mouse wheel over a focused one changed its value (Travel, 22 Oct;
+  every app 13 Nov: "when scrolling numbers are changing ... we dont need"). The box lets go as the wheel turns,
+  so the page scrolls, and the up and down arrow keys do nothing.
+*/
+document.addEventListener('wheel', () => {
+  const el = document.activeElement
+  if (el instanceof HTMLInputElement && el.type === 'number') el.blur()
+}, { passive: true })
+document.addEventListener('keydown', e => {
+  if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && e.target instanceof HTMLInputElement && e.target.type === 'number') e.preventDefault()
+})
+
 // Before render, so nobody sees a flash of the wrong palette, and so a
 // choice made in another module is already in force when this one opens.
 startTheme()
