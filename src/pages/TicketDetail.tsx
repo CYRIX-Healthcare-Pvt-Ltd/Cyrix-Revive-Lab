@@ -2278,6 +2278,8 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
   const [date, setDate] = useState(action === 'expect' ? t.expected_by ?? '' : '')
   const [note, setNote] = useState('')
   const [toTrc, setToTrc] = useState(action === 'approve' ? a?.to_trc_id ?? '' : '')
+  // Sending it back: repaired here, or sent to another Revive Lab (the user, 16 Nov, after RL-595).
+  const [nrNext, setNrNext] = useState<'here' | 'other'>('here')
   const [error, setError, nth] = useError()
   const busy = [start, expect, scrap, approve, decline, cancelTransfer, discard, answer, cancelHandover, approveNr, declineNr].some(m => m.isPending)
   const meta = actionMeta(action, t)
@@ -2344,9 +2346,16 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
         onDone(`Approved as not repairable. The coordinator now ${
           t.proposal === 'scrap' ? 'moves it to scrap' : t.proposal === 'oem' ? 'sends it to the OEM' : `sends it back to ${t.stakeholder_name}`}.`)
       } else if (action === 'decline_nr') {
-        if (note.trim().length < 5) { setError('Say why it should be repaired — what to try.'); return }
-        await declineNr.mutateAsync({ id: t.id, reason: note })
-        onDone(`Back with ${t.engineer_name ?? 'the engineer'} to repair. They see why.`)
+        const other = nrNext === 'other'
+        if (other && !toTrc) { setError('Choose the Revive Lab it is going to.'); return }
+        if (note.trim().length < 5) { setError(other ? 'Say why it is being sent there.' : 'Say why it should be repaired — what to try.'); return }
+        const left = await declineNr.mutateAsync({ id: t.id, reason: note, toTrcId: other ? toTrc : null })
+        const lab = trcs?.find(x => x.id === toTrc)?.name ?? 'that Revive Lab'
+        onDone(!other
+          ? `Back with ${t.engineer_name ?? 'the engineer'} to repair. They see why.`
+          : left === 'awaiting_approval'
+            ? `Transfer to ${lab} asked for. Once the project head approves it, the coordinator sends it.`
+            : `Transfer to ${lab} is ready. The coordinator sends it with the courier details.`)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'That did not go through.')
@@ -2457,8 +2466,32 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
           <p className="text-sm text-ink-600">
             {action === 'approve_nr'
               ? <>Approved, the coordinator {t.proposal === 'scrap' ? 'moves it to scrap' : t.proposal === 'oem' ? 'sends it to the OEM' : 'dispatches it back'}.</>
-              : <>It goes back to {t.engineer_name ?? 'the engineer'}, in repair, with what you say.</>}
+              : nrNext === 'here' && <>It goes back to {t.engineer_name ?? 'the engineer'}, in repair, with what you say.</>}
           </p>
+          {action === 'decline_nr' && (
+            <>
+              <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Where it is repaired">
+                {([['here', 'Repair here'], ['other', 'Send to another Revive Lab']] as const).map(([k, label]) => (
+                  <button key={k} type="button" role="radio" aria-checked={nrNext === k} onClick={() => setNrNext(k)}
+                    className={clsx('flex min-h-11 items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm font-medium transition-colors',
+                      nrNext !== k ? 'border-ink-200 text-ink-700 hover:border-ink-400'
+                        : k === 'here' ? 'border-indigo-300 bg-indigo-50 text-indigo-900' : 'border-violet-300 bg-violet-50 text-violet-900')}>
+                    {k === 'here' ? <Wrench className="h-4 w-4 shrink-0 text-indigo-500" /> : <ArrowRightLeft className="h-4 w-4 shrink-0 text-violet-500" />}
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {nrNext === 'other' && (
+                <label className="block">
+                  <span className="label">Send to <span className="text-cyrixRed-600">*</span></span>
+                  <select className="input mt-1" value={toTrc} onChange={e => setToTrc(e.target.value)}>
+                    <option value="">Choose…</option>
+                    <LabOptions labs={(trcs ?? []).filter(x => x.is_active && x.id !== t.trc_id)} first={t.state} />
+                  </select>
+                </label>
+              )}
+            </>
+          )}
         </div>
       )}
 
@@ -2472,7 +2505,7 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
         <label className="block">
           <span className="label">
             {action === 'expect' ? 'Why it moved' : action === 'decline_approval' ? 'Why not' : action === 'discard' ? 'Why'
-              : action === 'decline_nr' ? 'Why it should be repaired — what to try' : 'Note'}
+              : action === 'decline_nr' ? (nrNext === 'other' ? 'Why it is being sent there' : 'Why it should be repaired — what to try') : 'Note'}
             {(action === 'decline_approval' || action === 'decline_nr') && <span className="text-cyrixRed-600"> *</span>}
           </span>
           <textarea className="input mt-1" rows={2} value={note} onChange={e => setNote(e.target.value)} maxLength={action === 'discard' || action === 'cancel_transfer' ? 300 : 500}
@@ -2483,7 +2516,7 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
                     : action === 'discard' ? 'e.g. Repaired on site after all'
                       : action === 'approve' ? 'e.g. Go ahead — they are expecting it'
                         : action === 'approve_nr' ? 'e.g. Agreed — the controller cannot be sourced'
-                          : action === 'decline_nr' ? 'e.g. Try the spare board from RL-40 first'
+                          : action === 'decline_nr' ? (nrNext === 'other' ? 'e.g. The IC is available there' : 'e.g. Try the spare board from RL-40 first')
                         : ''
             } />
         </label>
@@ -2491,8 +2524,9 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
       {error && <Alert key={nth} kind="error">{error}</Alert>}
       <div className="flex gap-2">
         <button type="button" className="btn-primary" onClick={run} disabled={busy}>
-          {busy ? <Spinner className="h-4 w-4" /> : <meta.icon className={clsx('h-4 w-4', TONE_TEXT[meta.tone])} />}
-          {action === 'expect' ? 'Save date' : meta.label}
+          {busy ? <Spinner className="h-4 w-4" /> : action === 'decline_nr' && nrNext === 'other'
+            ? <ArrowRightLeft className="h-4 w-4 text-violet-500" /> : <meta.icon className={clsx('h-4 w-4', TONE_TEXT[meta.tone])} />}
+          {action === 'expect' ? 'Save date' : action === 'decline_nr' && nrNext === 'other' ? 'Ask for the transfer' : meta.label}
         </button>
         <button type="button" className="btn-secondary" onClick={onClose}>
           {action === 'cancel_transfer' || action === 'discard' || action === 'cancel_handover' ? 'Keep it'

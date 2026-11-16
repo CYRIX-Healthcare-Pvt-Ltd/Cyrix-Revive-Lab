@@ -1125,9 +1125,13 @@ export const useDispatch = () => useTicketMutation(
 export const useApproveNotRepairable = () => useTicketMutation(
   (a: { id: string; note?: string }) => rpc('revive_approve_not_repairable', { p_ticket_id: a.id, p_note: a.note || null }))
 
-/** A manager of its Revive Lab does not agree: back to the engineer, to repair, with why (rl_0034). */
+/**
+ * A manager of its Revive Lab does not agree: back to the engineer, to repair, with why (rl_0034) — or, with
+ * a Revive Lab chosen, a transfer there asked for at once (rl_0069). Says where it was left.
+ */
 export const useDeclineNotRepairable = () => useTicketMutation(
-  (a: { id: string; reason: string }) => rpc('revive_decline_not_repairable', { p_ticket_id: a.id, p_reason: a.reason }))
+  (a: { id: string; reason: string; toTrcId?: string | null }) =>
+    rpc('revive_decline_not_repairable', { p_ticket_id: a.id, p_reason: a.reason, p_to_trc_id: a.toTrcId || null }) as Promise<unknown>)
 
 /** It arrived back: the field engineer has it, and says whether the courier damaged it. */
 export const useMarkReceived = () => useTicketMutation(
