@@ -7,8 +7,8 @@
  *    for every app or chosen ones (KPI 0303). A bar under the header says so
  *    beforehand, as long before From as SW Admin chose (0304; 15 minutes
  *    unless changed). It stays on until SW Admin turns it off;
- *    after To the screen says "Taking a little longer". SW Admin still gets
- *    in, with a red bar to remind them it is on.
+ *    after To the screen says "Taking a little longer". SW Admin and the Ops
+ *    admins still get in (0305), with a red bar to remind them it is on.
  *  - By itself: when the database does not answer (server errors twice in a
  *    row while our own site does answer, so a phone's poor network is not
  *    taken for it), instead of an empty page. It looks again
@@ -17,11 +17,48 @@
  * The X is the splash's: its two halves pull apart and join again, as if being
  * repaired. The logo itself is never changed.
  *
- * The same file is in every Cyrix app's src/lib/maintenance.ts — change one,
- * change them all. No React: it draws its own screen. Started in main.tsx with
- * the app's code: portal, kpi, travel, bemmp, revive, tasks or cyra.
+ * The same file is in every Cyrix app's src/lib/maintenance.ts (BEMMP's is the
+ * JavaScript copy, src/data/maintenance.js) — change one, change them all. No
+ * React: it draws its own screen. Started in main.tsx with the app's code:
+ * portal, kpi, travel, bemmp, revive, tasks, workplace, projects, pulse or cyra.
+ *
+ * Apps with a supabase-js client on the shared database call startMaintenance().
+ * Pulse (a plain fetch with the portal's session) and Cyra (its own Supabase
+ * project, so no session here: it reads the portal's /api/maintenance, cached
+ * at the edge) call startMaintenanceFrom() with a source of their own (0305).
  */
-import type { SupabaseClient } from '@supabase/supabase-js'
+
+/** Where the switch is read from. `read` answers like supabase-js's rpc: data, error, HTTP status. */
+export type MaintenanceSource = {
+  signedIn: () => Promise<boolean>
+  read: () => Promise<{ data: unknown; error: unknown; status: number }>
+  /** For apps whose admins the shared database does not know (Cyra). */
+  isAdmin?: () => Promise<boolean>
+  /** false: never take a failed read for the database being down (the app does not use that database). */
+  auto?: boolean
+  /** Called once with a function that checks again, e.g. on sign-in and sign-out. */
+  watch?: (recheck: () => void) => void
+}
+
+/** The part of a supabase-js client this file uses. */
+type Db = {
+  auth: {
+    getSession: () => Promise<{ data: { session: unknown } }>
+    onAuthStateChange: (cb: (ev: string) => void) => unknown
+  }
+  rpc: (fn: 'platform_maintenance') => PromiseLike<{ data: unknown; error: unknown; status: number }>
+}
+
+/** Fetch a URL as a MaintenanceSource read (status 0 when the network failed). */
+export async function readJson(url: string, init: RequestInit = {}): Promise<{ data: unknown; error: unknown; status: number }> {
+  try {
+    const r = await fetch(url, { cache: 'no-store', ...init })
+    if (!r.ok) return { data: null, error: { status: r.status }, status: r.status }
+    return { data: await r.json(), error: null, status: r.status }
+  } catch (e) {
+    return { data: null, error: e ?? {}, status: 0 }
+  }
+}
 
 type State = { on?: boolean; from?: string | null; to?: string | null; apps?: string[]; notice_min?: number; now?: string; admin?: boolean }
 
@@ -60,8 +97,22 @@ const CSS = `
 .cyx-m-bar button{flex-shrink:0;padding:8px 14px;border:0;border-radius:8px;background:#ce2434;color:#fff;font:600 13px system-ui,sans-serif;cursor:pointer}
 `
 
-export function startMaintenance(db: SupabaseClient | null | undefined, app: string): void {
-  if (!db || typeof window === 'undefined') return
+export function startMaintenance(db: Db | null | undefined, app: string): void {
+  if (!db) return
+  startMaintenanceFrom(app, {
+    signedIn: async () => {
+      const { data: { session } } = await db.auth.getSession().catch(() => ({ data: { session: null } }))
+      return !!session
+    },
+    read: async () => {
+      try { return await db.rpc('platform_maintenance') } catch { return { data: null, error: {}, status: 0 } }
+    },
+    watch: recheck => { db.auth.onAuthStateChange(ev => { if (ev === 'SIGNED_IN' || ev === 'SIGNED_OUT') recheck() }) },
+  })
+}
+
+export function startMaintenanceFrom(app: string, source: MaintenanceSource): void {
+  if (typeof window === 'undefined') return
   const style = document.createElement('style')
   style.textContent = CSS
   document.head.appendChild(style)
@@ -133,11 +184,9 @@ export function startMaintenance(db: SupabaseClient | null | undefined, app: str
   const next = (ms: number) => { window.clearTimeout(timer); timer = window.setTimeout(() => { void check(false) }, ms) }
 
   const check = async (pressed: boolean) => {
-    const { data: { session } } = await db.auth.getSession().catch(() => ({ data: { session: null } }))
-    if (!session) { hideScreen(); hideBar(); next(60_000); return }
-    let res: { data: unknown; error: { code?: string } | null; status: number }
-    try { res = await db.rpc('platform_maintenance') as typeof res } catch { res = { data: null, error: {}, status: 0 } }
-    let broken = !!res.error && (res.status === 0 || res.status >= 500) && navigator.onLine !== false
+    if (!await source.signedIn().catch(() => false)) { hideScreen(); hideBar(); next(60_000); return }
+    const res = await source.read().catch(() => ({ data: null, error: {}, status: 0 }))
+    let broken = source.auto !== false && !!res.error && (res.status === 0 || res.status >= 500) && navigator.onLine !== false
     if (broken) {
       // Only when our own site answers: otherwise it is the phone's network, not us.
       try { await fetch(`${window.location.origin}/?alive=${Date.now()}`, { method: 'HEAD', cache: 'no-store' }) } catch { broken = false }
@@ -162,15 +211,16 @@ export function startMaintenance(db: SupabaseClient | null | undefined, app: str
     const from = s.from ? new Date(s.from) : null
     const started = !!s.on && forMe && (!from || now >= from)
     const soon = !!s.on && forMe && !!from && now < from && from.getTime() - now.getTime() <= (s.notice_min ?? 15) * 60_000
+    const admin = !!s.admin || (started && !!source.isAdmin && await source.isAdmin().catch(() => false))
     const back = s.to ? (now < new Date(s.to) ? `Back by ${when(s.to, now)}` : 'Taking a little longer') : ''
-    if (started && !s.admin) {
+    if (started && !admin) {
       hideBar()
       showScreen(back)
     } else {
       const wasOn = !!screen
       hideScreen()
       if (wasOn && pressed) { window.location.reload(); return }
-      if (started && s.admin) showBar('Maintenance is on — only SW Admin can use the apps', null)
+      if (started && admin) showBar('Maintenance is on — only admins can use the apps', null)
       else if (soon && from) showBar(`Maintenance from ${when(from.toISOString(), now)}${s.to ? ` · back by ${when(s.to, now)}` : ''}`, from.toISOString())
       else hideBar()
     }
@@ -183,12 +233,12 @@ export function startMaintenance(db: SupabaseClient | null | undefined, app: str
   if (preview !== null) {
     const t = new Date(Date.now() + 30 * 60_000).toISOString()
     if (preview === 'soon') showBar(`Maintenance from ${when(new Date(Date.now() + 10 * 60_000).toISOString(), new Date())} · back by ${when(t, new Date())}`, 'preview')
-    else if (preview === 'admin') showBar('Maintenance is on — only SW Admin can use the apps', null)
+    else if (preview === 'admin') showBar('Maintenance is on — only admins can use the apps', null)
     else showScreen(`Back by ${when(t, new Date())}`)
     return
   }
 
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void check(false) })
-  db.auth.onAuthStateChange(ev => { if (ev === 'SIGNED_IN' || ev === 'SIGNED_OUT') void check(false) })
+  source.watch?.(() => { void check(false) })
   void check(false)
 }
