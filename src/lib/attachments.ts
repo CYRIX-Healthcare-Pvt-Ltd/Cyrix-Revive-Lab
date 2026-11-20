@@ -82,9 +82,17 @@ export async function uploadStageFile(ticketId: string, file: StageFile, blob: B
   return path
 }
 
+/**
+ * The file names directly in a ticket's folder, for whoever may see the ticket
+ * (rl_0071). Storage's own folder listing took up to 0.8 s and was the heaviest
+ * work on the shared database when it ran out of memory on 20 Nov.
+ */
+const ticketFiles = async (ticketId: string) =>
+  await supabase.rpc('revive_ticket_files', { p_ticket_id: ticketId }) as { data: { name: string }[] | null; error: { message: string } | null }
+
 /** What a ticket has, with links to show it by. */
 export async function listAttachments(ticketId: string): Promise<Attachment[]> {
-  const { data, error } = await supabase.storage.from(ATTACHMENT_BUCKET).list(ticketId, { limit: 10 })
+  const { data, error } = await ticketFiles(ticketId)
   if (error) throw new Error(friendlyError(error))
   const files = (data ?? []).filter(f => slotOf(f.name))
   if (files.length === 0) return []
@@ -119,7 +127,7 @@ export async function removeAttachment(path: string): Promise<void> {
  */
 export async function removeVideoOf(ticketId: string): Promise<boolean> {
   try {
-    const { data } = await supabase.storage.from(ATTACHMENT_BUCKET).list(ticketId, { limit: 10 })
+    const { data } = await ticketFiles(ticketId)
     const videos = (data ?? []).filter(f => slotOf(f.name) === 'video').map(f => `${ticketId}/${f.name}`)
     if (videos.length === 0) return false
     const { error } = await supabase.storage.from(ATTACHMENT_BUCKET).remove(videos)

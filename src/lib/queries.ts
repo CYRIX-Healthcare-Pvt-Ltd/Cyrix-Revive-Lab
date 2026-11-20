@@ -344,10 +344,24 @@ async function everyRow<T>(call: () => { range: (from: number, to: number) => Pr
   return out
 }
 
+/*
+  The list a page at a time (rl_0070): each call makes only its own 1,000 tickets. Read through range() it made the
+  whole list again for every piece. Fresh for 3 minutes: the database ran out of memory at the morning rush on
+  20 Nov; anything the viewer does refreshes it at once, as before.
+*/
 export function useTickets() {
   return useQuery({
     queryKey: ['revive', 'tickets'],
-    queryFn: () => everyRow<Ticket>(() => supabase.rpc('revive_ticket_list')),
+    staleTime: 3 * 60_000,
+    queryFn: async () => {
+      const out: Ticket[] = []
+      for (let offset = 0; ; offset += 1000) {
+        const part = unwrap<Ticket[]>(await supabase.rpc('revive_ticket_page', { p_offset: offset, p_limit: 1000 }))
+        out.push(...part)
+        if (part.length < 1000) break
+      }
+      return out
+    },
   })
 }
 
