@@ -178,12 +178,23 @@ export function startMaintenanceFrom(app: string, source: MaintenanceSource): vo
   }
 
   // ---- the check ----
+  // A phone opened after hours away: its network wakes a few seconds after the page does, and the first reads
+  // fail. Those are not the database being down (the user, 23 Nov: the screen came up with maintenance off), so
+  // the two failures must be at least 10 seconds apart, and a page coming back waits 4 seconds before it asks.
   let failures = 0
+  let firstFail = 0
+  let busy = false
   let auto = false
   let timer: number | undefined
   const next = (ms: number) => { window.clearTimeout(timer); timer = window.setTimeout(() => { void check(false) }, ms) }
 
   const check = async (pressed: boolean) => {
+    if (busy) return
+    busy = true
+    try { await look(pressed) } finally { busy = false }
+  }
+
+  const look = async (pressed: boolean) => {
     if (!await source.signedIn().catch(() => false)) { hideScreen(); hideBar(); next(60_000); return }
     const res = await source.read().catch(() => ({ data: null, error: {}, status: 0 }))
     let broken = source.auto !== false && !!res.error && (res.status === 0 || res.status >= 500) && navigator.onLine !== false
@@ -192,9 +203,10 @@ export function startMaintenanceFrom(app: string, source: MaintenanceSource): vo
       try { await fetch(`${window.location.origin}/?alive=${Date.now()}`, { method: 'HEAD', cache: 'no-store' }) } catch { broken = false }
     }
     if (broken) {
-      failures++
+      if (!failures) firstFail = Date.now()
+      if (!failures || Date.now() - firstFail >= 10_000) failures++
       if (failures >= 2 || auto) { auto = true; hideBar(); showScreen('') }
-      next(30_000)
+      next(auto ? 30_000 : 12_000)
       return
     }
     failures = 0
@@ -238,7 +250,7 @@ export function startMaintenanceFrom(app: string, source: MaintenanceSource): vo
     return
   }
 
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void check(false) })
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && !auto) { failures = 0; next(4_000) } else if (document.visibilityState === 'visible') void check(false) })
   source.watch?.(() => { void check(false) })
   void check(false)
 }
