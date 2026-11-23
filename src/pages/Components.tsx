@@ -17,6 +17,7 @@ import {
   type PartRoute,
 } from '@/lib/tickets'
 import { signedLinks } from '@/lib/partFiles'
+import type { Photo } from '@/lib/componentsExcel'
 import { readStockGrid, stockDiff, STOCK_SHEET_HEADINGS, type SheetRead, type StockDiff } from '@/lib/stockSheet'
 import { PartHistoryDialog, StockPartDialog, UploadMenu, WhereTag } from '@/components/StockPart'
 import { Alert, EmptyState, PageLoader, Spinner, StatTile, useError } from '@/components/ui'
@@ -657,6 +658,8 @@ function RequestsTab({ desk, engineerOnly }: { desk: boolean; engineerOnly: bool
   const [stockFor, setStockFor] = useState<PartRequest | null>(null)
   const [declineFor, setDeclineFor] = useState<PartRequest | null>(null)
   const [viewing, setViewing] = useState<{ images: string[]; index: number } | null>(null)
+  const [xlBusy, setXlBusy] = useState(false)
+  const [xlErr, setXlErr] = useState<string | null>(null)
 
   // Where this person may ask for a component for the stock.
   const askAt = useMemo(() => (trcs ?? []).filter(t => t.is_active && requestsStockAt(me, t.id)), [trcs, me])
@@ -685,6 +688,41 @@ function RequestsTab({ desk, engineerOnly }: { desk: boolean; engineerOnly: bool
 
   if (isLoading) return <Spinner className="h-5 w-5 text-ink-400" />
   const said = (text: string) => setNotice({ kind: 'success', text })
+  const periodLabel = period === 'all' ? 'All time' : period === 'month' ? 'This month' : `${day(a)} – ${day(b)}`
+  // The list as it stands (period, kind and stage box), one row each with its photo (the user, 23 Nov).
+  const downloadExcel = async () => {
+    setXlBusy(true); setXlErr(null)
+    try {
+      const [{ Workbook }, xl] = await Promise.all([import('exceljs'), import('@/lib/componentsExcel')])
+      const withPhoto = shown.filter(x => x.r.photo_path)
+      const urls = withPhoto.length ? await signedLinks(withPhoto.map(x => x.r.photo_path!)) : {}
+      const photos = new Map<string, Photo>()
+      for (let i = 0; i < withPhoto.length; i += 6) {
+        await Promise.all(withPhoto.slice(i, i + 6).map(async ({ r }) => {
+          const u = urls[r.photo_path!]
+          const ph = u ? await xl.photoJpeg(u) : null
+          if (ph) photos.set(r.id, ph)
+        }))
+      }
+      const stage = sel ? Object.values(STAGES).flatMap(l => l.stages).find(([k]) => k === sel)?.[1] : null
+      const what = [periodLabel, stage].filter(Boolean).join(' · ')
+      const wb = new Workbook()
+      xl.buildComponentsWorkbook(wb, {
+        title: `Revive Lab components · ${what} · ${shown.length} request${shown.length === 1 ? '' : 's'}`,
+        rows: shown.map(({ r, k }) => ({ r, waiting: waitingOn(r, k).text })),
+        photos,
+      })
+      const buf = await wb.xlsx.writeBuffer()
+      const url = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }))
+      const link = document.createElement('a')
+      link.href = url; link.download = xl.componentsFileName(what); link.click()
+      setTimeout(() => URL.revokeObjectURL(url), 10_000)
+    } catch (e) {
+      setXlErr(e instanceof Error ? e.message : 'The Excel could not be made. Try again.')
+    } finally {
+      setXlBusy(false)
+    }
+  }
   const pick = (k: typeof sel) => setSel(s => (s === k ? null : k))
 
   return (
@@ -762,10 +800,19 @@ function RequestsTab({ desk, engineerOnly }: { desk: boolean; engineerOnly: bool
       })}
 
       <div className="card overflow-hidden">
-        <p className="border-b border-ink-200 bg-ink-50 px-4 py-2 text-xs text-ink-500">
-          {period === 'all' ? 'All time' : period === 'month' ? 'This month' : `${day(a)} – ${day(b)}`} · {shown.length} request{shown.length === 1 ? '' : 's'}
-          {sel && <button type="button" className="link-accent ml-2 font-medium" onClick={() => setSel(null)}>Show all</button>}
-        </p>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-ink-200 bg-ink-50 px-4 py-2 text-xs text-ink-500">
+          <span className="min-w-0 flex-1">
+            {periodLabel} · {shown.length} request{shown.length === 1 ? '' : 's'}
+            {sel && <button type="button" className="link-accent ml-2 font-medium" onClick={() => setSel(null)}>Show all</button>}
+          </span>
+          {shown.length > 0 && (
+            <button type="button" className="btn-secondary px-3 py-1.5 text-xs" disabled={xlBusy} onClick={downloadExcel}>
+              {xlBusy ? <Spinner className="h-3.5 w-3.5" /> : <FileSpreadsheet className="h-3.5 w-3.5" />}
+              {xlBusy ? 'Making…' : 'Download Excel'}
+            </button>
+          )}
+          {xlErr && <p className="basis-full text-right text-xs text-red-600">{xlErr}</p>}
+        </div>
         {shown.length === 0 ? (
           <div className="p-4">
             <EmptyState icon={ClipboardList} title="Nothing here">
