@@ -6,7 +6,7 @@ import {
   ArrowLeft, ArrowRightLeft, BadgeCheck, Ban, Boxes, CalendarClock, Camera, CheckCircle2, CircleCheck, CircleX, ClipboardCheck,
   ClipboardList, Factory, Forward, Hand, History as HistoryIcon, PackageCheck, PackagePlus, PackageX, PlayCircle, Receipt, RotateCcw, ScanSearch, Tag,
   Send, ShieldQuestion, ShieldX, ShoppingCart, Signpost, Timer, Trash2, TriangleAlert, Truck, Undo2, UserCheck, UserCog, UserPlus,
-  UserX, Wrench, X, ExternalLink, FileInput, PackageOpen, Pencil,
+  UserX, Wrench, X, ExternalLink, FileInput, PackageOpen, Pencil, Hourglass,
   type LucideIcon,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
@@ -348,7 +348,7 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
         </div>
 
         <Section title="History" icon={HistoryIcon} tone="indigo">
-          {!trail ? <Spinner className="h-4 w-4 text-ink-400" /> : <Timeline trail={trail} proposal={t.proposal} source={t.source} />}
+          {!trail ? <Spinner className="h-4 w-4 text-ink-400" /> : <Timeline trail={trail} proposal={t.proposal} source={t.source} ticket={t} />}
         </Section>
       </div>
     </div>
@@ -1002,7 +1002,29 @@ function noteOf(e: TrailEvent, source: TicketSource): string | null {
   return e.note
 }
 
-function Timeline({ trail, proposal, source }: { trail: TrailEvent[]; proposal: Proposal | null; source: TicketSource }) {
+/*
+  The approval it waits on now, as the history's last step (the user, 24 Nov: "in history this data not showing ie send
+  to them and approval waiting, user can't understand if it is not there"): who it went to, and for how long.
+*/
+function useWaitingStep(t: Ticket): string | null {
+  const nr = t.status === 'not_repairable' && awaitingManager(t)
+  const { data: members } = useMembers(nr)
+  if (nr) {
+    const managers = orList((members ?? []).filter(m => m.is_manager && m.trc_ids.includes(t.trc_id)).map(m => m.full_name))
+    return `Sent to ${managers || `a manager of ${t.trc_name}`} to approve it as not repairable`
+  }
+  const a = t.approval
+  if (t.status === 'awaiting_approval') {
+    const to = waitsOnHead(a) ? `Sent to ${a!.head_name}, the project head,` : 'Waiting'
+    return a?.kind === 'transfer' ? `${to} to approve the transfer to ${a.to_trc_name}`
+      : a?.kind === 'return' ? `${to} to approve the return to ${a.to_trc_name}`
+      : `${to} to approve it for ${t.trc_name}`
+  }
+  return null
+}
+
+function Timeline({ trail, proposal, source, ticket }: { trail: TrailEvent[]; proposal: Proposal | null; source: TicketSource; ticket: Ticket }) {
+  const waiting = useWaitingStep(ticket)
   // Every spoken observation's link in one go, rather than one call each.
   const spoken = trail.map(e => e.voice_path).filter((p): p is string => !!p)
   const { data: voices } = useQuery({
@@ -1018,12 +1040,14 @@ function Timeline({ trail, proposal, source }: { trail: TrailEvent[]; proposal: 
       {steps.map((e, i) => {
         const look = stepLook(e, steps.slice(0, i), proposal, source)
         const next = steps[i + 1]
-        const gap = next ? Math.max(0, Date.parse(next.at) - Date.parse(e.at)) : null
+        // The last step, when an approval waits: its thread runs on to the waiting step, timed until now.
+        const toWait = !next && !!waiting
+        const gap = next ? Math.max(0, Date.parse(next.at) - Date.parse(e.at)) : toWait ? Math.max(0, Date.now() - Date.parse(e.at)) : null
         return (
-          <li key={e.id} className={clsx('relative flex gap-3', next && 'pb-9')}>
+          <li key={e.id} className={clsx('relative flex gap-3', (next || toWait) && 'pb-9')}>
             {/* The thread from this step down to the next, and on it — halfway
                 between the two, breaking it — how long that took. */}
-            {next && <span aria-hidden className="absolute bottom-0 left-4 top-8 w-px -translate-x-1/2 bg-ink-200" />}
+            {(next || toWait) && <span aria-hidden className={clsx('absolute bottom-0 left-4 top-8 w-px -translate-x-1/2', toWait ? 'border-l border-dashed border-amber-300' : 'bg-ink-200')} />}
             {gap !== null && (
               <span
                 aria-hidden
@@ -1055,6 +1079,17 @@ function Timeline({ trail, proposal, source }: { trail: TrailEvent[]; proposal: 
           </li>
         )
       })}
+      {waiting && (
+        <li className="relative flex gap-3">
+          <span className="relative grid h-8 w-8 shrink-0 place-items-center rounded-full bg-amber-100 text-amber-700 ring-2 ring-amber-200 ring-offset-2 ring-offset-surface">
+            <Hourglass className="h-4 w-4" />
+          </span>
+          <div className="min-w-0 flex-1 pt-1">
+            <p className="text-sm font-medium text-ink-900">{waiting}</p>
+            <p className="mt-0.5 text-xs font-medium text-amber-700">Waiting</p>
+          </div>
+        </li>
+      )}
     </ol>
   )
 }
