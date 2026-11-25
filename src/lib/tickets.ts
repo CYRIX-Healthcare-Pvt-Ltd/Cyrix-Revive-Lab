@@ -667,6 +667,8 @@ export function actionsFor(t: TicketLike, me: Me | null | undefined): Action[] {
   if (sender && t.status === 'not_approved') out.push('reroute')
 
   if (desk && (t.status === 'pending_acceptance' || t.status === 'transferred')) out.push('accept')
+  // Approved for this lab and already here without the Send (rl_0074, RL-935).
+  if (desk && t.status === 'approved' && open?.kind === 'raise') out.push('accept')
   // Whoever sent it in, until it arrives: a card is often raised before the
   // courier has given a tracking number (rl_0011).
   if (sender && t.status === 'pending_acceptance') out.push('courier')
@@ -800,7 +802,10 @@ export const CONTRACT_LABEL: Record<ContractType, string> = { AMC: 'AMC', CAMC: 
  * accepts it, the coordinator until it is dispatched back (rl_0057; the database says the same).
  */
 export function canEditCard(t: TicketLike & { raised_as?: 'engineer' | 'coordinator' }, me: Me | null | undefined): boolean {
-  if (!me || t.raised_by !== me.employee_id) return false
+  if (!me) return false
+  // An admin edits every route card, at any stage (rl_0073, 25 Nov).
+  if (me.is_admin) return true
+  if (t.raised_by !== me.employee_id) return false
   return t.raised_as === 'coordinator'
     ? !['in_transit_return', 'received_back', 'closed'].includes(t.status)
     : ['awaiting_approval', 'approved', 'not_approved', 'pending_acceptance'].includes(t.status)

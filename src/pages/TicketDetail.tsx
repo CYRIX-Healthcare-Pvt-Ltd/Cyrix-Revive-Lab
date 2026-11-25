@@ -1020,6 +1020,12 @@ function useWaitingStep(t: Ticket): string | null {
       : a?.kind === 'return' ? `${to} to approve the return to ${a.to_trc_name}`
       : `${to} to approve it for ${t.trc_name}`
   }
+  // Approved, not yet sent (the user, 25 Nov: "waiting for should be shown in history also").
+  if (t.status === 'approved') {
+    return a?.kind === 'transfer' ? `Waiting on the coordinator to send it to ${a.to_trc_name}`
+      : `Waiting on ${t.stakeholder_name} to send it to ${t.trc_name}`
+  }
+  if (t.status === 'not_approved') return `Waiting on ${t.stakeholder_name} to send it elsewhere or discard it`
   return null
 }
 

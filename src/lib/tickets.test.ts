@@ -279,7 +279,7 @@ describe('states, approval and the proposal (rl_0014)', () => {
     const raise = ticket({ status: 'approved', approval: { kind: 'raise', status: 'approved' } })
     expect(actionsFor(raise, field)).toEqual(['send', 'discard'])
     expect(waitingOnMe(raise, field)).toBe(true)
-    expect(actionsFor(raise, desk)).toEqual([])
+    expect(actionsFor(raise, desk)).toEqual(['accept']) // already at the lab, not sent (rl_0074)
 
     const transfer = ticket({ status: 'approved', engineer_id: 'eng', approval: { kind: 'transfer', status: 'approved' } })
     expect(actionsFor(transfer, desk)).toEqual(['send', 'cancel_transfer'])
