@@ -45,7 +45,7 @@ import { removeVideoOf } from '@/lib/attachments'
 import { signedLinks } from '@/lib/partFiles'
 import ItemsField, { newLine, type ItemLine } from '@/components/ItemsField'
 import PersonPicker from '@/components/PersonPicker'
-import { districtsOf } from '@/lib/india'
+import { districtsOf, STATES } from '@/lib/india'
 
 /** "21 Sept 2026, 11:53 AM" — twelve-hour, AM or PM, whatever the device's clock (lib/when). */
 const when = (iso: string | null | undefined) => (iso ? dateTime(iso) : '—')
@@ -716,10 +716,11 @@ function EditCardDialog({ ticket: t, items, onClose, onSaved }: {
   onSaved: () => void
 }) {
   const save = useEditTicket()
+  const { me } = useAuth()
   const warehouse = t.source === 'warehouse'
   const ots = t.contract_type === 'OTS'
   const [f, setF] = useState({
-    hospital: t.facility === 'OTS / Stock' ? '' : t.facility ?? '', district: t.district ?? '', sourceTicketNo: t.source_ticket_no ?? '',
+    hospital: t.facility === 'OTS / Stock' ? '' : t.facility ?? '', state: t.state ?? '', district: t.district ?? '', sourceTicketNo: t.source_ticket_no ?? '',
     equipmentName: t.equipment_name ?? '', equipmentBarcode: t.equipment_barcode ?? '',
     equipmentMake: t.equipment_make ?? '', equipmentModel: t.equipment_model ?? '',
     issue: t.issue ?? '', returnAddress: t.return_address ?? '', contactNumber: t.contact_number ?? '',
@@ -743,7 +744,7 @@ function EditCardDialog({ ticket: t, items, onClose, onSaved }: {
     if (f.returnAddress.trim().length < 5) { setError('Enter the spare return address.'); return }
     if (namesHolder && !holder) { setError('Name the field engineer this spare belongs to.'); return }
     try {
-      await save.mutateAsync({ id: t.id, ...f, items: clean, stakeholderId: namesHolder ? holder!.id : null })
+      await save.mutateAsync({ id: t.id, ...f, stateWas: t.state, items: clean, stakeholderId: namesHolder ? holder!.id : null })
       onSaved()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'That did not save.')
@@ -767,12 +768,20 @@ function EditCardDialog({ ticket: t, items, onClose, onSaved }: {
       )}
       <div className="grid gap-3 sm:grid-cols-2">
         {!warehouse && input('Hospital name', 'hospital', { required: !ots, max: 200 })}
+        {!warehouse && me?.is_admin && (
+          <label className="block">
+            <span className="label">State <span className="text-cyrixRed-600">*</span></span>
+            <select className="input mt-1" value={f.state} onChange={e => setF(o => ({ ...o, state: e.target.value, district: '' }))}>
+              {STATES.map(x => <option key={x} value={x}>{x}</option>)}
+            </select>
+          </label>
+        )}
         {!warehouse && (
           <label className="block">
             <span className="label">District <span className="text-cyrixRed-600">*</span></span>
             <select className="input mt-1" value={f.district} onChange={set('district')}>
               <option value="">Choose…</option>
-              {districtsOf(t.state).map(d => <option key={d} value={d}>{d}</option>)}
+              {districtsOf(f.state || t.state).map(d => <option key={d} value={d}>{d}</option>)}
             </select>
           </label>
         )}
