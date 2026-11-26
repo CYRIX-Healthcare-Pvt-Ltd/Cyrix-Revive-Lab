@@ -3,6 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <script>
+      /* An iPhone zooms into a box when it is tapped, and the page stays zoomed (the user, 26 Oct; Travel, 23 Oct).
+         maximum-scale stops that on an iPhone, where pinching still zooms; elsewhere it would stop pinching, so only there. */
+      if (/iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) {
+        document.querySelector('meta[name=viewport]').setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover')
+      }
+    </script>
     <meta name="theme-color" content="#000000" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Cyra · Revive Lab</title>

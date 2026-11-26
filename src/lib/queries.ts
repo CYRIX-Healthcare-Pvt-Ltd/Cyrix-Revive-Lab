@@ -31,7 +31,10 @@ export interface Ticket {
   trc_kind: TrcKind
   trc_id: string
   trc_name: string
+  /** The field service ticket; a warehouse's card, its document number (rl_0063). */
   source_ticket_no: string | null
+  /** A warehouse's item code (rl_0063). */
+  item_code?: string | null
   /** The hospital. The route card calls it Hospital name. */
   facility: string
   district: string | null
@@ -130,6 +133,8 @@ export interface Ticket {
   billing_estimate: number | null
   /** Its BEMMP asks for that estimate — Pvt. */
   asks_billing_estimate: boolean
+  /** A PI was asked for on it: whether the defective went back, said on closing the repair (rl_0066). */
+  defective_returned: boolean | null
   /** Each time the field engineer sent it back not working, oldest first (rl_0027). */
   field_returns: FieldReturn[]
   /** Its latest transfer to another field engineer, whatever became of it (rl_0028). */
@@ -263,6 +268,7 @@ export interface Member {
   updated_by_name: string | null
   is_purchase: boolean
   is_observer?: boolean
+  is_warehouse?: boolean
 }
 
 export interface Person {
@@ -338,10 +344,24 @@ async function everyRow<T>(call: () => { range: (from: number, to: number) => Pr
   return out
 }
 
+/*
+  The list a page at a time (rl_0070): each call makes only its own 1,000 tickets. Read through range() it made the
+  whole list again for every piece. Fresh for 3 minutes: the database ran out of memory at the morning rush on
+  20 Nov; anything the viewer does refreshes it at once, as before.
+*/
 export function useTickets() {
   return useQuery({
     queryKey: ['revive', 'tickets'],
-    queryFn: () => everyRow<Ticket>(() => supabase.rpc('revive_ticket_list')),
+    staleTime: 3 * 60_000,
+    queryFn: async () => {
+      const out: Ticket[] = []
+      for (let offset = 0; ; offset += 1000) {
+        const part = unwrap<Ticket[]>(await supabase.rpc('revive_ticket_page', { p_offset: offset, p_limit: 1000 }))
+        out.push(...part)
+        if (part.length < 1000) break
+      }
+      return out
+    },
   })
 }
 
@@ -467,6 +487,8 @@ export interface Warehouse {
   state: string | null
   is_active: boolean
   sort_order: number
+  /** Where its spares go back to, saved from a card (rl_0063). */
+  return_address?: string | null
 }
 
 export function useWarehouses() {
@@ -476,7 +498,7 @@ export function useWarehouses() {
     staleTime: 5 * 60_000,
     queryFn: async () => unwrap<Warehouse[]>(
       await supabase.from('revive_warehouses')
-        .select('id, name, state, is_active, sort_order')
+        .select('id, name, state, is_active, sort_order, return_address')
         .order('sort_order').order('name'),
     ),
   })
@@ -489,12 +511,22 @@ export function useBemmpProjects() {
     // ['revive', 'bemmp'] there still refreshes this.
     queryKey: ['revive', 'bemmp', 'for-tickets'],
     staleTime: 5 * 60_000,
-    queryFn: async () => unwrap<BemmpProject[]>(
+    queryFn: async () => withHeads(unwrap<Omit<BemmpProject, 'head'>[]>(
       await supabase.from('revive_bemmp_projects')
-        .select('id, code, is_active, sort_order, asks_billing, asks_contract, state, head_id, head:employees!revive_bemmp_projects_head_id_fkey(full_name)')
+        .select('id, code, is_active, sort_order, asks_billing, asks_contract, state, head_id')
         .order('sort_order').order('code'),
-    ),
+    )),
   })
+}
+
+/**
+ * Each BEMMP's project head by name, through revive_bemmp_heads (rl_0059). Joined from employees, a Revive Lab admin
+ * outside the heads' teams saw no names at all (E1337, 28 Oct): the employee list shows a person only their own people.
+ */
+export async function withHeads<T extends { id: string }>(rows: T[]): Promise<(T & { head: { full_name: string; ecode: string } | null })[]> {
+  const heads = unwrap<{ bemmp_id: string; full_name: string; ecode: string }[]>(await supabase.rpc('revive_bemmp_heads'))
+  const by = new Map(heads.map(h => [h.bemmp_id, { full_name: h.full_name, ecode: h.ecode }]))
+  return rows.map(r => ({ ...r, head: by.get(r.id) ?? null }))
 }
 
 export function useFindPeople(q: string) {
@@ -735,6 +767,8 @@ export interface RaiseInput {
   billingSpare: boolean | null
   district: string
   sourceTicketNo: string
+  /** A warehouse's item code (rl_0063). */
+  itemCode?: string | null
   equipmentName: string
   equipmentMake: string
   equipmentModel: string
@@ -788,6 +822,8 @@ export function useRaiseTicket() {
     p_warehouse_id: a.warehouseId,
     p_contract_type: a.contractType,
     p_category: a.category,
+    // Sent only when there is one: an older database does not know it.
+    ...(a.itemCode ? { p_item_code: a.itemCode } : {}),
     p_criticality: a.criticality,
   }) as Promise<{ id: string; code: string; number: number; status: TicketStatus }>)
 }
@@ -871,13 +907,15 @@ export const useEditTicket = () => useTicketMutation(
     id: string; hospital: string; district: string; sourceTicketNo: string
     equipmentName: string; equipmentBarcode: string; equipmentMake: string; equipmentModel: string
     items: TicketItem[]; issue: string; returnAddress: string; contactNumber: string; stakeholderId: string | null
-  }) => rpc('revive_edit_ticket', {
+    /** An admin's state change (rl_0075), saved first. */
+    state?: string; stateWas?: string | null
+  }) => (a.state && a.state !== a.stateWas ? rpc('revive_edit_state', { p_ticket_id: a.id, p_state: a.state }) : Promise.resolve(null)).then(() => rpc('revive_edit_ticket', {
     p_ticket_id: a.id, p_hospital: a.hospital, p_district: a.district, p_source_ticket_no: a.sourceTicketNo,
     p_equipment_name: a.equipmentName, p_equipment_barcode: a.equipmentBarcode,
     p_equipment_make: a.equipmentMake, p_equipment_model: a.equipmentModel,
     p_items: a.items, p_issue: a.issue, p_return_address: a.returnAddress, p_contact_number: a.contactNumber,
     p_stakeholder_id: a.stakeholderId,
-  }))
+  })))
 
 export const useReturnToDesk = () => useTicketMutation(
   (a: { id: string; note: string }) => rpc('revive_return_to_desk', { p_ticket_id: a.id, p_note: a.note }))
@@ -892,6 +930,7 @@ export const useCompleteRepair = () => useTicketMutation(
     id: string; note?: string; outcome: Outcome; proposal?: Proposal | null
     photos?: Blob[]; video?: Blob | null; voice?: Blob | null
     round?: number
+    defectiveReturned?: boolean | null
   }) => {
     const repaired = a.outcome === 'repaired'
     const photos = repaired ? await uploadStage(a.id, 'done', a.photos, a.round) : []
@@ -900,6 +939,8 @@ export const useCompleteRepair = () => useTicketMutation(
     return rpc('revive_complete_repair', {
       p_ticket_id: a.id, p_note: a.note || null, p_outcome: a.outcome, p_proposal: a.proposal ?? null,
       p_photos: photos, p_video: video, p_voice: voice,
+      // A PI was asked for on it: whether the defective went back (rl_0066).
+      p_defective_returned: a.defectiveReturned ?? null,
     })
   })
 
@@ -1100,9 +1141,13 @@ export const useDispatch = () => useTicketMutation(
 export const useApproveNotRepairable = () => useTicketMutation(
   (a: { id: string; note?: string }) => rpc('revive_approve_not_repairable', { p_ticket_id: a.id, p_note: a.note || null }))
 
-/** A manager of its Revive Lab does not agree: back to the engineer, to repair, with why (rl_0034). */
+/**
+ * A manager of its Revive Lab does not agree: back to the engineer, to repair, with why (rl_0034) — or, with
+ * a Revive Lab chosen, a transfer there asked for at once (rl_0069). Says where it was left.
+ */
 export const useDeclineNotRepairable = () => useTicketMutation(
-  (a: { id: string; reason: string }) => rpc('revive_decline_not_repairable', { p_ticket_id: a.id, p_reason: a.reason }))
+  (a: { id: string; reason: string; toTrcId?: string | null }) =>
+    rpc('revive_decline_not_repairable', { p_ticket_id: a.id, p_reason: a.reason, p_to_trc_id: a.toTrcId || null }) as Promise<unknown>)
 
 /** It arrived back: the field engineer has it, and says whether the courier damaged it. */
 export const useMarkReceived = () => useTicketMutation(

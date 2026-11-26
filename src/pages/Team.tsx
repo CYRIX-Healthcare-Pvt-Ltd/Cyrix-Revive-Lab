@@ -245,8 +245,8 @@ function FindTicket({ tickets, back }: { tickets: readonly Ticket[]; back: { to:
     e.preventDefault()
     const text = q.trim()
     if (!text) return
-    const n = parseTicketCode(text)
-    const byNumber = n === null ? undefined : tickets.find(t => t.number === n)
+    const code = parseTicketCode(text)
+    const byNumber = code === null ? undefined : tickets.find(t => t.code === code)
     if (byNumber) { navigate(`/tickets/${byNumber.code}`, { state: { back } }); return }
     const byId = tickets.filter(t => (t.source_ticket_no ?? '').trim().toLowerCase() === text.toLowerCase())
     if (byId.length === 1) { navigate(`/tickets/${byId[0].code}`, { state: { back } }); return }

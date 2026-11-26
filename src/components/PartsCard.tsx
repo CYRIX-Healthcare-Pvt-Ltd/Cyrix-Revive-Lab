@@ -344,6 +344,8 @@ export function RequestItem({
   const canOrder = buyer && r.route === 'purchase' && (r.status === 'forwarded' || r.status === 'accepted')
   const canBill = mine && r.status === 'accepted' && r.route === 'local'
   const canProgress = desk && r.status === 'accepted' && r.route === 'local'
+  // A local purchase under way can still go to Purchase, until the bill is attached (rl_0065, the user on RL-244).
+  const canPassOn = canProgress
   const canStock = desk && r.status === 'bought'
   const canDecline = (desk && ['requested', 'accepted'].includes(r.status)) || (buyer && ['forwarded', 'accepted'].includes(r.status))
   const canConfirm = !pr && isEngineer && r.status === 'sent'
@@ -449,6 +451,12 @@ export function RequestItem({
           {canBill && (
             <button type="button" className="btn-primary !py-1.5 text-sm" disabled={busy} onClick={onBill}>
               <Receipt className="h-4 w-4 text-cyan-400" /> Attach the bill
+            </button>
+          )}
+          {canPassOn && (
+            <button type="button" className="btn-secondary !py-1.5 text-sm" disabled={busy}
+              onClick={() => run(() => forward.mutateAsync({ id: r.id }), 'Passed to Purchase. They purchase it and it comes back to you for the stock entry.')}>
+              {forward.isPending ? <Spinner className="h-4 w-4" /> : <Send className="h-4 w-4 text-amber-500" />} Pass to Purchase
             </button>
           )}
           {canStock && (

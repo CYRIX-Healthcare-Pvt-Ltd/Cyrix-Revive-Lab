@@ -6,7 +6,7 @@ import {
   ArrowLeft, ArrowRightLeft, BadgeCheck, Ban, Boxes, CalendarClock, Camera, CheckCircle2, CircleCheck, CircleX, ClipboardCheck,
   ClipboardList, Factory, Forward, Hand, History as HistoryIcon, PackageCheck, PackagePlus, PackageX, PlayCircle, Receipt, RotateCcw, ScanSearch, Tag,
   Send, ShieldQuestion, ShieldX, ShoppingCart, Signpost, Timer, Trash2, TriangleAlert, Truck, Undo2, UserCheck, UserCog, UserPlus,
-  UserX, Wrench, X, ExternalLink, FileInput, PackageOpen, Pencil,
+  UserX, Wrench, X, ExternalLink, FileInput, PackageOpen, Pencil, Hourglass,
   type LucideIcon,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
@@ -45,7 +45,7 @@ import { removeVideoOf } from '@/lib/attachments'
 import { signedLinks } from '@/lib/partFiles'
 import ItemsField, { newLine, type ItemLine } from '@/components/ItemsField'
 import PersonPicker from '@/components/PersonPicker'
-import { districtsOf } from '@/lib/india'
+import { districtsOf, STATES } from '@/lib/india'
 
 /** "21 Sept 2026, 11:53 AM" — twelve-hour, AM or PM, whatever the device's clock (lib/when). */
 const when = (iso: string | null | undefined) => (iso ? dateTime(iso) : '—')
@@ -54,9 +54,9 @@ const day = (iso: string | null | undefined) => (iso ? dayDate(iso) : null)
 
 export default function TicketDetail() {
   const { code } = useParams()
-  const number = parseTicketCode(code)
+  const wanted = parseTicketCode(code)
   const { data: tickets, isLoading } = useTickets()
-  const ticket = (tickets ?? []).find(t => t.number === number)
+  const ticket = (tickets ?? []).find(t => t.code === wanted)
 
   if (isLoading) return <PageLoader />
   if (!ticket) {
@@ -241,7 +241,7 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
                 <span className="text-xs text-ink-500"> · {stateLabel(t.trc_state)}</span>
               </Row>
               <Row label={t.source === 'warehouse' ? 'Warehouse' : 'Hospital name'}>{t.facility}</Row>
-              <Row label="Equipment barcode">{t.equipment_barcode && <span className="font-mono">{t.equipment_barcode}</span>}</Row>
+              <Row label={t.source === 'warehouse' ? 'Barcode' : 'Equipment barcode'}>{t.equipment_barcode && <span className="font-mono">{t.equipment_barcode}</span>}</Row>
               <Row label="Equipment name">{t.equipment_name}</Row>
               <Row label="Make">{t.equipment_make}</Row>
               <Row label="Model">{t.equipment_model}</Row>
@@ -259,7 +259,13 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
                   </ul>
                 )}
               </Row>
-              {t.source !== 'warehouse' && (
+              {t.source === 'warehouse' ? (
+                <>
+                  {/* As the warehouse's own sheet has them (rl_0063). */}
+                  <Row label="Document number">{t.source_ticket_no && <span className="font-mono">{t.source_ticket_no}</span>}</Row>
+                  <Row label="Item code">{t.item_code && <span className="font-mono">{t.item_code}</span>}</Row>
+                </>
+              ) : (
                 <Row label="Ticket ID">{t.source_ticket_no && <span className="font-mono">{t.source_ticket_no}</span>}</Row>
               )}
               <Row label="Raised on">{when(t.created_at)}</Row>
@@ -342,7 +348,7 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
         </div>
 
         <Section title="History" icon={HistoryIcon} tone="indigo">
-          {!trail ? <Spinner className="h-4 w-4 text-ink-400" /> : <Timeline trail={trail} proposal={t.proposal} source={t.source} />}
+          {!trail ? <Spinner className="h-4 w-4 text-ink-400" /> : <Timeline trail={trail} proposal={t.proposal} source={t.source} ticket={t} />}
         </Section>
       </div>
     </div>
@@ -358,6 +364,9 @@ function TicketView({ ticket: t }: { ticket: Ticket }) {
  */
 function WhereItIs({ ticket: t }: { ticket: Ticket }) {
   const a = t.approval
+  // Not repairable: name the managers who can approve it (the user, 12 Nov: "which manager? why no name?").
+  const { data: members } = useMembers(t.status === 'not_repairable' && awaitingManager(t))
+  const managers = orList((members ?? []).filter(m => m.is_manager && m.trc_ids.includes(t.trc_id)).map(m => m.full_name))
   const at = (
     <>
       At {t.trc_name}
@@ -381,7 +390,7 @@ function WhereItIs({ ticket: t }: { ticket: Ticket }) {
       return <>{t.trc_name} not approved · waiting on {t.stakeholder_name} to send it elsewhere or discard it</>
     case 'not_repairable':
       // First a manager of the Revive Lab agrees it cannot be repaired (rl_0034).
-      if (awaitingManager(t)) return <>{at} · waiting on a manager of {t.trc_name} to approve it as not repairable</>
+      if (awaitingManager(t)) return <>{at} · waiting on {managers || `a manager of ${t.trc_name}`} to approve it as not repairable</>
       return (
         <>
           {at} · approved{t.nr_approved_by_name ? <> by {t.nr_approved_by_name}</> : null} · waiting on the coordinator to {t.proposal === 'scrap' ? 'move it to scrap, as the engineer proposed'
@@ -707,10 +716,11 @@ function EditCardDialog({ ticket: t, items, onClose, onSaved }: {
   onSaved: () => void
 }) {
   const save = useEditTicket()
+  const { me } = useAuth()
   const warehouse = t.source === 'warehouse'
   const ots = t.contract_type === 'OTS'
   const [f, setF] = useState({
-    hospital: t.facility === 'OTS / Stock' ? '' : t.facility ?? '', district: t.district ?? '', sourceTicketNo: t.source_ticket_no ?? '',
+    hospital: t.facility === 'OTS / Stock' ? '' : t.facility ?? '', state: t.state ?? '', district: t.district ?? '', sourceTicketNo: t.source_ticket_no ?? '',
     equipmentName: t.equipment_name ?? '', equipmentBarcode: t.equipment_barcode ?? '',
     equipmentMake: t.equipment_make ?? '', equipmentModel: t.equipment_model ?? '',
     issue: t.issue ?? '', returnAddress: t.return_address ?? '', contactNumber: t.contact_number ?? '',
@@ -734,7 +744,7 @@ function EditCardDialog({ ticket: t, items, onClose, onSaved }: {
     if (f.returnAddress.trim().length < 5) { setError('Enter the spare return address.'); return }
     if (namesHolder && !holder) { setError('Name the field engineer this spare belongs to.'); return }
     try {
-      await save.mutateAsync({ id: t.id, ...f, items: clean, stakeholderId: namesHolder ? holder!.id : null })
+      await save.mutateAsync({ id: t.id, ...f, stateWas: t.state, items: clean, stakeholderId: namesHolder ? holder!.id : null })
       onSaved()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'That did not save.')
@@ -758,12 +768,20 @@ function EditCardDialog({ ticket: t, items, onClose, onSaved }: {
       )}
       <div className="grid gap-3 sm:grid-cols-2">
         {!warehouse && input('Hospital name', 'hospital', { required: !ots, max: 200 })}
+        {!warehouse && me?.is_admin && (
+          <label className="block">
+            <span className="label">State <span className="text-cyrixRed-600">*</span></span>
+            <select className="input mt-1" value={f.state} onChange={e => setF(o => ({ ...o, state: e.target.value, district: '' }))}>
+              {STATES.map(x => <option key={x} value={x}>{x}</option>)}
+            </select>
+          </label>
+        )}
         {!warehouse && (
           <label className="block">
             <span className="label">District <span className="text-cyrixRed-600">*</span></span>
             <select className="input mt-1" value={f.district} onChange={set('district')}>
               <option value="">Choose…</option>
-              {districtsOf(t.state).map(d => <option key={d} value={d}>{d}</option>)}
+              {districtsOf(f.state || t.state).map(d => <option key={d} value={d}>{d}</option>)}
             </select>
           </label>
         )}
@@ -993,7 +1011,35 @@ function noteOf(e: TrailEvent, source: TicketSource): string | null {
   return e.note
 }
 
-function Timeline({ trail, proposal, source }: { trail: TrailEvent[]; proposal: Proposal | null; source: TicketSource }) {
+/*
+  The approval it waits on now, as the history's last step (the user, 24 Nov: "in history this data not showing ie send
+  to them and approval waiting, user can't understand if it is not there"): who it went to, and for how long.
+*/
+function useWaitingStep(t: Ticket): string | null {
+  const nr = t.status === 'not_repairable' && awaitingManager(t)
+  const { data: members } = useMembers(nr)
+  if (nr) {
+    const managers = orList((members ?? []).filter(m => m.is_manager && m.trc_ids.includes(t.trc_id)).map(m => m.full_name))
+    return `Sent to ${managers || `a manager of ${t.trc_name}`} to approve it as not repairable`
+  }
+  const a = t.approval
+  if (t.status === 'awaiting_approval') {
+    const to = waitsOnHead(a) ? `Sent to ${a!.head_name}, the project head,` : 'Waiting'
+    return a?.kind === 'transfer' ? `${to} to approve the transfer to ${a.to_trc_name}`
+      : a?.kind === 'return' ? `${to} to approve the return to ${a.to_trc_name}`
+      : `${to} to approve it for ${t.trc_name}`
+  }
+  // Approved, not yet sent (the user, 25 Nov: "waiting for should be shown in history also").
+  if (t.status === 'approved') {
+    return a?.kind === 'transfer' ? `Waiting on the coordinator to send it to ${a.to_trc_name}`
+      : `Waiting on ${t.stakeholder_name} to send it to ${t.trc_name}`
+  }
+  if (t.status === 'not_approved') return `Waiting on ${t.stakeholder_name} to send it elsewhere or discard it`
+  return null
+}
+
+function Timeline({ trail, proposal, source, ticket }: { trail: TrailEvent[]; proposal: Proposal | null; source: TicketSource; ticket: Ticket }) {
+  const waiting = useWaitingStep(ticket)
   // Every spoken observation's link in one go, rather than one call each.
   const spoken = trail.map(e => e.voice_path).filter((p): p is string => !!p)
   const { data: voices } = useQuery({
@@ -1009,12 +1055,14 @@ function Timeline({ trail, proposal, source }: { trail: TrailEvent[]; proposal: 
       {steps.map((e, i) => {
         const look = stepLook(e, steps.slice(0, i), proposal, source)
         const next = steps[i + 1]
-        const gap = next ? Math.max(0, Date.parse(next.at) - Date.parse(e.at)) : null
+        // The last step, when an approval waits: its thread runs on to the waiting step, timed until now.
+        const toWait = !next && !!waiting
+        const gap = next ? Math.max(0, Date.parse(next.at) - Date.parse(e.at)) : toWait ? Math.max(0, Date.now() - Date.parse(e.at)) : null
         return (
-          <li key={e.id} className={clsx('relative flex gap-3', next && 'pb-9')}>
+          <li key={e.id} className={clsx('relative flex gap-3', (next || toWait) && 'pb-9')}>
             {/* The thread from this step down to the next, and on it — halfway
                 between the two, breaking it — how long that took. */}
-            {next && <span aria-hidden className="absolute bottom-0 left-4 top-8 w-px -translate-x-1/2 bg-ink-200" />}
+            {(next || toWait) && <span aria-hidden className={clsx('absolute bottom-0 left-4 top-8 w-px -translate-x-1/2', toWait ? 'border-l border-dashed border-amber-300' : 'bg-ink-200')} />}
             {gap !== null && (
               <span
                 aria-hidden
@@ -1046,6 +1094,17 @@ function Timeline({ trail, proposal, source }: { trail: TrailEvent[]; proposal: 
           </li>
         )
       })}
+      {waiting && (
+        <li className="relative flex gap-3">
+          <span className="relative grid h-8 w-8 shrink-0 place-items-center rounded-full bg-amber-100 text-amber-700 ring-2 ring-amber-200 ring-offset-2 ring-offset-surface">
+            <Hourglass className="h-4 w-4" />
+          </span>
+          <div className="min-w-0 flex-1 pt-1">
+            <p className="text-sm font-medium text-ink-900">{waiting}</p>
+            <p className="mt-0.5 text-xs font-medium text-amber-700">Waiting</p>
+          </div>
+        </li>
+      )}
     </ol>
   )
 }
@@ -1560,6 +1619,11 @@ function ActionForm({
   const toOem = action === 'dispatch' && t.status === 'not_repairable' && t.proposal === 'oem'
   const [oemAddress, setOemAddress] = useState(toOem && t.equipment_make ? `${t.equipment_make}\n` : '')
   const { data: requests } = usePartRequests(asksEstimate ? t.id : undefined)
+  // A PI was asked for on it: whether the defective went back, Yes or No, chosen every time — by the Revive Lab
+  // engineer closing the repair, who knows (rl_0066; the user, 31 Oct).
+  const { data: steps } = useTrail(action === 'complete' ? t.id : undefined)
+  const asksDefective = action === 'complete' && !!steps?.some(e => e.status === 'pi_requested')
+  const [defective, setDefective] = useState<'' | 'yes' | 'no'>('')
   const purchased = (requests ?? []).reduce((sum, r) => sum + (r.bill_amount ?? 0), 0)
 
   const engineers = (members ?? [])
@@ -1613,6 +1677,7 @@ function ActionForm({
         case 'pi_received':
           await piReceived.mutateAsync({ id: t.id, note }); onDone('PI parts received. The repair carries on.'); break
         case 'complete':
+          if (asksDefective && !defective) { onError('Choose whether the defective was returned.'); return }
           if (outcome === 'not_repairable' && !proposal) { onError('Say what should become of it: scrap, or back to the field engineer.'); return }
           if (note.trim().length < 3) { onError(outcome === 'repaired' ? 'Say what action was taken on it.' : 'Say why.'); return }
           // A photo or a video of it working, either will do; the voice note is extra (the user, 24 Sep).
@@ -1624,6 +1689,7 @@ function ActionForm({
             video: outcome === 'repaired' ? video : null,
             voice: outcome === 'repaired' ? voice : null,
             round,
+            defectiveReturned: asksDefective ? defective === 'yes' : null,
           })
           onDone(outcome === 'repaired' ? 'Repair closed. It is with the coordinator for dispatch.'
             : outcome === 'not_repairable'
@@ -1809,6 +1875,17 @@ function ActionForm({
             ))}
           </div>
         </div>
+      )}
+
+      {asksDefective && (
+        <label className="block sm:max-w-xs">
+          <span className="label">Defective returned <span className="text-cyrixRed-600">*</span></span>
+          <select className="input mt-1" value={defective} onChange={e => setDefective(e.target.value as '' | 'yes' | 'no')}>
+            <option value="">Choose…</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+          </select>
+        </label>
       )}
 
       {/* The coordinator may not know what a board is worth: the engineer says, and the coordinator does it. */}
@@ -2251,6 +2328,8 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
   const [date, setDate] = useState(action === 'expect' ? t.expected_by ?? '' : '')
   const [note, setNote] = useState('')
   const [toTrc, setToTrc] = useState(action === 'approve' ? a?.to_trc_id ?? '' : '')
+  // Sending it back: repaired here, or sent to another Revive Lab (the user, 16 Nov, after RL-595).
+  const [nrNext, setNrNext] = useState<'here' | 'other'>('here')
   const [error, setError, nth] = useError()
   const busy = [start, expect, scrap, approve, decline, cancelTransfer, discard, answer, cancelHandover, approveNr, declineNr].some(m => m.isPending)
   const meta = actionMeta(action, t)
@@ -2317,9 +2396,16 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
         onDone(`Approved as not repairable. The coordinator now ${
           t.proposal === 'scrap' ? 'moves it to scrap' : t.proposal === 'oem' ? 'sends it to the OEM' : `sends it back to ${t.stakeholder_name}`}.`)
       } else if (action === 'decline_nr') {
-        if (note.trim().length < 5) { setError('Say why it should be repaired — what to try.'); return }
-        await declineNr.mutateAsync({ id: t.id, reason: note })
-        onDone(`Back with ${t.engineer_name ?? 'the engineer'} to repair. They see why.`)
+        const other = nrNext === 'other'
+        if (other && !toTrc) { setError('Choose the Revive Lab it is going to.'); return }
+        if (note.trim().length < 5) { setError(other ? 'Say why it is being sent there.' : 'Say why it should be repaired — what to try.'); return }
+        const left = await declineNr.mutateAsync({ id: t.id, reason: note, toTrcId: other ? toTrc : null })
+        const lab = trcs?.find(x => x.id === toTrc)?.name ?? 'that Revive Lab'
+        onDone(!other
+          ? `Back with ${t.engineer_name ?? 'the engineer'} to repair. They see why.`
+          : left === 'awaiting_approval'
+            ? `Transfer to ${lab} asked for. Once the project head approves it, the coordinator sends it.`
+            : `Transfer to ${lab} is ready. The coordinator sends it with the courier details.`)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'That did not go through.')
@@ -2430,8 +2516,32 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
           <p className="text-sm text-ink-600">
             {action === 'approve_nr'
               ? <>Approved, the coordinator {t.proposal === 'scrap' ? 'moves it to scrap' : t.proposal === 'oem' ? 'sends it to the OEM' : 'dispatches it back'}.</>
-              : <>It goes back to {t.engineer_name ?? 'the engineer'}, in repair, with what you say.</>}
+              : nrNext === 'here' && <>It goes back to {t.engineer_name ?? 'the engineer'}, in repair, with what you say.</>}
           </p>
+          {action === 'decline_nr' && (
+            <>
+              <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Where it is repaired">
+                {([['here', 'Repair here'], ['other', 'Send to another Revive Lab']] as const).map(([k, label]) => (
+                  <button key={k} type="button" role="radio" aria-checked={nrNext === k} onClick={() => setNrNext(k)}
+                    className={clsx('flex min-h-11 items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm font-medium transition-colors',
+                      nrNext !== k ? 'border-ink-200 text-ink-700 hover:border-ink-400'
+                        : k === 'here' ? 'border-indigo-300 bg-indigo-50 text-indigo-900' : 'border-violet-300 bg-violet-50 text-violet-900')}>
+                    {k === 'here' ? <Wrench className="h-4 w-4 shrink-0 text-indigo-500" /> : <ArrowRightLeft className="h-4 w-4 shrink-0 text-violet-500" />}
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {nrNext === 'other' && (
+                <label className="block">
+                  <span className="label">Send to <span className="text-cyrixRed-600">*</span></span>
+                  <select className="input mt-1" value={toTrc} onChange={e => setToTrc(e.target.value)}>
+                    <option value="">Choose…</option>
+                    <LabOptions labs={(trcs ?? []).filter(x => x.is_active && x.id !== t.trc_id)} first={t.state} />
+                  </select>
+                </label>
+              )}
+            </>
+          )}
         </div>
       )}
 
@@ -2445,7 +2555,7 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
         <label className="block">
           <span className="label">
             {action === 'expect' ? 'Why it moved' : action === 'decline_approval' ? 'Why not' : action === 'discard' ? 'Why'
-              : action === 'decline_nr' ? 'Why it should be repaired — what to try' : 'Note'}
+              : action === 'decline_nr' ? (nrNext === 'other' ? 'Why it is being sent there' : 'Why it should be repaired — what to try') : 'Note'}
             {(action === 'decline_approval' || action === 'decline_nr') && <span className="text-cyrixRed-600"> *</span>}
           </span>
           <textarea className="input mt-1" rows={2} value={note} onChange={e => setNote(e.target.value)} maxLength={action === 'discard' || action === 'cancel_transfer' ? 300 : 500}
@@ -2456,7 +2566,7 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
                     : action === 'discard' ? 'e.g. Repaired on site after all'
                       : action === 'approve' ? 'e.g. Go ahead — they are expecting it'
                         : action === 'approve_nr' ? 'e.g. Agreed — the controller cannot be sourced'
-                          : action === 'decline_nr' ? 'e.g. Try the spare board from RL-40 first'
+                          : action === 'decline_nr' ? (nrNext === 'other' ? 'e.g. The IC is available there' : 'e.g. Try the spare board from RL-40 first')
                         : ''
             } />
         </label>
@@ -2464,8 +2574,9 @@ function ActionDialog({ ticket: t, action, onClose, onDone }: {
       {error && <Alert key={nth} kind="error">{error}</Alert>}
       <div className="flex gap-2">
         <button type="button" className="btn-primary" onClick={run} disabled={busy}>
-          {busy ? <Spinner className="h-4 w-4" /> : <meta.icon className={clsx('h-4 w-4', TONE_TEXT[meta.tone])} />}
-          {action === 'expect' ? 'Save date' : meta.label}
+          {busy ? <Spinner className="h-4 w-4" /> : action === 'decline_nr' && nrNext === 'other'
+            ? <ArrowRightLeft className="h-4 w-4 text-violet-500" /> : <meta.icon className={clsx('h-4 w-4', TONE_TEXT[meta.tone])} />}
+          {action === 'expect' ? 'Save date' : action === 'decline_nr' && nrNext === 'other' ? 'Ask for the transfer' : meta.label}
         </button>
         <button type="button" className="btn-secondary" onClick={onClose}>
           {action === 'cancel_transfer' || action === 'discard' || action === 'cancel_handover' ? 'Keep it'

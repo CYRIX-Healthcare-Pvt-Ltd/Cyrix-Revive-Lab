@@ -326,16 +326,19 @@ export const TONE_DOT: Record<Tone, string> = {
  * the same, and a helper that truncated 100 to "10" would show a second
  * ticket's number on the first.
  */
-export function ticketCode(n: number): string {
-  return `RL-${n < 10 ? '0' : ''}${n}`
+export function ticketCode(n: number, series: 'RL' | 'WRL' = 'RL'): string {
+  return `${series}-${n < 10 ? '0' : ''}${n}`
 }
 
-/** "RL-07", "rl-7", "7" → 7. Anything else → null. */
-export function parseTicketCode(raw: string | null | undefined): number | null {
-  const m = String(raw ?? '').trim().match(/^(?:rl-?)?0*(\d{1,7})$/i)
+/**
+ * "RL-07", "rl-7", "7" → "RL-07"; "WRL-3", "wrl3" → "WRL-03". Anything else → null.
+ * A warehouse's tickets are numbered on their own (rl_0063), so a number alone is not a ticket: its code is.
+ */
+export function parseTicketCode(raw: string | null | undefined): string | null {
+  const m = String(raw ?? '').trim().match(/^(w?rl)?\s*-?\s*0*(\d{1,7})$/i)
   if (!m) return null
-  const n = Number(m[1])
-  return Number.isInteger(n) && n > 0 ? n : null
+  const n = Number(m[2])
+  return Number.isInteger(n) && n > 0 ? ticketCode(n, m[1]?.toLowerCase() === 'wrl' ? 'WRL' : 'RL') : null
 }
 
 export interface Me {
@@ -354,6 +357,10 @@ export interface Me {
   is_observer?: boolean
   /** An Observer who also raises tickets, as a field engineer does (rl_0040). */
   may_raise?: boolean
+  /** Raises their warehouse's defective spares themselves, as a field engineer does (rl_0063). */
+  is_warehouse?: boolean
+  /** The warehouse(s) they raise for: their card offers only these. */
+  warehouse_ids?: string[]
 }
 
 /* ------------------------------------------------------------------ */
@@ -547,6 +554,11 @@ export function managesTrc(me: Me | null | undefined, trcId: string): boolean {
   return !!me && me.is_manager && me.trc_ids.includes(trcId)
 }
 
+/** Not repairable, waiting on this manager's approval: its own card and sub-tab in Waiting on you (the user, 12 Nov). */
+export function isMyApproval(t: { status: TicketStatus; nr_approved_at?: string | null; trc_id: string }, me: Me | null | undefined): boolean {
+  return awaitingManager(t) && managesTrc(me, t.trc_id)
+}
+
 /**
  * Somebody who only watches (rl_0039): an Observer with no other Revive Lab
  * role. They get a plain dashboard and the tickets of the Revive Labs ticked
@@ -655,6 +667,8 @@ export function actionsFor(t: TicketLike, me: Me | null | undefined): Action[] {
   if (sender && t.status === 'not_approved') out.push('reroute')
 
   if (desk && (t.status === 'pending_acceptance' || t.status === 'transferred')) out.push('accept')
+  // Approved for this lab and already here without the Send (rl_0074, RL-935).
+  if (desk && t.status === 'approved' && open?.kind === 'raise') out.push('accept')
   // Whoever sent it in, until it arrives: a card is often raised before the
   // courier has given a tracking number (rl_0011).
   if (sender && t.status === 'pending_acceptance') out.push('courier')
@@ -746,6 +760,31 @@ export function waitingOnMe(t: TicketLike, me: Me | null | undefined): boolean {
 }
 
 /**
+ * In which of this person's roles a ticket waits on them — the sub-tabs of Waiting on you
+ * (the user, 12 Nov: "add all, and role wise also, split everything else").
+ */
+export type WaitRole = 'manager' | 'coordinator' | 'engineer' | 'purchase' | 'approver' | 'field'
+export const WAIT_ROLES: ReadonlyArray<{ id: WaitRole; label: string }> = [
+  { id: 'manager', label: 'Manager approval' },
+  { id: 'coordinator', label: 'Coordinator' },
+  { id: 'engineer', label: 'Revive Lab engineer' },
+  { id: 'purchase', label: 'Purchase' },
+  { id: 'approver', label: 'Approver' },
+  { id: 'field', label: 'Field engineer' },
+]
+export function waitRole(t: TicketLike, me: Me | null | undefined): WaitRole {
+  if (!me) return 'coordinator'
+  if (isMyApproval(t, me)) return 'manager'
+  // Their own, with no Revive Lab role at all: raised by them, sent back to them, a PI to raise.
+  const base: Me = { ...me, is_engineer: false, is_coordinator: false, is_manager: false, is_admin: false, is_purchase: false, approves: false }
+  if (waitingOnMe(t, base)) return 'field'
+  if (me.approves && waitingOnMe(t, { ...base, approves: true })) return 'approver'
+  if (me.is_engineer && waitingOnMe(t, { ...base, is_engineer: true })) return 'engineer'
+  if (me.is_purchase && waitingOnMe(t, { ...base, is_purchase: true })) return 'purchase'
+  return 'coordinator'
+}
+
+/**
  * What the Revive Lab says a spare is, on arrival (rl_0024): its category,
  * which sets how long the Revive Lab may keep it, and whether it is
  * critical. A spare under a CAMC contract is always critical — the route
@@ -763,7 +802,10 @@ export const CONTRACT_LABEL: Record<ContractType, string> = { AMC: 'AMC', CAMC: 
  * accepts it, the coordinator until it is dispatched back (rl_0057; the database says the same).
  */
 export function canEditCard(t: TicketLike & { raised_as?: 'engineer' | 'coordinator' }, me: Me | null | undefined): boolean {
-  if (!me || t.raised_by !== me.employee_id) return false
+  if (!me) return false
+  // An admin edits every route card, at any stage (rl_0073, 25 Nov).
+  if (me.is_admin) return true
+  if (t.raised_by !== me.employee_id) return false
   return t.raised_as === 'coordinator'
     ? !['in_transit_return', 'received_back', 'closed'].includes(t.status)
     : ['awaiting_approval', 'approved', 'not_approved', 'pending_acceptance'].includes(t.status)

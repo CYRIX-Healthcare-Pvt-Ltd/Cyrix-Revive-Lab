@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useState, type FormEvent, type ReactNode } from 'react'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation, useNavigationType } from 'react-router-dom'
 import { Grid2x2, LogIn, Wrench } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { supabase, ecodeToEmail, friendlyError } from '@/lib/supabase'
@@ -18,6 +18,18 @@ const Access       = lazyRoute(() => import('@/pages/Access'))
 const Components   = lazyRoute(() => import('@/pages/Components'))
 const Team         = lazyRoute(() => import('@/pages/Team'))
 
+/*
+  A page opened starts at its top (the user, 12 Nov: "why opening ticket goes to history?"). The router kept the
+  scroll of the page before, so a ticket opened from far down the Tickets list showed its History. Back and
+  forward (POP) are left alone, so going back returns to where you were.
+*/
+function TopOnOpen() {
+  const { pathname } = useLocation()
+  const how = useNavigationType()
+  useEffect(() => { if (how !== 'POP') window.scrollTo(0, 0) }, [pathname, how])
+  return null
+}
+
 export default function App() {
   const { session, loading, hasAccess, me } = useAuth()
 
@@ -31,6 +43,7 @@ export default function App() {
 
   return (
     <Suspense fallback={<PageLoader />}>
+      <TopOnOpen />
       <Routes>
         <Route element={<Shell />}>
           <Route index element={<Dashboard />} />

@@ -24,14 +24,17 @@ describe('ticket numbers', () => {
     expect(ticketCode(9)).toBe('RL-09')
     expect(ticketCode(10)).toBe('RL-10')
     expect(ticketCode(100)).toBe('RL-100')
+    expect(ticketCode(3, 'WRL')).toBe('WRL-03')
   })
 
   it('reads a number however it was typed', () => {
-    expect(parseTicketCode('RL-07')).toBe(7)
-    expect(parseTicketCode('rl-7')).toBe(7)
-    expect(parseTicketCode('RL07')).toBe(7)
-    expect(parseTicketCode('7')).toBe(7)
-    expect(parseTicketCode('RL-100')).toBe(100)
+    expect(parseTicketCode('RL-07')).toBe('RL-07')
+    expect(parseTicketCode('rl-7')).toBe('RL-07')
+    expect(parseTicketCode('RL07')).toBe('RL-07')
+    expect(parseTicketCode('7')).toBe('RL-07')
+    expect(parseTicketCode('RL-100')).toBe('RL-100')
+    expect(parseTicketCode('wrl-3')).toBe('WRL-03')
+    expect(parseTicketCode('WRL12')).toBe('WRL-12')
   })
 
   it('refuses what is not a ticket number', () => {
@@ -276,7 +279,7 @@ describe('states, approval and the proposal (rl_0014)', () => {
     const raise = ticket({ status: 'approved', approval: { kind: 'raise', status: 'approved' } })
     expect(actionsFor(raise, field)).toEqual(['send', 'discard'])
     expect(waitingOnMe(raise, field)).toBe(true)
-    expect(actionsFor(raise, desk)).toEqual([])
+    expect(actionsFor(raise, desk)).toEqual(['accept']) // already at the lab, not sent (rl_0074)
 
     const transfer = ticket({ status: 'approved', engineer_id: 'eng', approval: { kind: 'transfer', status: 'approved' } })
     expect(actionsFor(transfer, desk)).toEqual(['send', 'cancel_transfer'])
