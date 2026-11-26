@@ -43,7 +43,7 @@ or in Vercel: every `VITE_` value is readable by anyone who opens the site.
 
 ## Database
 
-Migrations are in `supabase/migrations` (`rl_0001` … `rl_0057`), applied in
+Migrations are in `supabase/migrations` (`rl_0001` … `rl_0075` as of 26 Nov 2026), applied in
 filename order and recorded in `_migrations`. Everything is `revive_`-prefixed.
 Shared tables are read, never altered, with two exceptions: `rl_0002` adds the
 module's row to `app_modules` (the portal tile), and `revive_save_member`
@@ -56,6 +56,10 @@ grants the module in `employee_modules` to people given a box.
 | 0013–0026 | Components, purchase and closure; states and approval to go to another lab; arrival proof; stock and its lists; warehouses; category, criticality and contract; billing estimate on dispatch |
 | 0027–0038 | Return to the lab, hand-over between field engineers, My Team, TAT ending at the repair, stock bins and history, return to OEM, not-repairable needs a manager, reopening a closed repair |
 | 0039–0057 | Observers, couriers, component requests without a ticket, project-head approval across states, who sees the live floor, who a ticket waits on, purchase visibility, duplicate warnings, PI requests, item codes on orders |
+| 0058–0063 | Asking for another state (a coordinator, the desk, a regional lab when the state has its own), BEMMP heads by name, a warehouse spare to another lab, the warehouse in-charge raising a ticket with a saved return address |
+| 0064–0066, 0069, 0074 | The defective part returned (when a PI was asked for, said by the lab engineer on closing), a local purchase passed to Purchase, a manager sending a not-repairable spare to another lab, accepting without a send |
+| 0067, 0072–0073, 0075 | Admins: every ticket first, editing the route card and the state; people on a ticket can open Revive Lab |
+| 0068, 0070–0071 | Speed: faster attachment rules, the ticket list in pages, files and part requests read once |
 
 The migration's own header says why each rule is as it is; read it before
 changing the function it touches.
